@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CorniSand</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            overflow: hidden;
+            background: #0a0a0c;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        #canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+            touch-action: none;
+        }
+
+        #toolbar {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 48px;
+            background: rgba(16, 16, 20, 0.90);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            display: flex;
+            align-items: center;
+            padding: 0 16px;
+            gap: 8px;
+            z-index: 10;
+            border-top: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .tool-btn {
+            padding: 6px 16px;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            background: rgba(255, 255, 255, 0.04);
+            color: #9ca3af;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            transition: all 0.15s ease;
+        }
+
+        .tool-btn:hover {
+            background: rgba(255, 255, 255, 0.08);
+            color: #d1d5db;
+        }
+
+        .tool-btn.active {
+            background: rgba(255, 255, 255, 0.12);
+            color: #f3f4f6;
+            border-color: rgba(255, 255, 255, 0.3);
+        }
+
+        .separator {
+            width: 1px;
+            height: 24px;
+            background: rgba(255, 255, 255, 0.1);
+            flex-shrink: 0;
+        }
+
+        .info-text {
+            color: #6b7280;
+            font-size: 12px;
+            font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+            white-space: nowrap;
+        }
+
+        #clear-btn {
+            padding: 6px 16px;
+            border: 1px solid rgba(239, 68, 68, 0.25);
+            background: rgba(239, 68, 68, 0.08);
+            color: #f87171;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            margin-left: auto;
+            transition: all 0.15s ease;
+        }
+
+        #clear-btn:hover {
+            background: rgba(239, 68, 68, 0.15);
+        }
+
+        .help-hint {
+            position: fixed;
+            top: 12px;
+            right: 12px;
+            color: rgba(255, 255, 255, 0.3);
+            font-size: 11px;
+            font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+            pointer-events: none;
+            z-index: 10;
+            text-align: right;
+            line-height: 1.6;
+            transition: opacity 2s ease;
+        }
+    </style>
+</head>
+
+<body>
+    <canvas id="canvas"></canvas>
+
+    <div class="help-hint" id="help-hint">
+        Left click: draw · Right click: erase<br>
+        Scroll: brush size · 1-2: select tool
+    </div>
+
+    <div id="toolbar">
+        <button class="tool-btn active" data-type="1">Sand</button>
+        <button class="tool-btn" data-type="2">Wall</button>
+        <div class="separator"></div>
+        <span class="info-text" id="brush-size">Brush: 10</span>
+        <div class="separator"></div>
+        <span class="info-text" id="fps">-- FPS</span>
+        <div class="separator"></div>
+        <span class="info-text" id="grid-info">--</span>
+        <button id="clear-btn">Clear</button>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+</body>
+
+</html>
