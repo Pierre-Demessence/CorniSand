@@ -78,6 +78,7 @@ export class InputHandler {
       else if (e.key === '2') this.particleType = 2;
       else if (e.key === '3') this.particleType = 3;
       else if (e.key === '4') this.particleType = 4;
+      else if (e.key === '5') this.particleType = 5;
     });
     document.addEventListener('keyup', (e) => {
       if (e.key === 'Shift') this.shiftDown = false;

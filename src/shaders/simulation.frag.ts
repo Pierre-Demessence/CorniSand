@@ -20,6 +20,7 @@ uniform float u_replacing;
 #define TYPE_WALL  2.0
 #define TYPE_WATER 3.0
 #define TYPE_SMOKE 4.0
+#define TYPE_OIL   5.0
 
 float getType(vec4 cell) {
   return floor(cell.r * 255.0 + 0.5);
@@ -34,22 +35,23 @@ bool isSand(float t)  { return abs(t - TYPE_SAND) < 0.5; }
 bool isWater(float t) { return abs(t - TYPE_WATER) < 0.5; }
 bool isWall(float t)  { return abs(t - TYPE_WALL) < 0.5; }
 bool isSmoke(float t) { return abs(t - TYPE_SMOKE) < 0.5; }
-bool isFalling(float t) { return isSand(t) || isWater(t); }
-bool isLiquid(float t) { return isWater(t); }
+bool isOil(float t)   { return abs(t - TYPE_OIL) < 0.5; }
+bool isFalling(float t) { return isSand(t) || isWater(t) || isOil(t); }
+bool isLiquid(float t) { return isWater(t) || isOil(t); }
 bool isGas(float t) { return isSmoke(t); }
 
-// Density: smoke < empty < water < sand < wall
-// Sand displaces empty, water, and smoke; water displaces empty and smoke
+// Density: smoke < empty < oil < water < sand < wall
 bool canDisplace(float mover, float target) {
   if (isEmpty(target)) return true;
-  if (isSand(mover) && (isWater(target) || isSmoke(target))) return true;
-  if (isWater(mover) && isSmoke(target)) return true;
+  if (isSand(mover) && (isWater(target) || isOil(target) || isSmoke(target))) return true;
+  if (isWater(mover) && (isOil(target) || isSmoke(target))) return true;
+  if (isOil(mover) && isSmoke(target)) return true;
   return false;
 }
 
-// Smoke rises through empty and water (sand is too heavy — Phase 1 gravity cancels the rise)
+// Smoke rises through empty, oil, and water
 bool canRiseThrough(float target) {
-  return isEmpty(target) || isWater(target);
+  return isEmpty(target) || isWater(target) || isOil(target);
 }
 
 float hash21(vec2 p) {

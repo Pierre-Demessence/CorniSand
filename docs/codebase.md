@@ -22,7 +22,7 @@ src/
 - Margolus offset alternates 0/1 each simulation step for full cell coverage
 - Water physics use 3-phase logic: vertical gravity+density, diagonal slide, horizontal liquid flow
 - Smoke physics use reverse gravity (rises), horizontal dispersion when blocked above
-- `canDisplace()` implements density ordering: smoke < empty < water < sand < wall
+- `canDisplace()` implements density ordering: smoke < empty < oil < water < sand < wall
 - `canRiseThrough()` lets smoke rise through empty, water, and sand
 
 ## Adding new particle types

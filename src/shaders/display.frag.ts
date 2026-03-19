@@ -26,6 +26,10 @@ vec3 getSmokeColor(float variant) {
   return vec3(0.72, 0.72, 0.74);
 }
 
+vec3 getOilColor(float variant) {
+  return vec3(0.22, 0.16, 0.10);
+}
+
 float ditherNoise(vec2 pos) {
   return fract(sin(dot(pos, vec2(12.9898, 78.233))) * 43758.5453);
 }
@@ -50,6 +54,8 @@ void main() {
     color = getWaterColor(variant);
   } else if (pType > 3.5 && pType < 4.5) {
     color = getSmokeColor(variant);
+  } else if (pType > 4.5 && pType < 5.5) {
+    color = getOilColor(variant);
   }
 
   // Brush cursor indicator
