@@ -8,9 +8,10 @@
 | Eraser                     | Done   | Right-click erase with brush                                |
 | Brush size control         | Done   | Scroll wheel adjusts brush radius                           |
 | Clear button               | Done   | Reset entire simulation grid                                |
-| Keyboard shortcuts         | Done   | 1/2/3 for particle selection                                |
+| Keyboard shortcuts         | Done   | 1/2/3 for particle selection, [/] for speed                 |
 | Touch support              | Done   | Pointer events for mobile                                   |
 | FPS counter                | Done   | Real-time framerate display                                 |
+| Simulation speed control   | Done   | Variable speed 0.0625x–2x via buttons or [/] keys           |
 | Water particles            | Done   | Liquid that flows sideways, fills containers, density interactions |
 | Gas particles              | TODO   | Rises upward, disperses                                     |
 | Particle interactions      | TODO   | Chemical reactions, temperature, state changes              |
