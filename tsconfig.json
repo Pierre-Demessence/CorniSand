@@ -12,7 +12,8 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "jsx": "preserve",
-    "outDir": "dist"
+    "outDir": "dist",
+    "types": ["@webgpu/types"]
   },
   "include": ["src"]
 }
