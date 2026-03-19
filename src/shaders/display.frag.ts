@@ -30,6 +30,13 @@ vec3 getOilColor(float variant) {
   return vec3(0.22, 0.16, 0.10);
 }
 
+vec3 getFireColor(float life) {
+  float t = clamp(life / 200.0, 0.0, 1.0); // FIRE_MAX_LIFE from simulation shader
+  vec3 bright = vec3(1.0, 0.72, 0.12);
+  vec3 dim = vec3(0.80, 0.18, 0.04);
+  return mix(dim, bright, t);
+}
+
 float ditherNoise(vec2 pos) {
   return fract(sin(dot(pos, vec2(12.9898, 78.233))) * 43758.5453);
 }
@@ -56,6 +63,9 @@ void main() {
     color = getSmokeColor(variant);
   } else if (pType > 4.5 && pType < 5.5) {
     color = getOilColor(variant);
+  } else if (pType > 5.5 && pType < 6.5) {
+    float life = floor(cell.b * 255.0 + 0.5);
+    color = getFireColor(life);
   }
 
   // Brush cursor indicator

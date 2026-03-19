@@ -5,6 +5,7 @@ export const PARTICLE_TYPES = {
   WATER: 3,
   SMOKE: 4,
   OIL: 5,
+  FIRE: 6,
 } as const;
 
 export type ParticleType = typeof PARTICLE_TYPES[keyof typeof PARTICLE_TYPES];

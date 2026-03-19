@@ -21,13 +21,25 @@ uniform float u_replacing;
 #define TYPE_WATER 3.0
 #define TYPE_SMOKE 4.0
 #define TYPE_OIL   5.0
+#define TYPE_FIRE  6.0
+
+#define FIRE_MAX_LIFE 200.0
+#define FIRE_DECAY 4.0
 
 float getType(vec4 cell) {
   return floor(cell.r * 255.0 + 0.5);
 }
 
+float getLife(vec4 cell) {
+  return floor(cell.b * 255.0 + 0.5);
+}
+
 vec4 encodeCell(float pType, float variant) {
   return vec4(pType / 255.0, variant / 255.0, 0.0, 1.0);
+}
+
+vec4 encodeCellWithLife(float pType, float variant, float life) {
+  return vec4(pType / 255.0, variant / 255.0, life / 255.0, 1.0);
 }
 
 bool isEmpty(float t) { return t < 0.5; }
@@ -36,6 +48,7 @@ bool isWater(float t) { return abs(t - TYPE_WATER) < 0.5; }
 bool isWall(float t)  { return abs(t - TYPE_WALL) < 0.5; }
 bool isSmoke(float t) { return abs(t - TYPE_SMOKE) < 0.5; }
 bool isOil(float t)   { return abs(t - TYPE_OIL) < 0.5; }
+bool isFire(float t)  { return abs(t - TYPE_FIRE) < 0.5; }
 bool isFalling(float t) { return isSand(t) || isWater(t) || isOil(t); }
 bool isLiquid(float t) { return isWater(t) || isOil(t); }
 bool isGas(float t) { return isSmoke(t); }
@@ -49,9 +62,9 @@ bool canDisplace(float mover, float target) {
   return false;
 }
 
-// Smoke rises through empty, oil, and water
+// Smoke rises through empty, oil, water, and fire
 bool canRiseThrough(float target) {
-  return isEmpty(target) || isWater(target) || isOil(target);
+  return isEmpty(target) || isWater(target) || isOil(target) || isFire(target);
 }
 
 float hash21(vec2 p) {
@@ -90,7 +103,11 @@ void main() {
         float ct = getType(current);
         if (isEmpty(ct) || (u_replacing > 0.5 && !isWall(ct))) {
           float variant = floor(hash21(pos * 0.97 + vec2(u_seed * 7.13)) * 256.0);
-          gl_FragColor = encodeCell(u_particleType, variant);
+          if (isFire(u_particleType)) {
+            gl_FragColor = encodeCellWithLife(TYPE_FIRE, variant, FIRE_MAX_LIFE);
+          } else {
+            gl_FragColor = encodeCell(u_particleType, variant);
+          }
           return;
         }
       }
@@ -237,6 +254,51 @@ void main() {
       float tt = otBL; otBL = otBR; otBR = tt;
     }
   }
+
+  // Phase 5: Fire reactions (aging, ignition, extinguishing)
+  // Age fire and kill dead fire → smoke
+  if (isFire(otBL)) {
+    float life = getLife(oBL) - FIRE_DECAY;
+    if (life <= 0.0) { oBL = encodeCell(TYPE_SMOKE, oBL.g * 255.0); otBL = TYPE_SMOKE; }
+    else { oBL.b = life / 255.0; }
+  }
+  if (isFire(otBR)) {
+    float life = getLife(oBR) - FIRE_DECAY;
+    if (life <= 0.0) { oBR = encodeCell(TYPE_SMOKE, oBR.g * 255.0); otBR = TYPE_SMOKE; }
+    else { oBR.b = life / 255.0; }
+  }
+  if (isFire(otTL)) {
+    float life = getLife(oTL) - FIRE_DECAY;
+    if (life <= 0.0) { oTL = encodeCell(TYPE_SMOKE, oTL.g * 255.0); otTL = TYPE_SMOKE; }
+    else { oTL.b = life / 255.0; }
+  }
+  if (isFire(otTR)) {
+    float life = getLife(oTR) - FIRE_DECAY;
+    if (life <= 0.0) { oTR = encodeCell(TYPE_SMOKE, oTR.g * 255.0); otTR = TYPE_SMOKE; }
+    else { oTR.b = life / 255.0; }
+  }
+
+  // Oil ignition: oil adjacent to fire becomes fire
+  bool blNeighborFire = isFire(otBR) || isFire(otTL) || isFire(otTR);
+  bool brNeighborFire = isFire(otBL) || isFire(otTL) || isFire(otTR);
+  bool tlNeighborFire = isFire(otBL) || isFire(otBR) || isFire(otTR);
+  bool trNeighborFire = isFire(otBL) || isFire(otBR) || isFire(otTL);
+
+  if (isOil(otBL) && blNeighborFire) { oBL = encodeCellWithLife(TYPE_FIRE, oBL.g * 255.0, FIRE_MAX_LIFE); otBL = TYPE_FIRE; }
+  if (isOil(otBR) && brNeighborFire) { oBR = encodeCellWithLife(TYPE_FIRE, oBR.g * 255.0, FIRE_MAX_LIFE); otBR = TYPE_FIRE; }
+  if (isOil(otTL) && tlNeighborFire) { oTL = encodeCellWithLife(TYPE_FIRE, oTL.g * 255.0, FIRE_MAX_LIFE); otTL = TYPE_FIRE; }
+  if (isOil(otTR) && trNeighborFire) { oTR = encodeCellWithLife(TYPE_FIRE, oTR.g * 255.0, FIRE_MAX_LIFE); otTR = TYPE_FIRE; }
+
+  // Water extinguishes fire → becomes smoke
+  bool blNeighborWater = isWater(otBR) || isWater(otTL) || isWater(otTR);
+  bool brNeighborWater = isWater(otBL) || isWater(otTL) || isWater(otTR);
+  bool tlNeighborWater = isWater(otBL) || isWater(otBR) || isWater(otTR);
+  bool trNeighborWater = isWater(otBL) || isWater(otBR) || isWater(otTL);
+
+  if (isFire(otBL) && blNeighborWater) { oBL = encodeCell(TYPE_SMOKE, oBL.g * 255.0); otBL = TYPE_SMOKE; }
+  if (isFire(otBR) && brNeighborWater) { oBR = encodeCell(TYPE_SMOKE, oBR.g * 255.0); otBR = TYPE_SMOKE; }
+  if (isFire(otTL) && tlNeighborWater) { oTL = encodeCell(TYPE_SMOKE, oTL.g * 255.0); otTL = TYPE_SMOKE; }
+  if (isFire(otTR) && trNeighborWater) { oTR = encodeCell(TYPE_SMOKE, oTR.g * 255.0); otTR = TYPE_SMOKE; }
 
   // Output
   int lx = int(local.x);
