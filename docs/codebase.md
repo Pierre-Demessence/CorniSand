@@ -21,7 +21,9 @@ src/
 - Simulation uses ping-pong render targets (`rtA` / `rtB`)
 - Margolus offset alternates 0/1 each simulation step for full cell coverage
 - Water physics use 3-phase logic: vertical gravity+density, diagonal slide, horizontal liquid flow
-- `canDisplace()` implements density ordering: sand sinks through water, water flows into empty
+- Smoke physics use reverse gravity (rises), horizontal dispersion when blocked above
+- `canDisplace()` implements density ordering: smoke < empty < water < sand < wall
+- `canRiseThrough()` lets smoke rise through empty, water, and sand
 
 ## Adding new particle types
 

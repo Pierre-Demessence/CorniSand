@@ -55,7 +55,7 @@ toolButtons.forEach((btn) => {
   });
 });
 
-const typeMap: Record<string, number> = { '1': PARTICLE_TYPES.SAND, '2': PARTICLE_TYPES.WALL, '3': PARTICLE_TYPES.WATER };
+const typeMap: Record<string, number> = { '1': PARTICLE_TYPES.SAND, '2': PARTICLE_TYPES.WALL, '3': PARTICLE_TYPES.WATER, '4': PARTICLE_TYPES.SMOKE };
 document.addEventListener('keydown', (e) => {
   if (typeMap[e.key] !== undefined) {
     toolButtons.forEach((b) => {

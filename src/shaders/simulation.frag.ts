@@ -18,6 +18,7 @@ uniform float u_erasing;
 #define TYPE_SAND  1.0
 #define TYPE_WALL  2.0
 #define TYPE_WATER 3.0
+#define TYPE_SMOKE 4.0
 
 float getType(vec4 cell) {
   return floor(cell.r * 255.0 + 0.5);
@@ -31,14 +32,23 @@ bool isEmpty(float t) { return t < 0.5; }
 bool isSand(float t)  { return abs(t - TYPE_SAND) < 0.5; }
 bool isWater(float t) { return abs(t - TYPE_WATER) < 0.5; }
 bool isWall(float t)  { return abs(t - TYPE_WALL) < 0.5; }
+bool isSmoke(float t) { return abs(t - TYPE_SMOKE) < 0.5; }
 bool isFalling(float t) { return isSand(t) || isWater(t); }
 bool isLiquid(float t) { return isWater(t); }
+bool isGas(float t) { return isSmoke(t); }
 
-// Sand displaces empty and water (sinks); water displaces empty only
+// Density: smoke < empty < water < sand < wall
+// Sand displaces empty, water, and smoke; water displaces empty and smoke
 bool canDisplace(float mover, float target) {
   if (isEmpty(target)) return true;
-  if (isSand(mover) && isWater(target)) return true;
+  if (isSand(mover) && (isWater(target) || isSmoke(target))) return true;
+  if (isWater(mover) && isSmoke(target)) return true;
   return false;
+}
+
+// Smoke rises through empty and water (sand is too heavy — Phase 1 gravity cancels the rise)
+bool canRiseThrough(float target) {
+  return isEmpty(target) || isWater(target);
 }
 
 float hash21(vec2 p) {
@@ -99,6 +109,16 @@ void main() {
 
   vec4 oBL = vBL, oBR = vBR, oTL = vTL, oTR = vTR;
   float otBL = tBL, otBR = tBR, otTL = tTL, otTR = tTR;
+
+  // Phase 0: Smoke rises (reverse gravity)
+  if (isGas(otBL) && canRiseThrough(otTL)) {
+    vec4 tmp = oBL; oBL = oTL; oTL = tmp;
+    float tt = otBL; otBL = otTL; otTL = tt;
+  }
+  if (isGas(otBR) && canRiseThrough(otTR)) {
+    vec4 tmp = oBR; oBR = oTR; oTR = tmp;
+    float tt = otBR; otBR = otTR; otTR = tt;
+  }
 
   // Phase 1: Vertical fall (gravity + density: sand sinks through water)
   if (isFalling(otTL) && canDisplace(otTL, otBL)) {
@@ -166,6 +186,53 @@ void main() {
   } else if (isLiquid(otTR) && isEmpty(otTL) && !canDisplace(otTR, otBR)) {
     vec4 tmp = oTR; oTR = oTL; oTL = tmp;
     float tt = otTR; otTR = otTL; otTL = tt;
+  }
+
+  // Phase 4: Smoke horizontal dispersion
+  float rnd3 = hash21(blockOrigin * 2.13 + vec2(u_seed + 13.0));
+
+  // Top row: smoke disperses when blocked above (ceiling/other smoke)
+  bool tlWasGas = isGas(tTL);
+  bool trWasGas = isGas(tTR);
+
+  if (rnd3 > 0.5) {
+    if (isGas(otTL) && isEmpty(otTR) && tlWasGas) {
+      vec4 tmp = oTL; oTL = oTR; oTR = tmp;
+      float tt = otTL; otTL = otTR; otTR = tt;
+    } else if (isGas(otTR) && isEmpty(otTL) && trWasGas) {
+      vec4 tmp = oTR; oTR = oTL; oTL = tmp;
+      float tt = otTR; otTR = otTL; otTL = tt;
+    }
+  } else {
+    if (isGas(otTR) && isEmpty(otTL) && trWasGas) {
+      vec4 tmp = oTR; oTR = oTL; oTL = tmp;
+      float tt = otTR; otTR = otTL; otTL = tt;
+    } else if (isGas(otTL) && isEmpty(otTR) && tlWasGas) {
+      vec4 tmp = oTL; oTL = oTR; oTR = tmp;
+      float tt = otTL; otTL = otTR; otTR = tt;
+    }
+  }
+
+  // Bottom row: smoke disperses sideways (with wasGas guard and randomized direction)
+  bool blWasGas = isGas(tBL);
+  bool brWasGas = isGas(tBR);
+
+  if (rnd3 > 0.5) {
+    if (isGas(otBL) && isEmpty(otBR) && !canRiseThrough(otTL) && blWasGas) {
+      vec4 tmp = oBL; oBL = oBR; oBR = tmp;
+      float tt = otBL; otBL = otBR; otBR = tt;
+    } else if (isGas(otBR) && isEmpty(otBL) && !canRiseThrough(otTR) && brWasGas) {
+      vec4 tmp = oBR; oBR = oBL; oBL = tmp;
+      float tt = otBR; otBR = otBL; otBL = tt;
+    }
+  } else {
+    if (isGas(otBR) && isEmpty(otBL) && !canRiseThrough(otTR) && brWasGas) {
+      vec4 tmp = oBR; oBR = oBL; oBL = tmp;
+      float tt = otBR; otBR = otBL; otBL = tt;
+    } else if (isGas(otBL) && isEmpty(otBR) && !canRiseThrough(otTL) && blWasGas) {
+      vec4 tmp = oBL; oBL = oBR; oBR = tmp;
+      float tt = otBL; otBL = otBR; otBR = tt;
+    }
   }
 
   // Output

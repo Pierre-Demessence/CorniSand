@@ -71,6 +71,7 @@ export class InputHandler {
       if (e.key === '1') this.particleType = 1;
       else if (e.key === '2') this.particleType = 2;
       else if (e.key === '3') this.particleType = 3;
+      else if (e.key === '4') this.particleType = 4;
     });
   }
 

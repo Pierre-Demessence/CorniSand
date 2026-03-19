@@ -30,6 +30,13 @@ vec3 getWaterColor(float variant) {
   return mix(light, dark, t);
 }
 
+vec3 getSmokeColor(float variant) {
+  float t = variant / 255.0;
+  vec3 light = vec3(0.55, 0.55, 0.58);
+  vec3 dark = vec3(0.35, 0.35, 0.38);
+  return mix(light, dark, t);
+}
+
 float ditherNoise(vec2 pos) {
   return fract(sin(dot(pos, vec2(12.9898, 78.233))) * 43758.5453);
 }
@@ -52,6 +59,8 @@ void main() {
     color = getWallColor(variant);
   } else if (pType > 2.5 && pType < 3.5) {
     color = getWaterColor(variant);
+  } else if (pType > 3.5 && pType < 4.5) {
+    color = getSmokeColor(variant);
   }
 
   // Brush cursor indicator
