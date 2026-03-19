@@ -8,6 +8,7 @@ export interface DisplayOptions {
   brushSize: number;
   showBrush: boolean;
   erasing: boolean;
+  replacing: boolean;
 }
 
 export class Display {
@@ -25,6 +26,7 @@ export class Display {
         u_brushSize: { value: 10.0 },
         u_showBrush: { value: 1.0 },
         u_erasing: { value: 0.0 },
+        u_replacing: { value: 0.0 },
       },
       vertexShader: fullscreenVertShader,
       fragmentShader: displayFragShader,
@@ -47,6 +49,7 @@ export class Display {
     u.u_brushSize.value = opts.brushSize;
     u.u_showBrush.value = opts.showBrush ? 1.0 : 0.0;
     u.u_erasing.value = opts.erasing ? 1.0 : 0.0;
+    u.u_replacing.value = opts.replacing ? 1.0 : 0.0;
     u.u_screenResolution.value.set(
       renderer.domElement.width,
       renderer.domElement.height,

@@ -9,6 +9,7 @@ export interface SimulationInput {
   prevMousePos: Vec2;
   mouseActive: boolean;
   erasing: boolean;
+  replacing: boolean;
   brushSize: number;
   particleType: number;
 }
@@ -58,6 +59,7 @@ export class Simulation {
         u_prevMousePos: { value: new THREE.Vector2(-1, -1) },
         u_mouseActive: { value: 0.0 },
         u_erasing: { value: 0.0 },
+        u_replacing: { value: 0.0 },
       },
       vertexShader: fullscreenVertShader,
       fragmentShader: simulationFragShader,
@@ -116,6 +118,7 @@ export class Simulation {
     u.u_particleType.value = input.particleType;
     u.u_mouseActive.value = input.mouseActive ? 1.0 : 0.0;
     u.u_erasing.value = input.erasing ? 1.0 : 0.0;
+    u.u_replacing.value = input.replacing ? 1.0 : 0.0;
 
     for (let i = 0; i < stepsPerFrame; i++) {
       this.step(0, i === 0 && input.mouseActive);

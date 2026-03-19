@@ -13,6 +13,7 @@ uniform float u_brushSize;
 uniform float u_particleType;
 uniform float u_mouseActive;
 uniform float u_erasing;
+uniform float u_replacing;
 
 #define TYPE_EMPTY 0.0
 #define TYPE_SAND  1.0
@@ -85,7 +86,7 @@ void main() {
         }
       } else {
         float ct = getType(current);
-        if (isEmpty(ct)) {
+        if (isEmpty(ct) || (u_replacing > 0.5 && !isWall(ct))) {
           float variant = floor(hash21(pos * 0.97 + vec2(u_seed * 7.13)) * 256.0);
           gl_FragColor = encodeCell(u_particleType, variant);
           return;

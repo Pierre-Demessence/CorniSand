@@ -142,6 +142,7 @@ function animate(): void {
     prevMousePos,
     mouseActive,
     erasing,
+    replacing: input.shiftDown && !erasing,
     brushSize: input.brushSize,
     particleType: input.particleType,
   });
@@ -157,6 +158,7 @@ function animate(): void {
     brushSize: input.brushSize,
     showBrush: true,
     erasing,
+    replacing: input.shiftDown && !erasing,
   });
 }
 

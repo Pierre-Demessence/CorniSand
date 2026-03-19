@@ -10,6 +10,7 @@ export class InputHandler {
   mousePos: Vec2 = { x: -1, y: -1 };
   leftDown = false;
   rightDown = false;
+  shiftDown = false;
   brushSize = 10;
   particleType = 1;
 
@@ -48,30 +49,38 @@ export class InputHandler {
       c.setPointerCapture(e.pointerId);
       if (e.button === 0) this.leftDown = true;
       if (e.button === 2) this.rightDown = true;
+      this.shiftDown = e.shiftKey;
       this._toSimCoords(e.clientX, e.clientY);
     });
 
     c.addEventListener('pointermove', (e) => {
+      this.shiftDown = e.shiftKey;
       this._toSimCoords(e.clientX, e.clientY);
     });
 
     c.addEventListener('pointerup', (e) => {
       if (e.button === 0) this.leftDown = false;
       if (e.button === 2) this.rightDown = false;
+      this.shiftDown = e.shiftKey;
     });
 
     c.addEventListener('pointerleave', () => {
       this.leftDown = false;
       this.rightDown = false;
+      this.shiftDown = false;
     });
   }
 
   private _setupKeyboard(): void {
     document.addEventListener('keydown', (e) => {
-      if (e.key === '1') this.particleType = 1;
+      if (e.key === 'Shift') this.shiftDown = true;
+      else if (e.key === '1') this.particleType = 1;
       else if (e.key === '2') this.particleType = 2;
       else if (e.key === '3') this.particleType = 3;
       else if (e.key === '4') this.particleType = 4;
+    });
+    document.addEventListener('keyup', (e) => {
+      if (e.key === 'Shift') this.shiftDown = false;
     });
   }
 

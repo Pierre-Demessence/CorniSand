@@ -8,6 +8,7 @@ uniform vec2 u_mousePos;
 uniform float u_brushSize;
 uniform float u_showBrush;
 uniform float u_erasing;
+uniform float u_replacing;
 
 vec3 getSandColor(float variant) {
   float t = variant / 255.0;
@@ -71,7 +72,7 @@ void main() {
     float ringWidth = max(1.0, 1.5 * pixelSize);
 
     if (abs(dist - u_brushSize) < ringWidth) {
-      vec3 ringColor = u_erasing > 0.5 ? vec3(0.95, 0.30, 0.30) : vec3(0.9, 0.9, 0.9);
+      vec3 ringColor = u_erasing > 0.5 ? vec3(0.95, 0.30, 0.30) : u_replacing > 0.5 ? vec3(0.95, 0.70, 0.20) : vec3(0.9, 0.9, 0.9);
       color = mix(color, ringColor, 0.55);
     }
   }

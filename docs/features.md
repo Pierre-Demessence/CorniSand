@@ -4,7 +4,7 @@
 |----------------------------|--------|------------------------------------------------------------|
 | GPU sand simulation        | Done   | Margolus neighborhood cellular automaton on GPU             |
 | Wall particles             | Done   | Static solid blocks that sand piles on                      |
-| Brush drawing              | Done   | Left-click paint with line interpolation                    |
+| Brush drawing              | Done   | Left-click paint with line interpolation, Shift to replace existing |
 | Eraser                     | Done   | Right-click erase with brush                                |
 | Brush size control         | Done   | Scroll wheel adjusts brush radius                           |
 | Clear button               | Done   | Reset entire simulation grid                                |
