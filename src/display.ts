@@ -16,24 +16,22 @@ const UNIFORM_SIZE = UNIFORM_FLOATS * 4;
 export class Display {
   private readonly device: GPUDevice;
   private readonly pipeline: GPURenderPipeline;
-  private readonly sampler: GPUSampler;
   private readonly uniformBuffer: GPUBuffer;
   private readonly uniformData: Float32Array<ArrayBuffer>;
   private readonly bindGroupLayout: GPUBindGroupLayout;
+  private readonly bindGroupA: GPUBindGroup;
+  private readonly bindGroupB: GPUBindGroup;
+  private readonly simBufferA: GPUBuffer;
   private readonly simWidth: number;
   private readonly simHeight: number;
 
-  constructor(device: GPUDevice, format: GPUTextureFormat, simWidth: number, simHeight: number) {
+  constructor(device: GPUDevice, format: GPUTextureFormat, simWidth: number, simHeight: number, simBufferA: GPUBuffer, simBufferB: GPUBuffer) {
     this.device = device;
     this.simWidth = simWidth;
     this.simHeight = simHeight;
+    this.simBufferA = simBufferA;
 
     const shaderModule = device.createShaderModule({ code: displayWGSL });
-
-    this.sampler = device.createSampler({
-      magFilter: 'nearest',
-      minFilter: 'nearest',
-    });
 
     this.uniformBuffer = device.createBuffer({
       size: UNIFORM_SIZE,
@@ -43,9 +41,8 @@ export class Display {
 
     this.bindGroupLayout = device.createBindGroupLayout({
       entries: [
-        { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-        { binding: 1, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
-        { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+        { binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
+        { binding: 1, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
       ],
     });
 
@@ -62,12 +59,27 @@ export class Display {
       },
       primitive: { topology: 'triangle-list' },
     });
+
+    this.bindGroupA = device.createBindGroup({
+      layout: this.bindGroupLayout,
+      entries: [
+        { binding: 0, resource: { buffer: simBufferA } },
+        { binding: 1, resource: { buffer: this.uniformBuffer } },
+      ],
+    });
+    this.bindGroupB = device.createBindGroup({
+      layout: this.bindGroupLayout,
+      entries: [
+        { binding: 0, resource: { buffer: simBufferB } },
+        { binding: 1, resource: { buffer: this.uniformBuffer } },
+      ],
+    });
   }
 
   render(
     encoder: GPUCommandEncoder,
     targetView: GPUTextureView,
-    simTexture: GPUTexture,
+    simBuffer: GPUBuffer,
     screenWidth: number,
     screenHeight: number,
     opts: DisplayOptions,
@@ -88,14 +100,7 @@ export class Display {
 
     this.device.queue.writeBuffer(this.uniformBuffer, 0, this.uniformData);
 
-    const bindGroup = this.device.createBindGroup({
-      layout: this.bindGroupLayout,
-      entries: [
-        { binding: 0, resource: simTexture.createView() },
-        { binding: 1, resource: this.sampler },
-        { binding: 2, resource: { buffer: this.uniformBuffer } },
-      ],
-    });
+    const bindGroup = simBuffer === this.simBufferA ? this.bindGroupA : this.bindGroupB;
 
     const pass = encoder.beginRenderPass({
       colorAttachments: [{

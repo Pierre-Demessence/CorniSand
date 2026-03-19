@@ -1,4 +1,6 @@
-import { simulationWGSL } from './shaders/simulation.wgsl';
+import { solidCaWGSL } from './shaders/solid-ca.wgsl';
+import { pressureWGSL } from './shaders/pressure.wgsl';
+import { CellBuffer } from './cell-buffer';
 import type { Vec2 } from './input';
 
 export interface SimulationInput {
@@ -11,31 +13,40 @@ export interface SimulationInput {
   particleType: number;
 }
 
-// Uniform buffer: 14 f32 values, padded to 16-byte alignment (64 bytes total)
-const UNIFORM_FLOATS = 16;
-const UNIFORM_SIZE = UNIFORM_FLOATS * 4;
+// CA uniform: 14 f32 values padded to 16 (64 bytes)
+const CA_UNIFORM_FLOATS = 16;
+const CA_UNIFORM_SIZE = CA_UNIFORM_FLOATS * 4;
+
+// Pressure uniform: resolution (2f) + dt (1f) + pad (1f) = 16 bytes
+const PRESSURE_UNIFORM_FLOATS = 4;
+const PRESSURE_UNIFORM_SIZE = PRESSURE_UNIFORM_FLOATS * 4;
+
+const PRESSURE_DIFFUSION_ITERS = 2;
 
 export class Simulation {
   private readonly device: GPUDevice;
   readonly width: number;
   readonly height: number;
-  private stepCount = 0;
+  private readonly wgX: number;
+  private readonly wgY: number;
 
-  private texA: GPUTexture;
-  private texB: GPUTexture;
-  private current: GPUTexture;
-  private next: GPUTexture;
+  private readonly cells: CellBuffer;
 
-  private readonly uniformBuffer: GPUBuffer;
-  private readonly uniformData: Float32Array<ArrayBuffer>;
-  private readonly pipeline: GPUComputePipeline;
-  private readonly bindGroupLayout: GPUBindGroupLayout;
+  // -- CA pipeline --
+  private readonly caUniformBuffer: GPUBuffer;
+  private readonly caUniformData: Float32Array<ArrayBuffer>;
+  private readonly caPipeline: GPUComputePipeline;
+  private readonly caBindGroupLayout: GPUBindGroupLayout;
+  private readonly caBindGroupAtoB: GPUBindGroup;
+  private readonly caBindGroupBtoA: GPUBindGroup;
 
-  // Pre-created bind groups for ping-pong (avoids per-frame allocation)
-  private readonly viewA: GPUTextureView;
-  private readonly viewB: GPUTextureView;
-  private bindGroupAtoB: GPUBindGroup; // read A, write B
-  private bindGroupBtoA: GPUBindGroup; // read B, write A
+  // -- Pressure diffusion pipeline --
+  private readonly pressureUniformBuffer: GPUBuffer;
+  private readonly pressureUniformData: Float32Array<ArrayBuffer>;
+  private readonly pressurePipeline: GPUComputePipeline;
+  private readonly pressureBindGroupLayout: GPUBindGroupLayout;
+  private readonly pressureBindGroupAtoB: GPUBindGroup;
+  private readonly pressureBindGroupBtoA: GPUBindGroup;
 
   // Particle counting
   private readonly counterBuffer: GPUBuffer;
@@ -43,47 +54,56 @@ export class Simulation {
   private readonly countPipeline: GPUComputePipeline;
   private readonly countBindGroupLayout: GPUBindGroupLayout;
   private pendingCount = false;
+  private mapping = false;
   private lastCount = 0;
 
   constructor(device: GPUDevice, width: number, height: number) {
     this.device = device;
     this.width = width;
     this.height = height;
+    this.wgX = Math.ceil(width / 8);
+    this.wgY = Math.ceil(height / 8);
 
-    const texUsage =
-      GPUTextureUsage.TEXTURE_BINDING |
-      GPUTextureUsage.STORAGE_BINDING |
-      GPUTextureUsage.COPY_DST;
+    this.cells = new CellBuffer(device, width, height);
 
-    const texDesc: GPUTextureDescriptor = {
-      size: { width, height },
-      format: 'rgba8unorm',
-      usage: texUsage,
-    };
-
-    this.texA = device.createTexture(texDesc);
-    this.texB = device.createTexture(texDesc);
-    this.current = this.texA;
-    this.next = this.texB;
-
-    this.uniformBuffer = device.createBuffer({
-      size: UNIFORM_SIZE,
+    // -- CA setup --
+    this.caUniformBuffer = device.createBuffer({
+      size: CA_UNIFORM_SIZE,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
-    this.uniformData = new Float32Array(UNIFORM_FLOATS);
+    this.caUniformData = new Float32Array(CA_UNIFORM_FLOATS);
 
-    this.bindGroupLayout = device.createBindGroupLayout({
+    this.caBindGroupLayout = device.createBindGroupLayout({
       entries: [
-        { binding: 0, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: 'float' } },
-        { binding: 1, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: 'write-only', format: 'rgba8unorm' } },
+        { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
+        { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
         { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
       ],
     });
 
-    const simModule = device.createShaderModule({ code: simulationWGSL });
-    this.pipeline = device.createComputePipeline({
-      layout: device.createPipelineLayout({ bindGroupLayouts: [this.bindGroupLayout] }),
-      compute: { module: simModule, entryPoint: 'main' },
+    this.caPipeline = device.createComputePipeline({
+      layout: device.createPipelineLayout({ bindGroupLayouts: [this.caBindGroupLayout] }),
+      compute: { module: device.createShaderModule({ code: solidCaWGSL }), entryPoint: 'main' },
+    });
+
+    // -- Pressure diffusion setup --
+    this.pressureUniformBuffer = device.createBuffer({
+      size: PRESSURE_UNIFORM_SIZE,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+    this.pressureUniformData = new Float32Array(PRESSURE_UNIFORM_FLOATS);
+
+    this.pressureBindGroupLayout = device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
+        { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+        { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
+      ],
+    });
+
+    this.pressurePipeline = device.createComputePipeline({
+      layout: device.createPipelineLayout({ bindGroupLayouts: [this.pressureBindGroupLayout] }),
+      compute: { module: device.createShaderModule({ code: pressureWGSL }), entryPoint: 'main' },
     });
 
     // Particle counter setup
@@ -96,21 +116,24 @@ export class Simulation {
       usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
     });
 
-    // Count non-empty, non-wall particles using atomic counter
     const countShader = device.createShaderModule({
       code: /* wgsl */`
-        @group(0) @binding(0) var inputTex: texture_2d<f32>;
+        struct Cell {
+          pType: u32, variant: f32, lifetime: f32, pressure: f32,
+          velocityX: f32, velocityY: f32, _pad0: f32, _pad1: f32,
+        };
+        @group(0) @binding(0) var<storage, read> cells: array<Cell>;
         @group(0) @binding(1) var<storage, read_write> counter: atomic<u32>;
 
-        const TYPE_WALL: f32 = 2.0;
+        const W: u32 = ${width}u;
+        const H: u32 = ${height}u;
 
         @compute @workgroup_size(8, 8)
         fn main(@builtin(global_invocation_id) gid: vec3u) {
-          let dims = textureDimensions(inputTex);
-          if (gid.x >= dims.x || gid.y >= dims.y) { return; }
-          let cell = textureLoad(inputTex, vec2i(gid.xy), 0);
-          let pType = floor(cell.r * 255.0 + 0.5);
-          if (pType > 0.5 && abs(pType - TYPE_WALL) > 0.5) {
+          if (gid.x >= W || gid.y >= H) { return; }
+          let idx = gid.y * W + gid.x;
+          let cell = cells[idx];
+          if (cell.pType != 0u && cell.pType != 2u) {
             atomicAdd(&counter, 1u);
           }
         }
@@ -119,7 +142,7 @@ export class Simulation {
 
     this.countBindGroupLayout = device.createBindGroupLayout({
       entries: [
-        { binding: 0, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: 'float' } },
+        { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
         { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
       ],
     });
@@ -129,59 +152,60 @@ export class Simulation {
       compute: { module: countShader, entryPoint: 'main' },
     });
 
-    // Pre-create texture views and bind groups for simulation ping-pong
-    this.viewA = this.texA.createView();
-    this.viewB = this.texB.createView();
-    this.bindGroupAtoB = this.createSimBindGroup(this.viewA, this.viewB);
-    this.bindGroupBtoA = this.createSimBindGroup(this.viewB, this.viewA);
+    // Pre-create bind groups for ping-pong
+    this.caBindGroupAtoB = this.createBindGroup(this.caBindGroupLayout, this.cells.bufferA, this.cells.bufferB, this.caUniformBuffer);
+    this.caBindGroupBtoA = this.createBindGroup(this.caBindGroupLayout, this.cells.bufferB, this.cells.bufferA, this.caUniformBuffer);
+    this.pressureBindGroupAtoB = this.createBindGroup(this.pressureBindGroupLayout, this.cells.bufferA, this.cells.bufferB, this.pressureUniformBuffer);
+    this.pressureBindGroupBtoA = this.createBindGroup(this.pressureBindGroupLayout, this.cells.bufferB, this.cells.bufferA, this.pressureUniformBuffer);
+
+    // Pressure uniforms are constant — write once
+    this.pressureUniformData[0] = width;
+    this.pressureUniformData[1] = height;
+    this.pressureUniformData[2] = 1.0;
+    this.pressureUniformData[3] = 0;
+    device.queue.writeBuffer(this.pressureUniformBuffer, 0, this.pressureUniformData);
   }
 
-  private createSimBindGroup(input: GPUTextureView, output: GPUTextureView): GPUBindGroup {
+  private createBindGroup(layout: GPUBindGroupLayout, input: GPUBuffer, output: GPUBuffer, uniform: GPUBuffer): GPUBindGroup {
     return this.device.createBindGroup({
-      layout: this.bindGroupLayout,
+      layout,
       entries: [
-        { binding: 0, resource: input },
-        { binding: 1, resource: output },
-        { binding: 2, resource: { buffer: this.uniformBuffer } },
+        { binding: 0, resource: { buffer: input } },
+        { binding: 1, resource: { buffer: output } },
+        { binding: 2, resource: { buffer: uniform } },
       ],
     });
   }
 
+  private getCaBindGroup(): GPUBindGroup {
+    return this.cells.currentBuffer === this.cells.bufferA
+      ? this.caBindGroupAtoB : this.caBindGroupBtoA;
+  }
+
+  private getPressureBindGroup(): GPUBindGroup {
+    return this.cells.currentBuffer === this.cells.bufferA
+      ? this.pressureBindGroupAtoB : this.pressureBindGroupBtoA;
+  }
+
   clear(): void {
-    const zeros = new Uint8Array(this.width * this.height * 4);
-    this.device.queue.writeTexture(
-      { texture: this.texA },
-      zeros,
-      { bytesPerRow: this.width * 4, rowsPerImage: this.height },
-      { width: this.width, height: this.height },
-    );
-    this.device.queue.writeTexture(
-      { texture: this.texB },
-      zeros,
-      { bytesPerRow: this.width * 4, rowsPerImage: this.height },
-      { width: this.width, height: this.height },
-    );
-    this.stepCount = 0;
+    this.cells.clear();
   }
 
-  private swap(): void {
-    const tmp = this.current;
-    this.current = this.next;
-    this.next = tmp;
-  }
-
-  // Each step gets its own encoder+submit because all writeBuffer calls to the
-  // same uniform buffer execute before a batched submit, so only the last write
-  // would be visible to every dispatch. Per-step submit guarantees ordering.
+  // Pipeline: CA (offset 0+1) → pressure diffusion (N×)
   simulate(stepsPerFrame: number, input: SimulationInput): void {
     for (let i = 0; i < stepsPerFrame; i++) {
-      this.step(0, i === 0 && input.mouseActive, input);
-      this.step(1, false, input);
+      // Margolus CA: two sub-steps (offset 0 and 1)
+      this.caStep(0, i === 0 && input.mouseActive, input);
+      this.caStep(1, false, input);
+
+      for (let j = 0; j < PRESSURE_DIFFUSION_ITERS; j++) {
+        this.pressurePass();
+      }
     }
   }
 
-  private step(offset: number, applyInput: boolean, input: SimulationInput): void {
-    const d = this.uniformData;
+  private caStep(offset: number, applyInput: boolean, input: SimulationInput): void {
+    const d = this.caUniformData;
     d[0] = this.width;
     d[1] = this.height;
     d[2] = offset;
@@ -197,27 +221,41 @@ export class Simulation {
     d[12] = input.replacing ? 1.0 : 0.0;
     d[13] = 0;
 
-    this.device.queue.writeBuffer(this.uniformBuffer, 0, this.uniformData);
-
-    const bindGroup = this.current === this.texA ? this.bindGroupAtoB : this.bindGroupBtoA;
+    this.device.queue.writeBuffer(this.caUniformBuffer, 0, this.caUniformData);
 
     const encoder = this.device.createCommandEncoder();
     const pass = encoder.beginComputePass();
-    pass.setPipeline(this.pipeline);
-    pass.setBindGroup(0, bindGroup);
-    pass.dispatchWorkgroups(
-      Math.ceil(this.width / 8),
-      Math.ceil(this.height / 8),
-    );
+    pass.setPipeline(this.caPipeline);
+    pass.setBindGroup(0, this.getCaBindGroup());
+    pass.dispatchWorkgroups(this.wgX, this.wgY);
     pass.end();
     this.device.queue.submit([encoder.finish()]);
 
-    this.swap();
-    this.stepCount++;
+    this.cells.swap();
   }
 
-  get currentTexture(): GPUTexture {
-    return this.current;
+  private pressurePass(): void {
+    const encoder = this.device.createCommandEncoder();
+    const pass = encoder.beginComputePass();
+    pass.setPipeline(this.pressurePipeline);
+    pass.setBindGroup(0, this.getPressureBindGroup());
+    pass.dispatchWorkgroups(this.wgX, this.wgY);
+    pass.end();
+    this.device.queue.submit([encoder.finish()]);
+
+    this.cells.swap();
+  }
+
+  get currentBuffer(): GPUBuffer {
+    return this.cells.currentBuffer;
+  }
+
+  get bufferA(): GPUBuffer {
+    return this.cells.bufferA;
+  }
+
+  get bufferB(): GPUBuffer {
+    return this.cells.bufferB;
   }
 
   requestParticleCount(): void {
@@ -229,7 +267,7 @@ export class Simulation {
     const bindGroup = this.device.createBindGroup({
       layout: this.countBindGroupLayout,
       entries: [
-        { binding: 0, resource: this.current === this.texA ? this.viewA : this.viewB },
+        { binding: 0, resource: { buffer: this.cells.currentBuffer } },
         { binding: 1, resource: { buffer: this.counterBuffer } },
       ],
     });
@@ -238,10 +276,7 @@ export class Simulation {
     const pass = encoder.beginComputePass();
     pass.setPipeline(this.countPipeline);
     pass.setBindGroup(0, bindGroup);
-    pass.dispatchWorkgroups(
-      Math.ceil(this.width / 8),
-      Math.ceil(this.height / 8),
-    );
+    pass.dispatchWorkgroups(this.wgX, this.wgY);
     pass.end();
 
     encoder.copyBufferToBuffer(this.counterBuffer, 0, this.counterStagingBuffer, 0, 4);
@@ -250,20 +285,25 @@ export class Simulation {
   }
 
   async readParticleCount(): Promise<number> {
-    if (!this.pendingCount) return this.lastCount;
+    if (!this.pendingCount || this.mapping) return this.lastCount;
 
-    await this.counterStagingBuffer.mapAsync(GPUMapMode.READ);
-    const data = new Uint32Array(this.counterStagingBuffer.getMappedRange());
-    this.lastCount = data[0];
-    this.counterStagingBuffer.unmap();
-    this.pendingCount = false;
+    this.mapping = true;
+    try {
+      await this.counterStagingBuffer.mapAsync(GPUMapMode.READ);
+      const data = new Uint32Array(this.counterStagingBuffer.getMappedRange());
+      this.lastCount = data[0];
+      this.counterStagingBuffer.unmap();
+      this.pendingCount = false;
+    } finally {
+      this.mapping = false;
+    }
     return this.lastCount;
   }
 
   dispose(): void {
-    this.texA.destroy();
-    this.texB.destroy();
-    this.uniformBuffer.destroy();
+    this.cells.dispose();
+    this.caUniformBuffer.destroy();
+    this.pressureUniformBuffer.destroy();
     this.counterBuffer.destroy();
     this.counterStagingBuffer.destroy();
   }

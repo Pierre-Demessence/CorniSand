@@ -29,7 +29,7 @@ async function main(): Promise<void> {
 
   const { device, context, format } = gpu;
   const simulation = new Simulation(device, simWidth, simHeight);
-  const display = new Display(device, format, simWidth, simHeight);
+  const display = new Display(device, format, simWidth, simHeight, simulation.bufferA, simulation.bufferB);
   const input = new InputHandler(canvas, simWidth, simHeight);
 
   const SPEED_STEPS = [1, 2, 4, 8, 16, 24, 32];
@@ -172,7 +172,7 @@ async function main(): Promise<void> {
 
     const encoder = device.createCommandEncoder();
     const targetView = context.getCurrentTexture().createView();
-    display.render(encoder, targetView, simulation.currentTexture, canvas.width, canvas.height, {
+    display.render(encoder, targetView, simulation.currentBuffer, canvas.width, canvas.height, {
       mousePos: input.mousePos,
       brushSize: input.brushSize,
       showBrush: true,
@@ -183,7 +183,7 @@ async function main(): Promise<void> {
     device.queue.submit([encoder.finish()]);
 
     // Read back particle count (non-blocking)
-    simulation.readParticleCount().then(updateParticleDisplay);
+    simulation.readParticleCount().then(updateParticleDisplay).catch(() => {});
   }
 
   animate();
