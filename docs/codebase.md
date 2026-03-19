@@ -20,6 +20,8 @@ src/
 - G channel stores per-particle color variant for visual variety
 - Simulation uses ping-pong render targets (`rtA` / `rtB`)
 - Margolus offset alternates 0/1 each simulation step for full cell coverage
+- Water physics use 3-phase logic: vertical gravity+density, diagonal slide, horizontal liquid flow
+- `canDisplace()` implements density ordering: sand sinks through water, water flows into empty
 
 ## Adding new particle types
 

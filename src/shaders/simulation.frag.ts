@@ -17,6 +17,7 @@ uniform float u_erasing;
 #define TYPE_EMPTY 0.0
 #define TYPE_SAND  1.0
 #define TYPE_WALL  2.0
+#define TYPE_WATER 3.0
 
 float getType(vec4 cell) {
   return floor(cell.r * 255.0 + 0.5);
@@ -26,12 +27,18 @@ vec4 encodeCell(float pType, float variant) {
   return vec4(pType / 255.0, variant / 255.0, 0.0, 1.0);
 }
 
-bool isFalling(float t) {
-  return t > 0.5 && t < 1.5;
-}
+bool isEmpty(float t) { return t < 0.5; }
+bool isSand(float t)  { return abs(t - TYPE_SAND) < 0.5; }
+bool isWater(float t) { return abs(t - TYPE_WATER) < 0.5; }
+bool isWall(float t)  { return abs(t - TYPE_WALL) < 0.5; }
+bool isFalling(float t) { return isSand(t) || isWater(t); }
+bool isLiquid(float t) { return isWater(t); }
 
-bool isEmpty(float t) {
-  return t < 0.5;
+// Sand displaces empty and water (sinks); water displaces empty only
+bool canDisplace(float mover, float target) {
+  if (isEmpty(target)) return true;
+  if (isSand(mover) && isWater(target)) return true;
+  return false;
 }
 
 float hash21(vec2 p) {
@@ -53,7 +60,6 @@ void main() {
   vec4 current = readCell(pos);
 
   // --- Mouse input: paint or erase ---
-  // Distance to line segment between prev and current mouse pos
   if (u_mouseActive > 0.5) {
     vec2 ab = u_mousePos - u_prevMousePos;
     float segLen2 = dot(ab, ab);
@@ -83,57 +89,86 @@ void main() {
   vec2 blockOrigin = floor((pos - offset) / 2.0) * 2.0 + offset;
   vec2 local = pos - blockOrigin;
 
-  // Read the 4 cells of this 2x2 block
-  // Layout:  [TL TR]   TL=(0,1) TR=(1,1)
-  //          [BL BR]   BL=(0,0) BR=(1,0)
   vec4 vBL = readCell(blockOrigin);
   vec4 vBR = readCell(blockOrigin + vec2(1.0, 0.0));
   vec4 vTL = readCell(blockOrigin + vec2(0.0, 1.0));
   vec4 vTR = readCell(blockOrigin + vec2(1.0, 1.0));
 
-  float tBL = getType(vBL);
-  float tBR = getType(vBR);
-  float tTL = getType(vTL);
-  float tTR = getType(vTR);
+  float tBL = getType(vBL), tBR = getType(vBR);
+  float tTL = getType(vTL), tTR = getType(vTR);
 
-  // Working copies
   vec4 oBL = vBL, oBR = vBR, oTL = vTL, oTR = vTR;
   float otBL = tBL, otBR = tBR, otTL = tTL, otTR = tTR;
 
-  // Phase 1: Vertical fall (gravity)
-  if (isFalling(otTL) && isEmpty(otBL)) {
+  // Phase 1: Vertical fall (gravity + density: sand sinks through water)
+  if (isFalling(otTL) && canDisplace(otTL, otBL)) {
     vec4 tmp = oTL; oTL = oBL; oBL = tmp;
     float tt = otTL; otTL = otBL; otBL = tt;
   }
-  if (isFalling(otTR) && isEmpty(otBR)) {
+  if (isFalling(otTR) && canDisplace(otTR, otBR)) {
     vec4 tmp = oTR; oTR = oBR; oBR = tmp;
     float tt = otTR; otTR = otBR; otBR = tt;
   }
 
-  // Phase 2: Diagonal slide (randomized direction to prevent bias)
+  // Phase 2: Diagonal slide (randomized to prevent directional bias)
   float rnd = hash21(blockOrigin * 0.731 + vec2(u_seed));
 
   if (rnd > 0.5) {
-    if (isFalling(otTL) && !isEmpty(otBL) && isEmpty(otBR)) {
-      oBR = oTL; oTL = encodeCell(TYPE_EMPTY, 0.0);
-      otBR = otTL; otTL = TYPE_EMPTY;
+    if (isSand(otTL) && !canDisplace(otTL, otBL) && canDisplace(otTL, otBR)) {
+      vec4 tmp = oTL; oTL = oBR; oBR = tmp;
+      float tt = otTL; otTL = otBR; otBR = tt;
     }
-    if (isFalling(otTR) && !isEmpty(otBR) && isEmpty(otBL)) {
-      oBL = oTR; oTR = encodeCell(TYPE_EMPTY, 0.0);
-      otBL = otTR; otTR = TYPE_EMPTY;
+    if (isSand(otTR) && !canDisplace(otTR, otBR) && canDisplace(otTR, otBL)) {
+      vec4 tmp = oTR; oTR = oBL; oBL = tmp;
+      float tt = otTR; otTR = otBL; otBL = tt;
     }
   } else {
-    if (isFalling(otTR) && !isEmpty(otBR) && isEmpty(otBL)) {
-      oBL = oTR; oTR = encodeCell(TYPE_EMPTY, 0.0);
-      otBL = otTR; otTR = TYPE_EMPTY;
+    if (isSand(otTR) && !canDisplace(otTR, otBR) && canDisplace(otTR, otBL)) {
+      vec4 tmp = oTR; oTR = oBL; oBL = tmp;
+      float tt = otTR; otTR = otBL; otBL = tt;
     }
-    if (isFalling(otTL) && !isEmpty(otBL) && isEmpty(otBR)) {
-      oBR = oTL; oTL = encodeCell(TYPE_EMPTY, 0.0);
-      otBR = otTL; otTL = TYPE_EMPTY;
+    if (isSand(otTL) && !canDisplace(otTL, otBL) && canDisplace(otTL, otBR)) {
+      vec4 tmp = oTL; oTL = oBR; oBR = tmp;
+      float tt = otTL; otTL = otBR; otBR = tt;
     }
   }
 
-  // Output the cell matching this fragment's position in the block
+  // Phase 3: Horizontal liquid flow (water spreads sideways)
+  float rnd2 = hash21(blockOrigin * 1.37 + vec2(u_seed + 7.0));
+
+  // Bottom row: only flow water that was already here before this step
+  // (prevents fall-then-spread diagonal jets)
+  bool blWasLiquid = isLiquid(tBL);
+  bool brWasLiquid = isLiquid(tBR);
+
+  if (rnd2 > 0.5) {
+    if (isLiquid(otBL) && isEmpty(otBR) && blWasLiquid) {
+      vec4 tmp = oBL; oBL = oBR; oBR = tmp;
+      float tt = otBL; otBL = otBR; otBR = tt;
+    } else if (isLiquid(otBR) && isEmpty(otBL) && brWasLiquid) {
+      vec4 tmp = oBR; oBR = oBL; oBL = tmp;
+      float tt = otBR; otBR = otBL; otBL = tt;
+    }
+  } else {
+    if (isLiquid(otBR) && isEmpty(otBL) && brWasLiquid) {
+      vec4 tmp = oBR; oBR = oBL; oBL = tmp;
+      float tt = otBR; otBR = otBL; otBL = tt;
+    } else if (isLiquid(otBL) && isEmpty(otBR) && blWasLiquid) {
+      vec4 tmp = oBL; oBL = oBR; oBR = tmp;
+      float tt = otBL; otBL = otBR; otBR = tt;
+    }
+  }
+
+  // Top row: liquid flows if blocked below
+  if (isLiquid(otTL) && isEmpty(otTR) && !canDisplace(otTL, otBL)) {
+    vec4 tmp = oTL; oTL = oTR; oTR = tmp;
+    float tt = otTL; otTL = otTR; otTR = tt;
+  } else if (isLiquid(otTR) && isEmpty(otTL) && !canDisplace(otTR, otBR)) {
+    vec4 tmp = oTR; oTR = oTL; oTL = tmp;
+    float tt = otTR; otTR = otTL; otTL = tt;
+  }
+
+  // Output
   int lx = int(local.x);
   int ly = int(local.y);
 

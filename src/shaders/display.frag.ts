@@ -23,6 +23,13 @@ vec3 getWallColor(float variant) {
   return mix(vec3(0.38, 0.40, 0.42), vec3(0.48, 0.50, 0.52), t);
 }
 
+vec3 getWaterColor(float variant) {
+  float t = variant / 255.0;
+  vec3 light = vec3(0.25, 0.52, 0.82);
+  vec3 dark = vec3(0.12, 0.32, 0.62);
+  return mix(light, dark, t);
+}
+
 float ditherNoise(vec2 pos) {
   return fract(sin(dot(pos, vec2(12.9898, 78.233))) * 43758.5453);
 }
@@ -43,6 +50,8 @@ void main() {
     color = getSandColor(variant);
   } else if (pType > 1.5 && pType < 2.5) {
     color = getWallColor(variant);
+  } else if (pType > 2.5 && pType < 3.5) {
+    color = getWaterColor(variant);
   }
 
   // Brush cursor indicator
