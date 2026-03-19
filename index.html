@@ -23,7 +23,7 @@
         #canvas {
             display: block;
             width: 100vw;
-            height: 100vh;
+            height: calc(100vh - 48px);
             touch-action: none;
         }
 
@@ -119,7 +119,7 @@
 
     <div class="help-hint" id="help-hint">
         Left click: draw · Right click: erase<br>
-        Scroll: brush size · 1-3: select tool
+        Scroll: brush size · 1-3: select tool · [/]: speed
     </div>
 
     <div id="toolbar">
@@ -132,6 +132,10 @@
         <span class="info-text" id="fps">-- FPS</span>
         <div class="separator"></div>
         <span class="info-text" id="grid-info">--</span>
+        <div class="separator"></div>
+        <button class="tool-btn" type="button" id="speed-down" title="Slow down ([)">&#x2039;</button>
+        <span class="info-text" id="speed-display">Speed: 1x</span>
+        <button class="tool-btn" type="button" id="speed-up" title="Speed up (])">&#x203a;</button>
         <button id="clear-btn">Clear</button>
     </div>
 
