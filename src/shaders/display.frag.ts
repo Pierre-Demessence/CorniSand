@@ -11,31 +11,19 @@ uniform float u_erasing;
 uniform float u_replacing;
 
 vec3 getSandColor(float variant) {
-  float t = variant / 255.0;
-  vec3 light = vec3(0.90, 0.82, 0.58);
-  vec3 mid   = vec3(0.76, 0.68, 0.46);
-  vec3 dark  = vec3(0.58, 0.48, 0.30);
-  if (t < 0.5) return mix(mid, light, t * 2.0);
-  return mix(mid, dark, (t - 0.5) * 2.0);
+  return vec3(0.80, 0.70, 0.48);
 }
 
 vec3 getWallColor(float variant) {
-  float t = variant / 255.0;
-  return mix(vec3(0.38, 0.40, 0.42), vec3(0.48, 0.50, 0.52), t);
+  return vec3(0.43, 0.45, 0.47);
 }
 
 vec3 getWaterColor(float variant) {
-  float t = variant / 255.0;
-  vec3 light = vec3(0.25, 0.52, 0.82);
-  vec3 dark = vec3(0.12, 0.32, 0.62);
-  return mix(light, dark, t);
+  return vec3(0.18, 0.42, 0.72);
 }
 
 vec3 getSmokeColor(float variant) {
-  float t = variant / 255.0;
-  vec3 light = vec3(0.55, 0.55, 0.58);
-  vec3 dark = vec3(0.35, 0.35, 0.38);
-  return mix(light, dark, t);
+  return vec3(0.72, 0.72, 0.74);
 }
 
 float ditherNoise(vec2 pos) {
