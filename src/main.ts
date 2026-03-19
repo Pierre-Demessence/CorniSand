@@ -46,7 +46,7 @@ gridEl.textContent = `${simWidth}×${simHeight} (${((simWidth * simHeight) / 1e6
 
 setTimeout(() => { helpHint.style.opacity = '0'; }, 4000);
 
-const toolButtons = document.querySelectorAll<HTMLButtonElement>('.tool-btn');
+const toolButtons = document.querySelectorAll<HTMLButtonElement>('.tool-btn[data-type]');
 toolButtons.forEach((btn) => {
   btn.addEventListener('click', () => {
     toolButtons.forEach((b) => b.classList.remove('active'));
