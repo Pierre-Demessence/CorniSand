@@ -2,7 +2,7 @@
 
 | Component       | Technology         | Version  |
 |-----------------|--------------------|----------|
-| Language        | JavaScript (ES2022)| -        |
+| Language        | TypeScript (strict)| ^5.7     |
 | Shaders         | GLSL ES 1.0       | -        |
 | 3D Framework    | Three.js           | ^0.170   |
 | Bundler         | Vite               | ^6.0     |

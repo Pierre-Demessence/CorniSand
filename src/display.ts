@@ -1,9 +1,21 @@
 import * as THREE from 'three';
-import { displayFragShader } from './shaders/display.frag.js';
-import { fullscreenVertShader } from './shaders/fullscreen.vert.js';
+import { displayFragShader } from './shaders/display.frag';
+import { fullscreenVertShader } from './shaders/fullscreen.vert';
+import type { Vec2 } from './input';
+
+export interface DisplayOptions {
+  mousePos: Vec2;
+  brushSize: number;
+  showBrush: boolean;
+  erasing: boolean;
+}
 
 export class Display {
-  constructor(simWidth, simHeight) {
+  private readonly material: THREE.ShaderMaterial;
+  private readonly scene: THREE.Scene;
+  private readonly camera: THREE.OrthographicCamera;
+
+  constructor(simWidth: number, simHeight: number) {
     this.material = new THREE.ShaderMaterial({
       uniforms: {
         u_state: { value: null },
@@ -28,7 +40,7 @@ export class Display {
     ));
   }
 
-  render(renderer, stateTexture, opts) {
+  render(renderer: THREE.WebGLRenderer, stateTexture: THREE.Texture, opts: DisplayOptions): void {
     const u = this.material.uniforms;
     u.u_state.value = stateTexture;
     u.u_mousePos.value.set(opts.mousePos.x, opts.mousePos.y);
@@ -44,7 +56,7 @@ export class Display {
     renderer.render(this.scene, this.camera);
   }
 
-  dispose() {
+  dispose(): void {
     this.material.dispose();
   }
 }

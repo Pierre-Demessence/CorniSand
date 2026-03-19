@@ -1,10 +1,10 @@
 import * as THREE from 'three';
-import { Simulation } from './simulation.js';
-import { Display } from './display.js';
-import { InputHandler } from './input.js';
-import { PARTICLE_TYPES } from './particles.js';
+import { Simulation } from './simulation';
+import { Display } from './display';
+import { InputHandler, type Vec2 } from './input';
+import { PARTICLE_TYPES } from './particles';
 
-const canvas = document.getElementById('canvas');
+const canvas = document.getElementById('canvas') as HTMLCanvasElement;
 const renderer = new THREE.WebGLRenderer({
   canvas,
   antialias: false,
@@ -23,21 +23,19 @@ const input = new InputHandler(canvas, simWidth, simHeight);
 
 const STEPS_PER_FRAME = 16;
 
-let lastDrawPos = { x: -1, y: -1 };
+let lastDrawPos: Vec2 = { x: -1, y: -1 };
 
 // --- UI wiring ---
-const fpsEl = document.getElementById('fps');
-const brushEl = document.getElementById('brush-size');
-const gridEl = document.getElementById('grid-info');
-const helpHint = document.getElementById('help-hint');
+const fpsEl = document.getElementById('fps')!;
+const brushEl = document.getElementById('brush-size')!;
+const gridEl = document.getElementById('grid-info')!;
+const helpHint = document.getElementById('help-hint') as HTMLElement;
 
 gridEl.textContent = `${simWidth}×${simHeight} (${((simWidth * simHeight) / 1e6).toFixed(1)}M cells)`;
 
-// Fade out help hint
 setTimeout(() => { helpHint.style.opacity = '0'; }, 4000);
 
-// Tool buttons
-const toolButtons = document.querySelectorAll('.tool-btn');
+const toolButtons = document.querySelectorAll<HTMLButtonElement>('.tool-btn');
 toolButtons.forEach((btn) => {
   btn.addEventListener('click', () => {
     toolButtons.forEach((b) => b.classList.remove('active'));
@@ -46,9 +44,8 @@ toolButtons.forEach((btn) => {
   });
 });
 
-// Sync keyboard selection with button UI
+const typeMap: Record<string, number> = { '1': PARTICLE_TYPES.SAND, '2': PARTICLE_TYPES.WALL };
 document.addEventListener('keydown', (e) => {
-  const typeMap = { '1': PARTICLE_TYPES.SAND, '2': PARTICLE_TYPES.WALL };
   if (typeMap[e.key] !== undefined) {
     toolButtons.forEach((b) => {
       b.classList.toggle('active', Number(b.dataset.type) === typeMap[e.key]);
@@ -56,7 +53,7 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-document.getElementById('clear-btn').addEventListener('click', () => {
+document.getElementById('clear-btn')!.addEventListener('click', () => {
   simulation.clear();
 });
 
@@ -70,7 +67,7 @@ window.addEventListener('resize', () => {
 });
 
 // --- Animation loop ---
-function animate() {
+function animate(): void {
   requestAnimationFrame(animate);
 
   frameCount++;

@@ -1,15 +1,36 @@
 import * as THREE from 'three';
-import { simulationFragShader } from './shaders/simulation.frag.js';
-import { fullscreenVertShader } from './shaders/fullscreen.vert.js';
+import { simulationFragShader } from './shaders/simulation.frag';
+import { fullscreenVertShader } from './shaders/fullscreen.vert';
+import type { Vec2 } from './input';
+
+export interface SimulationInput {
+  mousePos: Vec2;
+  prevMousePos: Vec2;
+  mouseActive: boolean;
+  erasing: boolean;
+  brushSize: number;
+  particleType: number;
+}
 
 export class Simulation {
-  constructor(renderer, width, height) {
+  private readonly renderer: THREE.WebGLRenderer;
+  readonly width: number;
+  readonly height: number;
+  private stepCount = 0;
+  private rtA: THREE.WebGLRenderTarget;
+  private rtB: THREE.WebGLRenderTarget;
+  private current: THREE.WebGLRenderTarget;
+  private next: THREE.WebGLRenderTarget;
+  private readonly simMaterial: THREE.ShaderMaterial;
+  private readonly scene: THREE.Scene;
+  private readonly camera: THREE.OrthographicCamera;
+
+  constructor(renderer: THREE.WebGLRenderer, width: number, height: number) {
     this.renderer = renderer;
     this.width = width;
     this.height = height;
-    this.stepCount = 0;
 
-    const rtOptions = {
+    const rtOptions: THREE.RenderTargetOptions = {
       minFilter: THREE.NearestFilter,
       magFilter: THREE.NearestFilter,
       format: THREE.RGBAFormat,
@@ -53,7 +74,7 @@ export class Simulation {
     this.clear();
   }
 
-  clear() {
+  clear(): void {
     const prev = this.renderer.getRenderTarget();
     this.renderer.setRenderTarget(this.rtA);
     this.renderer.clear();
@@ -63,13 +84,13 @@ export class Simulation {
     this.stepCount = 0;
   }
 
-  swap() {
+  private swap(): void {
     const tmp = this.current;
     this.current = this.next;
     this.next = tmp;
   }
 
-  step(offset, applyInput) {
+  private step(offset: number, applyInput: boolean): void {
     const u = this.simMaterial.uniforms;
     u.u_state.value = this.current.texture;
     u.u_offset.value = offset;
@@ -85,7 +106,7 @@ export class Simulation {
     this.stepCount++;
   }
 
-  simulate(stepsPerFrame, input) {
+  simulate(stepsPerFrame: number, input: SimulationInput): void {
     const u = this.simMaterial.uniforms;
     u.u_prevMousePos.value.set(input.prevMousePos.x, input.prevMousePos.y);
     u.u_mousePos.value.set(input.mousePos.x, input.mousePos.y);
@@ -95,17 +116,16 @@ export class Simulation {
     u.u_erasing.value = input.erasing ? 1.0 : 0.0;
 
     for (let i = 0; i < stepsPerFrame; i++) {
-      // Superstep: process offset 0, then offset 1 for full coverage
       this.step(0, i === 0 && input.mouseActive);
       this.step(1, false);
     }
   }
 
-  get texture() {
+  get texture(): THREE.Texture {
     return this.current.texture;
   }
 
-  dispose() {
+  dispose(): void {
     this.rtA.dispose();
     this.rtB.dispose();
     this.simMaterial.dispose();

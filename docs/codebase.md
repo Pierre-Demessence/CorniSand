@@ -2,15 +2,15 @@
 
 ```
 src/
-├── main.js              # App entry: Three.js setup, animation loop, UI wiring
-├── simulation.js        # GPU simulation engine (ping-pong render targets)
-├── display.js           # Display renderer (maps state texture to colors)
-├── input.js             # Pointer/keyboard/wheel input handling
-├── particles.js         # Particle type constants
+├── main.ts              # App entry: Three.js setup, animation loop, UI wiring
+├── simulation.ts        # GPU simulation engine (ping-pong render targets)
+├── display.ts           # Display renderer (maps state texture to colors)
+├── input.ts             # Pointer/keyboard/wheel input handling
+├── particles.ts         # Particle type constants
 └── shaders/
-    ├── fullscreen.vert.js    # Shared fullscreen quad vertex shader
-    ├── simulation.frag.js    # Margolus neighborhood cellular automaton
-    └── display.frag.js       # Color mapping + brush cursor overlay
+    ├── fullscreen.vert.ts    # Shared fullscreen quad vertex shader
+    ├── simulation.frag.ts    # Margolus neighborhood cellular automaton
+    └── display.frag.ts       # Color mapping + brush cursor overlay
 ```
 
 ## Conventions
@@ -23,7 +23,7 @@ src/
 
 ## Adding new particle types
 
-1. Add constant to `src/particles.js`
-2. Add physics rules to `src/shaders/simulation.frag.js` (`isFalling`, swap logic)
-3. Add color mapping to `src/shaders/display.frag.js`
+1. Add constant to `src/particles.ts`
+2. Add physics rules to `src/shaders/simulation.frag.ts` (`isFalling`, swap logic)
+3. Add color mapping to `src/shaders/display.frag.ts`
 4. Add UI button in `index.html` with matching `data-type`

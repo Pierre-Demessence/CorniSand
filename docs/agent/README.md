@@ -20,10 +20,10 @@ npm run preview  # Preview production build
 
 ### Important Paths
 
-- `src/shaders/simulation.frag.js` - Core physics rules
-- `src/shaders/display.frag.js` - Rendering / color mapping
-- `src/simulation.js` - Render target management, step loop
-- `src/particles.js` - Particle type registry
+- `src/shaders/simulation.frag.ts` - Core physics rules
+- `src/shaders/display.frag.ts` - Rendering / color mapping
+- `src/simulation.ts` - Render target management, step loop
+- `src/particles.ts` - Particle type registry
 
 ### Invariants
 
