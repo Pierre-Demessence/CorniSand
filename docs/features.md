@@ -18,3 +18,4 @@
 | Oil particles              | Done   | Liquid that floats on water, sinks sand, dark brown color |
 | Gas particles              | TODO   | Additional gas types (steam, toxic, etc.)                   |
 | Particle interactions      | TODO   | Chemical reactions, temperature, state changes              |
+| GitHub Pages deployment    | Done   | Auto-deploy to GitHub Pages on push to main                 |

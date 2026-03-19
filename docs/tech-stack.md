@@ -8,3 +8,5 @@
 | Bundler         | Vite               | ^6.0     |
 | Package Manager | npm                | 10+      |
 | Runtime         | Browser (WebGL2)   | Modern   |
+| CI/CD           | GitHub Actions     | -        |
+| Hosting         | GitHub Pages       | -        |

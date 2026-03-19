@@ -2,6 +2,8 @@
 
 GPU-accelerated falling sand simulation built with Three.js and WebGL shaders.
 
+**[Live Demo](https://pierre-demessence.github.io/CorniSand/)**
+
 ## Quick Start
 
 ```bash
