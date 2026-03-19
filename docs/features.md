@@ -11,6 +11,7 @@
 | Keyboard shortcuts         | Done   | 1/2/3 for particle selection, [/] for speed                 |
 | Touch support              | Done   | Pointer events for mobile                                   |
 | FPS counter                | Done   | Real-time framerate display                                 |
+| Particle count display     | Done   | Live count of active particles (updated every 2s when idle) |
 | Simulation speed control   | Done   | Variable speed 0.0625x–2x via buttons or [/] keys           |
 | Water particles            | Done   | Liquid that flows sideways, fills containers, density interactions |
 | Gas particles              | TODO   | Rises upward, disperses                                     |

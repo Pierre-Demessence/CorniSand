@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { simulationFragShader } from './shaders/simulation.frag';
 import { fullscreenVertShader } from './shaders/fullscreen.vert';
+import { PARTICLE_TYPES } from './particles';
 import type { Vec2 } from './input';
 
 export interface SimulationInput {
@@ -24,6 +25,7 @@ export class Simulation {
   private readonly simMaterial: THREE.ShaderMaterial;
   private readonly scene: THREE.Scene;
   private readonly camera: THREE.OrthographicCamera;
+  private countBuffer: Uint8Array | null = null;
 
   constructor(renderer: THREE.WebGLRenderer, width: number, height: number) {
     this.renderer = renderer;
@@ -125,9 +127,25 @@ export class Simulation {
     return this.current.texture;
   }
 
+  countParticles(): number {
+    if (!this.countBuffer) {
+      this.countBuffer = new Uint8Array(this.width * this.height * 4);
+    }
+    this.renderer.readRenderTargetPixels(
+      this.current, 0, 0, this.width, this.height, this.countBuffer,
+    );
+    let count = 0;
+    for (let i = 0; i < this.countBuffer.length; i += 4) {
+      const type = this.countBuffer[i];
+      if (type > 0 && type !== PARTICLE_TYPES.WALL) count++;
+    }
+    return count;
+  }
+
   dispose(): void {
     this.rtA.dispose();
     this.rtB.dispose();
     this.simMaterial.dispose();
+    this.countBuffer = null;
   }
 }

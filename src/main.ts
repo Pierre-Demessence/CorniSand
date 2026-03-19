@@ -35,6 +35,7 @@ const brushEl = document.getElementById('brush-size')!;
 const gridEl = document.getElementById('grid-info')!;
 const helpHint = document.getElementById('help-hint') as HTMLElement;
 const speedDisplay = document.getElementById('speed-display')!;
+const particleCountEl = document.getElementById('particle-count')!;
 
 function updateSpeedDisplay(): void {
   speedDisplay.textContent = `Speed: ${SPEED_LABELS[speedIndex]}`;
@@ -95,6 +96,7 @@ document.getElementById('clear-btn')!.addEventListener('click', () => {
 // --- FPS tracking ---
 let lastFpsTime = performance.now();
 let frameCount = 0;
+let lastCountTime = performance.now();
 
 // --- Resize handling (keeps sim resolution fixed, scales display) ---
 window.addEventListener('resize', () => {
@@ -112,6 +114,18 @@ function animate(): void {
     fpsEl.textContent = `${fps} FPS`;
     frameCount = 0;
     lastFpsTime = now;
+  }
+
+  if (now - lastCountTime >= 2000 && !input.mouseActive) {
+    lastCountTime = now;
+    const count = simulation.countParticles();
+    if (count >= 1_000_000) {
+      particleCountEl.textContent = `${(count / 1_000_000).toFixed(2)}M particles`;
+    } else if (count >= 1_000) {
+      particleCountEl.textContent = `${(count / 1_000).toFixed(1)}K particles`;
+    } else {
+      particleCountEl.textContent = `${count} particles`;
+    }
   }
 
   brushEl.textContent = `Brush: ${input.brushSize}`;
