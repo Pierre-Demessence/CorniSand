@@ -23,8 +23,8 @@ const display = new Display(simWidth, simHeight);
 const input = new InputHandler(canvas, simWidth, simHeight);
 
 const SPEED_STEPS = [1, 2, 4, 8, 16, 24, 32];
-const SPEED_LABELS = ['1/16x', '1/8x', '1/4x', '1/2x', '1x', '1.5x', '2x'];
-let speedIndex = 4;
+const SPEED_LABELS = ['1/4x', '1/2x', '1x', '2x', '4x', '6x', '8x'];
+let speedIndex = 2;
 let stepsPerFrame = SPEED_STEPS[speedIndex];
 
 let lastDrawPos: Vec2 = { x: -1, y: -1 };
