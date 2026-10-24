@@ -5,10 +5,10 @@ import { expectVolumesConstant, load, LONG, makeModel } from './liquid-acceptanc
 describe('liquid acceptance (CPU reference): volume', () => {
   it.each(['uTube', 'basin', 'damBreak', 'sandIntoPool', 'oilOnWater', 'uTubeOil'])(
     'AC4: volume stays constant in %s',
-    (name) => {
+    async (name) => {
       const model = makeModel();
-      load(model, SCENES[name]());
-      expectVolumesConstant(model, 1500);
+      await load(model, SCENES[name]());
+      await expectVolumesConstant(model, 1500);
     },
     LONG,
   );

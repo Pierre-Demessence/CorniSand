@@ -1,19 +1,25 @@
 import type { Scene } from '../src/scenes';
 
-/** What the acceptance tests need from a liquid simulation, so the same tests run on every implementation. */
+/** A synchronous model (the CPU reference) or one that reads back from the GPU. */
+type MaybePromise<T> = T | Promise<T>;
+
+/**
+ * What the acceptance tests need from a liquid simulation, so the same tests run on every implementation. Every
+ * method may return a Promise, so a model that reads back from the GPU fits; callers always await.
+ */
 export interface LiquidModel {
-  load(scene: Scene): void;
+  load(scene: Scene): MaybePromise<void>;
   /** Advances `n` supersteps: one fluid update plus the two CA dispatches each. */
-  step(n: number): void;
+  step(n: number): MaybePromise<void>;
   /** Packed cells, row y = 0 at the bottom. Valid until the next `step`. */
-  cells(): Uint32Array;
+  cells(): MaybePromise<Uint32Array>;
   /** Number of cells of a particle type. */
-  volume(type: number): number;
+  volume(type: number): MaybePromise<number>;
   /** Per-cell fill fraction, for representations that have one (foam check). */
-  fill?(): Float32Array;
+  fill?(): MaybePromise<Float32Array>;
   /** Largest face speed in cells per step. */
-  maxSpeed(): number;
-  /** Largest number of liquid cells the rasterization could not place since `load`, for representations that rasterize. */
+  maxSpeed(): MaybePromise<number>;
+  /** Largest number of liquid cells the rasterization could not place since `load`, for representations that rasterize; an async model updates it in `step`. */
   readonly maxShortfall?: number;
 }
 
@@ -29,18 +35,18 @@ export interface SettleResult {
  * run that starts at or before `within` and lasts `hold` steps; a model that merely passes through the band while
  * sloshing does not count.
  */
-export function settleAndHold(
+export async function settleAndHold(
   model: LiquidModel,
   check: (cells: Uint32Array) => boolean,
   { within, hold, every = 25 }: { within: number; hold: number; every?: number },
-): SettleResult {
+): Promise<SettleResult> {
   let step = 0;
   let since: number | null = null;
   let lastBreak: number | null = null;
   while (step < within + hold) {
-    model.step(every);
+    await model.step(every);
     step += every;
-    if (check(model.cells())) {
+    if (check(await model.cells())) {
       since ??= step;
       if (since > within) return { settledAt: null, lastBreak };
       if (step - since >= hold) return { settledAt: since, lastBreak };
@@ -54,9 +60,14 @@ export function settleAndHold(
 }
 
 /** Calls `observe` with the cells every `every` steps, `total` steps in all. */
-export function observe(model: LiquidModel, total: number, every: number, visit: (cells: Uint32Array, step: number) => void): void {
+export async function observe(
+  model: LiquidModel,
+  total: number,
+  every: number,
+  visit: (cells: Uint32Array, step: number) => void | Promise<void>,
+): Promise<void> {
   for (let step = every; step <= total; step += every) {
-    model.step(every);
-    visit(model.cells(), step);
+    await model.step(every);
+    await visit(await model.cells(), step);
   }
 }

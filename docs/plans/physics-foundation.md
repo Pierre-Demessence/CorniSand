@@ -1,6 +1,6 @@
 # M1 Physics foundation and realistic liquids
 
-Status: M1.1–M1.4d are done (the CPU reference is the GPU spec, the pre-M1.4 bench baseline is recorded, the GPU particle store, load and frame start exist, the GPU grid passes and pressure solve match the CPU, particles move and are rasterized on the GPU, the CA no longer moves liquid). Next: M1.4e, then the remaining items in order.
+Status: M1.1–M1.4e are done (the CPU reference is the GPU spec, the pre-M1.4 bench baseline is recorded, the GPU particle store, load and frame start exist, the GPU grid passes and pressure solve match the CPU, particles move and are rasterized on the GPU, the CA no longer moves liquid, AC1–AC9 pass on the GPU). Next: M1.4f, then the remaining items in order.
 
 ## Goal
 
@@ -289,7 +289,7 @@ Order matters: each item builds on the previous one. Every item that adds WGSL k
   - Full-step parity in `tests/fluid-parity.test.ts`, same scenes: with seeded velocities, after 1 step at most 2 cells differ and particle counts per cell match except in those cells, with the mean particle velocity per cell within `1e-4`. Particles are compared per cell because compaction reorders them. After 10 steps, per-type volumes identical and at most 0.5% of liquid cells differ (tighten or loosen once measured, and record why).
   - `tests/simulation.test.ts`: delete B2 (AC15 names the exception; the GPU AC9 case in M1.4e replaces it). D5 must still conserve every type; if water or oil drift, report `maxShortfall` and stop.
   - Add the CA put-out-after-ignition change with a GPU test: oil touching both fire and water becomes fire, then smoke, and its particles are gone.
-- [ ] **M1.4e GPU acceptance (AC12).**
+- [x] **M1.4e GPU acceptance (AC12).** Done. AC1–AC9 pass on the GPU with the CPU thresholds and `maxShortfall` 0 in all six AC4 scenes; `tests/liquids-gpu.test.ts` takes about 145 s (18 cases, the large U-tube longest). Deviations: the CPU suite's AC5–AC10 and AC11 oil-on-water bodies moved into `expect*` helpers in `tests/liquid-acceptance.ts`, which the CPU and GPU files both call, so the two suites cannot drift; `GpuLiquidModel` creates a new `Simulation` per `load` (the grid size follows the scene), keeps the cells of the last `step` read back, and refreshes `maxShortfall` from the select state after each `step`.
   - `tests/liquid-model.ts`: every `LiquidModel` method may return a Promise; `settleAndHold`, `observe` (awaiting its visitor) and `expectVolumesConstant` become async; the `tests/liquid-acceptance.ts` helpers and `tests/liquids-*.test.ts` await them (the CPU model stays synchronous).
   - New `tests/gpu-liquid-model.ts`: `GpuLiquidModel` over `Simulation` (`load` → `sim.load`; `step(n)` → `run` in chunks of at most 32; `cells` → `readCells`; `volume` from the cells; `maxSpeed` from `readParticles`).
   - New `tests/liquids-gpu.test.ts` (skips without a device): AC1–AC9 through the shared helpers, same thresholds, AC4 also asserting `maxShortfall` 0. If one fails while the CPU passes, run the parity test for more steps to find where they diverge; never tune a constant on the GPU side only.
