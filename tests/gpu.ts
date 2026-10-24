@@ -1,4 +1,6 @@
+import type { FluidStage } from '../src/fluid';
 import { PARTICLE_KIND, PARTICLE_STRIDE, type SpawnedParticles } from '../src/fluid-params';
+import { SELECT_FIELDS, SELECT_WORDS, type SelectField } from '../src/shaders/fluid-raster.wgsl';
 import { PARTICLE_TYPES } from '../src/particles';
 import { MAX_SUPERSTEPS, Simulation, type SimulationInput, type SimulationOptions } from '../src/simulation';
 import { mulberry32 } from '../src/random';
@@ -109,6 +111,19 @@ export async function readFluidState(sim: Simulation): Promise<{
   return { count, spawnCursor, compactCursor, water, oil };
 }
 
+// The words of the radix-select state, by name (`SELECT_FIELDS` order).
+export async function readSelectState(sim: Simulation): Promise<Record<SelectField, number>> {
+  const words = await readBuffer(device!, sim.fluid.raster.select, SELECT_WORDS * 4);
+  return Object.fromEntries(SELECT_FIELDS.map((name, i) => [name, words[i]])) as Record<SelectField, number>;
+}
+
+// Overwrites the named words of the radix-select state; the others keep their value.
+export async function writeSelectState(sim: Simulation, values: Partial<Record<SelectField, number>>): Promise<void> {
+  const words = await readBuffer(device!, sim.fluid.raster.select, SELECT_WORDS * 4);
+  for (const [name, value] of Object.entries(values)) words[SELECT_FIELDS.indexOf(name as SelectField)] = value;
+  device!.queue.writeBuffer(sim.fluid.raster.select, 0, words);
+}
+
 // One row [px, py, vx, vy, kind] per particle, sorted, to compare particle sets whose order differs.
 export function particleRows(particles: ParticleRecords): number[][] {
   const rows: number[][] = [];
@@ -129,15 +144,16 @@ export async function readFloats(buffer: GPUBuffer, count: number): Promise<Floa
   return new Float32Array(words.buffer);
 }
 
-// Records `steps` fluid updates (passes 1-13 only, the cells and the particles stay as they are) in one compute pass,
-// after a frame start unless `frameStart` is false; fails the test on any WebGPU validation error.
-export async function runFluid(sim: Simulation, steps: number, frameStart = true): Promise<void> {
+// Records `steps` fluid updates in one compute pass, after a frame start unless `frameStart` is false; `stage` 'grid'
+// stops each after passes 1-13, so the cells and the particles stay as they are; fails the test on any WebGPU
+// validation error. No CA runs: use run() for whole supersteps.
+export async function runFluid(sim: Simulation, steps: number, frameStart = true, stage: FluidStage = 'full'): Promise<void> {
   const dev = device!;
   dev.pushErrorScope('validation');
   const encoder = dev.createCommandEncoder();
   const pass = encoder.beginComputePass();
   if (frameStart) sim.fluid.recordFrameStart(pass, null);
-  for (let s = 0; s < steps; s++) sim.fluid.recordStep(pass);
+  for (let s = 0; s < steps; s++) sim.fluid.recordStep(pass, stage);
   pass.end();
   dev.queue.submit([encoder.finish()]);
   const error = await dev.popErrorScope();

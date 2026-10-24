@@ -15,13 +15,19 @@ export const PARTICLE_BINDINGS = {
   oilCounts: 8,
   uAcc: 9,
   vAcc: 10,
+  flags: 11,
+  u: 12,
+  v: 13,
+  uPrev: 14,
+  vPrev: 15,
 } as const;
 
 // The particle passes, one entry point each. Frame start:
 //   kill -> (cell brush) -> compactArgs -> compact -> finalize
 // The brush appends after the `count` live particles of the current buffer; compaction then copies the live ones of
 // [0, spawnCursor) into the other buffer, and finalize publishes the new count and the indirect arguments.
-// Per step: resolve -> countParticles -> (classify, in fluid-grid) -> particlesToGrid.
+// Per step: resolve -> countParticles -> (classify, in fluid-grid) -> particlesToGrid -> (the grid passes, in
+// fluid-grid) -> gridToParticles -> rasterCount -> (rasterization, in fluid-raster).
 export const fluidParticlesWGSL = (width: number, height: number, capacity: number): string => /* wgsl */`
 ${cellWGSL}
 ${fluidCommonWGSL(width, height, capacity)}
@@ -39,6 +45,11 @@ ${brushShapeWGSL}
 // (sum of weight * velocity, sum of weight) per face, in fixed point.
 @group(0) @binding(${PARTICLE_BINDINGS.uAcc}) var<storage, read_write> uAcc: array<atomic<i32>>;
 @group(0) @binding(${PARTICLE_BINDINGS.vAcc}) var<storage, read_write> vAcc: array<atomic<i32>>;
+@group(0) @binding(${PARTICLE_BINDINGS.flags}) var<storage, read> flags: array<u32>;
+@group(0) @binding(${PARTICLE_BINDINGS.u}) var<storage, read> u: array<f32>;
+@group(0) @binding(${PARTICLE_BINDINGS.v}) var<storage, read> v: array<f32>;
+@group(0) @binding(${PARTICLE_BINDINGS.uPrev}) var<storage, read> uPrev: array<f32>;
+@group(0) @binding(${PARTICLE_BINDINGS.vPrev}) var<storage, read> vPrev: array<f32>;
 
 // Particles to process, read from the state once per workgroup: an atomic load per thread would serialize them all.
 var<workgroup> groupLimit: u32;
@@ -216,6 +227,104 @@ fn particlesToGrid(@builtin(global_invocation_id) gid: vec3u, @builtin(local_inv
       atomicAdd(&vAcc[face], i32(round(w * p.vy * FIXED_SCALE)));
       atomicAdd(&vAcc[face + 1u], i32(round(w * FIXED_SCALE)));
     }
+  }
+}
+
+// Bilinear sample of a staggered face field at a position: x is the field after the projection, y the copy from
+// before gravity. Both use the same weights, so one call fetches the pair whose difference FLIP needs.
+fn sampleU(x: f32, y: f32) -> vec2f {
+  let fx = clamp(x, 0.0, f32(W));
+  let fy = clamp(y - 0.5, 0.0, f32(H - 1u));
+  let i0 = min(u32(floor(fx)), W);
+  let j0 = min(u32(floor(fy)), H - 1u);
+  let i1 = min(i0 + 1u, W);
+  let j1 = min(j0 + 1u, H - 1u);
+  let tx = fx - f32(i0);
+  let ty = fy - f32(j0);
+  let row = W + 1u;
+  let now = mix(mix(u[j0 * row + i0], u[j0 * row + i1], tx), mix(u[j1 * row + i0], u[j1 * row + i1], tx), ty);
+  let before = mix(mix(uPrev[j0 * row + i0], uPrev[j0 * row + i1], tx), mix(uPrev[j1 * row + i0], uPrev[j1 * row + i1], tx), ty);
+  return vec2f(now, before);
+}
+
+fn sampleV(x: f32, y: f32) -> vec2f {
+  let fx = clamp(x - 0.5, 0.0, f32(W - 1u));
+  let fy = clamp(y, 0.0, f32(H));
+  let i0 = min(u32(floor(fx)), W - 1u);
+  let j0 = min(u32(floor(fy)), H);
+  let i1 = min(i0 + 1u, W - 1u);
+  let j1 = min(j0 + 1u, H);
+  let tx = fx - f32(i0);
+  let ty = fy - f32(j0);
+  let now = mix(mix(v[j0 * W + i0], v[j0 * W + i1], tx), mix(v[j1 * W + i0], v[j1 * W + i1], tx), ty);
+  let before = mix(mix(vPrev[j0 * W + i0], vPrev[j0 * W + i1], tx), mix(vPrev[j1 * W + i0], vPrev[j1 * W + i1], tx), ty);
+  return vec2f(now, before);
+}
+
+// Wall and sand cells and everything outside the grid stop a particle.
+fn solidAt(x: i32, y: i32) -> bool {
+  if (x < 0 || y < 0 || x >= i32(W) || y >= i32(H)) { return true; }
+  return blocks(cellType(cells[cellIndex(u32(x), u32(y))]));
+}
+
+// Grid to particle: a particle in a liquid cell takes the FLIP blend of the grid's velocity change (the projection's
+// effect) and the grid velocity itself (PIC); one in air falls ballistically. Then it moves one axis at a time and
+// a blocked axis loses its velocity. A move is tested at the stored f32 position, so a particle is never put where
+// rounding would place it in a solid cell.
+@compute @workgroup_size(${PARTICLE_WORKGROUP})
+fn gridToParticles(@builtin(global_invocation_id) gid: vec3u, @builtin(local_invocation_index) li: u32) {
+  if (li == 0u) { groupLimit = atomicLoad(&state.count); }
+  workgroupBarrier();
+  let i = gid.x;
+  if (i >= groupLimit) { return; }
+  var p = particles[i];
+  if (p.kind == KIND_DEAD) { return; }
+
+  let cell = cellOf(p.px, p.py);
+  if (flags[cellIndex(cell.x, cell.y)] == FLAG_LIQUID) {
+    let su = sampleU(p.px, p.py);
+    let sv = sampleV(p.px, p.py);
+    p.vx = clamp((1.0 - FLIP_RATIO) * su.x + FLIP_RATIO * (p.vx + su.x - su.y), -MAX_SPEED, MAX_SPEED);
+    p.vy = clamp((1.0 - FLIP_RATIO) * sv.x + FLIP_RATIO * (p.vy + sv.x - sv.y), -MAX_SPEED, MAX_SPEED);
+  } else {
+    p.vy = clamp(p.vy - GRAVITY, -MAX_SPEED, MAX_SPEED);
+  }
+
+  let x1 = p.px + p.vx;
+  if (solidAt(i32(floor(x1)), i32(floor(p.py)))) { p.vx = 0.0; } else { p.px = x1; }
+  let y1 = p.py + p.vy;
+  if (solidAt(i32(floor(p.px)), i32(floor(y1)))) { p.vy = 0.0; } else { p.py = y1; }
+  particles[i] = p;
+}
+
+// Particles per cell after the move, and the per-kind totals the rasterization sizes its selection by. Each workgroup
+// sums its totals locally and adds them once.
+@compute @workgroup_size(${PARTICLE_WORKGROUP})
+fn rasterCount(@builtin(global_invocation_id) gid: vec3u, @builtin(local_invocation_index) li: u32) {
+  if (li == 0u) {
+    groupLimit = atomicLoad(&state.count);
+    atomicStore(&groupWater, 0u);
+    atomicStore(&groupOil, 0u);
+  }
+  workgroupBarrier();
+  let i = gid.x;
+  if (i < groupLimit) {
+    let p = particles[i];
+    if (p.kind != KIND_DEAD) {
+      let cell = cellOf(p.px, p.py);
+      atomicAdd(&counts[cellIndex(cell.x, cell.y)], 1u);
+      if (p.kind == KIND_OIL) {
+        atomicAdd(&oilCounts[cellIndex(cell.x, cell.y)], 1u);
+        atomicAdd(&groupOil, 1u);
+      } else {
+        atomicAdd(&groupWater, 1u);
+      }
+    }
+  }
+  workgroupBarrier();
+  if (li == 0u) {
+    atomicAdd(&state.water, atomicLoad(&groupWater));
+    atomicAdd(&state.oil, atomicLoad(&groupOil));
   }
 }
 `;

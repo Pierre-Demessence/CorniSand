@@ -1,45 +1,39 @@
 import { describe, expect, it, vi } from 'vitest';
-import { PARTICLE_TYPES as T } from '../src/particles';
+import { FIRE_MAX_LIFE, PARTICLE_TYPES as T } from '../src/particles';
 import { Display } from '../src/display';
-import { cell, countTypes, createSim, device, idleInput, loadScene, mulberry32, readCells, run, runMany } from './gpu';
+import { cell, cellType, countTypes, createSim, device, idleInput, loadScene, mulberry32, readCells, readFluidState, readParticles, run, runMany } from './gpu';
 
 function emptyGrid(width: number, height: number): Uint32Array<ArrayBuffer> {
   return new Uint32Array(width * height);
 }
 
 describe.skipIf(!device)('GPU simulation', () => {
-  it('B2: isolated droplets spread sideways without a net drift in either direction', async () => {
-    // Per-droplet displacement after 200 supersteps has a standard deviation of ~19 cells,
-    // so the mean needs ~1000 droplets to stay inside +-2 reliably. The old fixed-by-parity
-    // rule moved every droplet ~400 cells the same way.
-    const droplets = 1000;
-    const spacing = 256;
-    const width = spacing * droplets + 100;
-    const sim = createSim(width, 4, 7);
-    const cells = emptyGrid(width, 4);
-    const starts: number[] = [];
-    for (let i = 0; i < droplets; i++) {
-      const x = 40 + spacing * i;
-      starts.push(x);
-      cells[x] = cell(T.WATER); // row 0: the grid edge is the floor
-    }
+  it('oil beside fire and water ignites, burns for a step, loses its particles and goes out the step after', async () => {
+    // One block at offset 0: oil bottom-left, water bottom-right, fire above the oil. Water only puts out cells that
+    // were fire before the ignition rule ran, so the fire above goes out while the ignited oil burns on.
+    const width = 8;
+    const height = 8;
+    const sim = createSim(width, height);
+    const cells = emptyGrid(width, height);
+    cells[2] = cell(T.OIL);
+    cells[3] = cell(T.WATER);
+    cells[width + 2] = cell(T.FIRE, 0, FIRE_MAX_LIFE);
     loadScene(sim, cells);
 
-    await runMany(sim, 200);
+    await run(sim, 1);
+    expect(cellType((await readCells(sim))[2]), 'the oil cell after one superstep').toBe(T.FIRE);
+    expect((await readFluidState(sim)).oil, 'oil particles are still there until the next resolve').toBe(4);
 
-    const finals: number[] = [];
-    (await readCells(sim)).forEach((c, i) => {
-      if (c !== 0) finals.push(i % width);
-    });
-    expect(finals).toHaveLength(droplets);
-    // Droplets stay far apart, so sorted order pairs each one with its start.
-    finals.sort((a, b) => a - b);
-    const displacements = finals.map((x, i) => x - starts[i]);
-    const mean = displacements.reduce((a, b) => a + b, 0) / displacements.length;
-
-    expect(Math.abs(mean)).toBeLessThanOrEqual(2);
-    expect(displacements.some((d) => d < 0)).toBe(true);
-    expect(displacements.some((d) => d > 0)).toBe(true);
+    await run(sim, 1);
+    const after = await readCells(sim);
+    expect(cellType(after[2]), 'the burning oil cell after two supersteps').toBe(T.SMOKE);
+    expect(cellType(after[3])).toBe(T.WATER);
+    const state = await readFluidState(sim);
+    expect(state.oil).toBe(0);
+    expect(state.water).toBe(4);
+    const particles = await readParticles(sim);
+    expect(particles.count).toBe(4);
+    expect(countTypes(after).get(T.FIRE) ?? 0).toBe(0);
   });
 
   it('B5: painting next to falling water loses and duplicates nothing', async () => {

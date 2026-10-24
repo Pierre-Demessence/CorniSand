@@ -5,6 +5,7 @@ import { BRUSH_UNIFORM_WORDS, brushWGSL } from './shaders/brush.wgsl';
 import { GRID_WORKGROUP, PARTICLE_BYTES, PARTICLE_WORKGROUP, STATE_WORDS } from './shaders/fluid-common.wgsl';
 import { fluidGridWGSL, GRID_BINDINGS } from './shaders/fluid-grid.wgsl';
 import { fluidParticlesWGSL, PARTICLE_BINDINGS } from './shaders/fluid-particles.wgsl';
+import { fluidRasterWGSL, RASTER_BINDINGS, SELECT_WORDS } from './shaders/fluid-raster.wgsl';
 import { mulberry32 } from './random';
 
 export interface FluidOptions {
@@ -32,6 +33,25 @@ export interface FluidGridBuffers {
   /** One u32: the bits of the largest residual written by `recordResidual`. */
   readonly residual: GPUBuffer;
 }
+
+/** The buffers of the rasterization, for tests to read and fill. */
+export interface FluidRasterBuffers {
+  /** u32 per cell: particles of any kind in it after the move. */
+  readonly counts: GPUBuffer;
+  /** u32 per cell: oil particles in it. */
+  readonly oilCounts: GPUBuffer;
+  /** u32 per cell: the rasterization key, 0 for a cell that cannot take liquid. */
+  readonly keys: GPUBuffer;
+  /** u32 per cell: the oil key of a chosen cell, 0 elsewhere. */
+  readonly oilKeys: GPUBuffer;
+  /** u32 bins of the radix select; all zero between selections. */
+  readonly histogram: GPUBuffer;
+  /** u32 words in the order of `SELECT_FIELDS`. */
+  readonly select: GPUBuffer;
+}
+
+/** `grid` runs passes 1-13 of a step (the grid solve), `full` all of them: the particles move and are rasterized. */
+export type FluidStage = 'grid' | 'full';
 
 // Functions, not constants: tests install the WebGPU globals only after this module is imported.
 const bufferUsage = (): number => GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST;
@@ -71,7 +91,8 @@ interface Binding {
 interface Step {
   pipeline: GPUComputePipeline;
   groups: GPUBindGroup[][];
-  indirect: GPUBuffer;
+  // Null for a single-thread pass.
+  indirect: GPUBuffer | null;
 }
 
 const storageEntry = (binding: number, type: GPUBufferBindingType = 'storage'): GPUBindGroupLayoutEntry => ({
@@ -84,7 +105,8 @@ const storageEntry = (binding: number, type: GPUBufferBindingType = 'storage'): 
  * The liquids: a particle store (two buffers that swap every frame, the counters and the indirect arguments) and
  * the grid passes of a step. A frame starts with `recordFrameStart`, which applies the brush to the particles and
  * compacts them; `recordStep` then records one fluid update: particles to the grid, gravity, the pressure
- * projection and the extrapolation of the velocities (`FlipModel.stepGrid` in tests/cpu/flip.ts, pass by pass).
+ * projection and the extrapolation of the velocities (`FlipModel.stepGrid` in tests/cpu/flip.ts, pass by pass),
+ * then the particles move (`stepParticles`) and the liquid is written into the cell grid (`stepRaster`).
  */
 export class Fluid {
   readonly capacity: number;
@@ -95,6 +117,7 @@ export class Fluid {
   /** Indirect dispatch arguments: the cell and face grid, or nothing while no particle is alive. */
   readonly gridArgs: GPUBuffer;
   readonly grid: FluidGridBuffers;
+  readonly raster: FluidRasterBuffers;
 
   private readonly device: GPUDevice;
   private readonly cells: CellBuffer;
@@ -127,6 +150,13 @@ export class Fluid {
   private readonly sweeps: [Step, Step];
   private readonly afterSweeps: Step[];
   private readonly residualStep: Step;
+  // Passes 14-15 (move the particles, count them in their new cells), then the rasterization chain of passes 16-19.
+  private readonly moveParticles: Step[];
+  private readonly padKeys: Step[];
+  private readonly selectCells: Step[];
+  private readonly oilKeyStep: Step;
+  private readonly selectOil: Step[];
+  private readonly writeStep: Step;
 
   constructor(device: GPUDevice, cells: CellBuffer, seedSource: () => number, options: FluidOptions = {}) {
     this.device = device;
@@ -169,6 +199,11 @@ export class Fluid {
     this.grid = { u, v, uPrev, vPrev, flags, density, p, residual };
     const counts = words(cellCount);
     const oilCounts = words(cellCount);
+    const keys = words(cellCount);
+    const oilKeys = words(cellCount);
+    const histogram = words(256);
+    const select = words(SELECT_WORDS);
+    this.raster = { counts, oilCounts, keys, oilKeys, histogram, select };
     const uAcc = words(2 * uCount);
     const vAcc = words(2 * vCount);
     // Both validity copies of the extrapolation in one buffer, to stay within the binding limit of a pass.
@@ -270,7 +305,7 @@ export class Fluid {
     const step = (
       module: GPUShaderModule,
       entryPoint: string,
-      indirect: GPUBuffer,
+      indirect: GPUBuffer | null,
       bindings: Binding[],
       constants?: Record<string, number>,
     ): Step => {
@@ -285,7 +320,8 @@ export class Fluid {
       })));
       return { pipeline, groups, indirect };
     };
-    const fixed = (binding: number, resource: GPUBuffer): Binding => ({ binding, buffer: () => resource });
+    const fixed = (binding: number, resource: GPUBuffer, type?: GPUBufferBindingType): Binding => ({ binding, type, buffer: () => resource });
+    const readOnly = (binding: number, resource: GPUBuffer): Binding => fixed(binding, resource, 'read-only-storage');
 
     const g = GRID_BINDINGS;
     const gridModule = device.createShaderModule({ code: fluidGridWGSL(width, height, this.capacity) });
@@ -336,6 +372,40 @@ export class Fluid {
       ring(1),
     ];
     this.residualStep = gridStep('measureResidual', [pB, ...solverB, fixed(g.residualMax, residual)]);
+
+    const rb = RASTER_BINDINGS;
+    const rasterModule = device.createShaderModule({ code: fluidRasterWGSL(width, height, this.capacity) });
+    const rasterStep = (entryPoint: string, bindings: Binding[], constants?: Record<string, number>, single = false): Step =>
+      step(rasterModule, entryPoint, single ? null : this.gridArgs, bindings, constants);
+    const rasterCells: Binding = { binding: rb.cells, buffer: (c) => c };
+    const rasterCounts = [fixed(rb.counts, counts), fixed(rb.oilCounts, oilCounts)];
+    const keysB = fixed(rb.keys, keys);
+    const selectB = fixed(rb.select, select);
+    const histogramB = fixed(rb.histogram, histogram);
+    const stateB = fixed(rb.state, this.particleState);
+    // One selection: four rounds of a histogram over `source` and a single-thread pick that advances the round.
+    const selection = (source: GPUBuffer, oil: 0 | 1): Step[] => Array.from({ length: 4 }, () => [
+      rasterStep('histogramPass', [readOnly(rb.source, source), selectB, histogramB]),
+      rasterStep('pick', [selectB, histogramB], { OIL: oil }, true),
+    ]).flat();
+
+    this.moveParticles = [
+      particleModuleStep('gridToParticles', [
+        state, liveParticles, particleCells, readOnly(b.flags, flags), readOnly(b.u, u), readOnly(b.v, v),
+        readOnly(b.uPrev, uPrev), readOnly(b.vPrev, vPrev),
+      ]),
+      rasterStep('clearCounts', [...rasterCounts, stateB]),
+      particleModuleStep('rasterCount', [state, liveParticles, fixed(b.counts, counts), fixed(b.oilCounts, oilCounts)]),
+      rasterStep('setWanted', [stateB, selectB], undefined, true),
+    ];
+    this.padKeys = [
+      rasterStep('keys', [rasterCells, ...rasterCounts, keysB]),
+      ...Array.from({ length: FLUID.paddingRings }, (_, ring) => rasterStep('padRing', [rasterCells, keysB], { RING: ring + 1 })),
+    ];
+    this.selectCells = selection(keys, 0);
+    this.oilKeyStep = rasterStep('oilKeys', [...rasterCounts, keysB, fixed(rb.oilKeys, oilKeys), selectB]);
+    this.selectOil = selection(oilKeys, 1);
+    this.writeStep = rasterStep('writeCells', [rasterCells, keysB, fixed(rb.oilKeys, oilKeys), selectB]);
 
     this.clear();
   }
@@ -419,14 +489,46 @@ export class Fluid {
   /**
    * Records one fluid update into the caller's compute pass, after `recordFrameStart` published the particle
    * count: the grid passes that carry the particles' velocities through gravity, the pressure projection and the
-   * extrapolation. Binds the cell buffer that is current now and the live particle buffer. Particles do not move
-   * yet; the grid of the step is left in the `grid` buffers.
+   * extrapolation (passes 1-13), then, for `stage` 'full', the particles move and the liquid is rasterized into
+   * the current cell buffer (passes 14-19). Binds the cell buffer that is current now and the live particle buffer.
+   * The CA dispatches of the step are the caller's.
    */
-  recordStep(pass: GPUComputePassEncoder): void {
+  recordStep(pass: GPUComputePassEncoder, stage: FluidStage = 'full'): void {
     const record = (step: Step): void => this.recordPass(pass, step);
     this.beforeSweeps.forEach(record);
     for (let i = 0; i < this.iterations; i++) this.sweeps.forEach(record);
     this.afterSweeps.forEach(record);
+    if (stage === 'grid') return;
+    this.moveParticles.forEach(record);
+    this.padKeys.forEach(record);
+    this.selectCells.forEach(record);
+    record(this.oilKeyStep);
+    this.selectOil.forEach(record);
+    record(this.writeStep);
+  }
+
+  /**
+   * Test only: one radix selection alone, over `raster.keys`. The caller writes `wanted` into `raster.select`
+   * (round 0, histogram empty, as after `load`) and reads `threshold`, `none`, `chosen` and `shortfall` back.
+   */
+  recordSelect(pass: GPUComputePassEncoder): void {
+    this.selectCells.forEach((step) => this.recordWhole(pass, step));
+  }
+
+  /**
+   * Test only: the key pass and the padding rings, over the whole grid, from `raster.counts` and the current
+   * cell buffer, into `raster.keys`.
+   */
+  recordKeys(pass: GPUComputePassEncoder): void {
+    this.padKeys.forEach((step) => this.recordWhole(pass, step));
+  }
+
+  /**
+   * Test only: the oil key pass over the whole grid, from `raster.keys`, `raster.counts`, `raster.oilCounts` and the
+   * `threshold` and `none` the caller wrote into `raster.select`.
+   */
+  recordOilKeys(pass: GPUComputePassEncoder): void {
+    this.recordWhole(pass, this.oilKeyStep);
   }
 
   /**
@@ -438,10 +540,22 @@ export class Fluid {
   }
 
   private recordPass(pass: GPUComputePassEncoder, step: Step): void {
+    this.bind(pass, step);
+    if (step.indirect) pass.dispatchWorkgroupsIndirect(step.indirect, 0);
+    else pass.dispatchWorkgroups(1);
+  }
+
+  // Dispatches a cell pass over the whole grid whatever the indirect arguments say, for the test hooks.
+  private recordWhole(pass: GPUComputePassEncoder, step: Step): void {
+    this.bind(pass, step);
+    if (step.indirect) pass.dispatchWorkgroups(Math.ceil(this.cells.width / GRID_WORKGROUP), Math.ceil(this.cells.height / GRID_WORKGROUP));
+    else pass.dispatchWorkgroups(1);
+  }
+
+  private bind(pass: GPUComputePassEncoder, step: Step): void {
     const cellsIndex = this.cells.currentBuffer === this.cells.bufferA ? 0 : 1;
     pass.setPipeline(step.pipeline);
     pass.setBindGroup(0, step.groups[cellsIndex][this.current]);
-    pass.dispatchWorkgroupsIndirect(step.indirect, 0);
   }
 
   private setState(count: number, water: number, oil: number): void {
@@ -449,6 +563,9 @@ export class Fluid {
     // The pressure is the one grid field that carries over from step to step (the solver's warm start).
     const encoder = this.device.createCommandEncoder();
     encoder.clearBuffer(this.grid.p);
+    // The selection state and its histogram start from zero, including the running `maxShortfall`.
+    encoder.clearBuffer(this.raster.select);
+    encoder.clearBuffer(this.raster.histogram);
     this.device.queue.submit([encoder.finish()]);
     const state = new Uint32Array(STATE_WORDS);
     state[0] = count;

@@ -24,7 +24,7 @@ function load(rows: string[]): { sim: Simulation; width: number; height: number 
 // Steps in chunks of one encoder each; the particles never move, so every step solves the same field again,
 // warm-started from the pressure of the previous one.
 async function stepMany(sim: Simulation, steps: number): Promise<void> {
-  for (let done = 0; done < steps; done += 20) await runFluid(sim, Math.min(20, steps - done), done === 0);
+  for (let done = 0; done < steps; done += 20) await runFluid(sim, Math.min(20, steps - done), done === 0, 'grid');
 }
 
 // Largest face speed around a liquid cell.

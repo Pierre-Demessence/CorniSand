@@ -1,6 +1,7 @@
 import { cellWGSL } from './cell.wgsl';
 
-// Margolus CA for every particle type. One thread per 2x2 block reads the four
+// Margolus CA for sand, smoke and fire. Liquids do not move here: water and oil are written into the grid by the
+// fluid step (fluid-raster.wgsl.ts); the CA only lets sand sink through them. One thread per 2x2 block reads the four
 // cells, runs all rules on them and writes the four results. Out-of-bounds
 // reads are walls and out-of-bounds writes are skipped, so blocks that stick
 // out of the grid (offset 1, odd sizes) behave like blocks at a wall.
@@ -27,21 +28,12 @@ fn isWater(c: u32) -> bool { return cellType(c) == TYPE_WATER; }
 fn isSmoke(c: u32) -> bool { return cellType(c) == TYPE_SMOKE; }
 fn isOil(c: u32) -> bool   { return cellType(c) == TYPE_OIL; }
 fn isFire(c: u32) -> bool  { return cellType(c) == TYPE_FIRE; }
-fn isFalling(c: u32) -> bool {
-  let t = cellType(c);
-  return t == TYPE_SAND || t == TYPE_WATER || t == TYPE_OIL;
-}
-fn isLiquid(c: u32) -> bool {
-  let t = cellType(c);
-  return t == TYPE_WATER || t == TYPE_OIL;
-}
+fn isFalling(c: u32) -> bool { return isSand(c); }
 fn isGas(c: u32) -> bool { return cellType(c) == TYPE_SMOKE; }
 
 fn canDisplace(mover: u32, dest: u32) -> bool {
   if (isEmpty(dest)) { return true; }
   if (isSand(mover) && (isWater(dest) || isOil(dest) || isSmoke(dest))) { return true; }
-  if (isWater(mover) && (isOil(dest) || isSmoke(dest))) { return true; }
-  if (isOil(mover) && isSmoke(dest)) { return true; }
   return false;
 }
 
@@ -90,10 +82,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   var tl = readCell(ox, oy + 1);
   var tr = readCell(ox + 1, oy + 1);
 
-  // Types before any rule ran: "was liquid/gas" keeps a particle that just
-  // arrived in a cell from also moving sideways in the same step.
-  let blWasLiquid = isLiquid(bl);
-  let brWasLiquid = isLiquid(br);
+  // Types before any rule ran: "was gas" keeps a particle that just arrived
+  // in a cell from also moving sideways in the same step.
   let blWasGas = isGas(bl);
   let brWasGas = isGas(br);
   let tlWasGas = isGas(tl);
@@ -105,7 +95,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   if (isGas(bl) && canRiseThrough(tl)) { swapCells(&bl, &tl); }
   if (isGas(br) && canRiseThrough(tr)) { swapCells(&br, &tr); }
 
-  // Phase 1: Vertical fall (gravity + density)
+  // Phase 1: Sand falls
   if (isFalling(tl) && canDisplace(tl, bl)) { swapCells(&tl, &bl); }
   if (isFalling(tr) && canDisplace(tr, br)) { swapCells(&tr, &br); }
 
@@ -114,24 +104,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   if (isSand(tl) && !canDisplace(tl, bl) && canDisplace(tl, br)) { swapCells(&tl, &br); }
   if (isSand(tr) && !canDisplace(tr, br) && canDisplace(tr, bl)) { swapCells(&tr, &bl); }
 
-  // Phase 3: Horizontal liquid flow. Each row picks one direction and tries
-  // only that move.
-  if (pickRight(rnd)) {
-    if (isLiquid(bl) && isEmpty(br) && blWasLiquid) { swapCells(&bl, &br); }
-  } else {
-    if (isLiquid(br) && isEmpty(bl) && brWasLiquid) { swapCells(&br, &bl); }
-  }
-
-  // Top row: liquid flows if blocked below
-  rnd = pcg(rnd);
-  if (pickRight(rnd)) {
-    if (isLiquid(tl) && isEmpty(tr) && !canDisplace(tl, bl)) { swapCells(&tl, &tr); }
-  } else {
-    if (isLiquid(tr) && isEmpty(tl) && !canDisplace(tr, br)) { swapCells(&tr, &tl); }
-  }
-
-  // Phase 4: Smoke horizontal dispersion, top row
-  rnd = pcg(rnd);
+  // Phase 3: Smoke horizontal dispersion, top row
   if (pickRight(rnd)) {
     if (isGas(tl) && isEmpty(tr) && tlWasGas) { swapCells(&tl, &tr); }
   } else {
@@ -146,11 +119,18 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     if (isGas(br) && isEmpty(bl) && !canRiseThrough(tr) && brWasGas) { swapCells(&br, &bl); }
   }
 
-  // Phase 5: Fire reactions
+  // Phase 4: Fire reactions
   if (isFire(bl)) { bl = burn(bl); }
   if (isFire(br)) { br = burn(br); }
   if (isFire(tl)) { tl = burn(tl); }
   if (isFire(tr)) { tr = burn(tr); }
+
+  // Which cells were fire before oil ignites: only those can be put out by water in this dispatch. Oil that
+  // ignites next to water would otherwise turn to smoke at once, with its particles still inside the cell.
+  let blWasFire = isFire(bl);
+  let brWasFire = isFire(br);
+  let tlWasFire = isFire(tl);
+  let trWasFire = isFire(tr);
 
   // Oil ignition by neighboring fire
   let blNeighborFire = isFire(br) || isFire(tl) || isFire(tr);
@@ -169,10 +149,10 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let tlNeighborWater = isWater(bl) || isWater(br) || isWater(tr);
   let trNeighborWater = isWater(bl) || isWater(br) || isWater(tl);
 
-  if (isFire(bl) && blNeighborWater) { bl = toSmoke(bl); }
-  if (isFire(br) && brNeighborWater) { br = toSmoke(br); }
-  if (isFire(tl) && tlNeighborWater) { tl = toSmoke(tl); }
-  if (isFire(tr) && trNeighborWater) { tr = toSmoke(tr); }
+  if (blWasFire && blNeighborWater) { bl = toSmoke(bl); }
+  if (brWasFire && brNeighborWater) { br = toSmoke(br); }
+  if (tlWasFire && tlNeighborWater) { tl = toSmoke(tl); }
+  if (trWasFire && trNeighborWater) { tr = toSmoke(tr); }
 
   writeCell(ox, oy, bl);
   writeCell(ox + 1, oy, br);

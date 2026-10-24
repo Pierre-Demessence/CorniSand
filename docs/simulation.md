@@ -7,7 +7,7 @@ How a frame turns into particle movement. Code: `src/simulation.ts`, `src/shader
 Each animation frame runs `stepsPerFrame` supersteps (1, 2, 4, 8, 16, 24 or 32; the speed labelled "1x" is 4), then one render pass. All of it is recorded into one command encoder and sent with one `submit()` (`main.ts`). A frame is:
 
 1. **Brush pass**, only while a mouse button is down: one thread per cell, in place on the current buffer. Each thread touches only its own cell, so there is no second buffer and no swap.
-2. **CA steps**: `2 × stepsPerFrame` dispatches, Margolus offset alternating 0, 1, 0, 1, … Each reads one cell buffer and writes the other, then the buffers swap (on the CPU, while recording). A superstep is one offset-0 plus one offset-1 dispatch.
+2. **Supersteps**: `stepsPerFrame` of them, each a fluid update (`Fluid.recordStep`, which edits the current cell buffer in place) followed by two CA dispatches with Margolus offset 0, then 1. Each CA dispatch reads one cell buffer and writes the other, then the buffers swap (on the CPU, while recording).
 3. **Render** of the final buffer, with the brush ring.
 
 Every CA dispatch needs its own `{ offset, seed }`. They live in 256-byte slots (`minUniformBufferOffsetAlignment`) of one uniform buffer sized for the 64 dispatches of a 32-superstep frame; one `writeBuffer` fills the used slots and each dispatch selects its slot with a dynamic offset. The grid size is a shader constant.
@@ -45,11 +45,12 @@ A falling grain that starts in the top row of a block moves one cell per dispatc
 Phases run in order on the block's four cells (BL, BR, TL, TR), each phase seeing the previous phase's result:
 
 0. **Smoke rises**: a bottom smoke cell swaps with the cell above if that is empty, water, oil or fire.
-1. **Fall**: sand, water and oil in the top row swap with the cell below if `canDisplace` allows it. Density order: smoke < empty < oil < water < sand < wall, so sand sinks through liquids and water sinks through oil.
+1. **Sand falls**: sand in the top row swaps with the cell below if `canDisplace` allows it. Density order: smoke < empty < oil < water < sand < wall, but the CA moves only sand through it: sand sinks through water, oil and smoke, and the displaced cell moves up. Water and oil never move in the CA; the fluid step writes them into the grid (see below), so the order between water and oil comes from the pressure solve, not from a swap.
 2. **Sand slides**: sand blocked below moves to the opposite bottom corner if that cell is displaceable. Only sand slides diagonally. The two possible slides exclude each other, so no random choice is involved.
-3. **Liquid spreads**: the bottom row picks one direction at random and, if its cell on the other side is empty and held liquid at the start of the step, moves it one cell that way. The top row does the same with a fresh random choice if the liquid cannot fall. Only the picked direction is tried, so an isolated droplet moves sideways on about half the steps.
-4. **Smoke spreads**: top-row smoke moves into the empty neighbor in a randomly picked direction (one try); bottom-row smoke does too when it cannot rise.
-5. **Fire**: fire loses 4 lifetime per step and turns into smoke at 0; oil next to fire in the block becomes fire; fire next to water becomes smoke. Fire has no movement rule; it only moves when smoke rises through it.
+3. **Smoke spreads**: top-row smoke moves into the empty neighbor in a randomly picked direction (one try); bottom-row smoke does too when it cannot rise.
+4. **Fire**: fire loses 4 lifetime per step and turns into smoke at 0; oil next to fire in the block becomes fire; fire next to water becomes smoke. Only cells that were fire before the ignition rule ran are put out, so oil that ignites beside water burns for a step and its particles are removed before the fire goes out. Fire has no movement rule; it only moves when smoke rises through it.
+
+Liquids move in the fluid step that precedes each superstep's two CA dispatches (`src/fluid.ts`): particles carry the water and oil, a pressure solve moves them, and the last pass writes them into the cell grid as water and oil cells. The CA reads those cells as obstacles, sand sinks into them and smoke rises through them, but it never moves them sideways or down.
 
 ## Brush
 

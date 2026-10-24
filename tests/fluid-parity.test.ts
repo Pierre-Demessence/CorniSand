@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { SCENES } from '../src/scenes';
 import { FlipModel } from './cpu/flip';
-import { createSim, device, loadScene, readBuffer, readFloats, runFluid } from './gpu';
+import { PARTICLE_STRIDE } from '../src/fluid-params';
+import { PARTICLE_TYPES as T } from '../src/particles';
+import { createSim, device, loadScene, readBuffer, readCells, readFloats, readParticles, run, runFluid } from './gpu';
 
 const SEED = 7;
 
@@ -50,7 +52,7 @@ describe.skipIf(!device)('fluid grid parity with the CPU reference', () => {
     await sim.fluid.seedVelocities(SEED);
 
     cpu.stepGrid();
-    await runFluid(sim, 1);
+    await runFluid(sim, 1, true, 'grid');
 
     const reference = cpu.debugState();
     const { grid } = sim.fluid;
@@ -74,5 +76,113 @@ describe.skipIf(!device)('fluid grid parity with the CPU reference', () => {
       const worst = worstDifference(expected, actual, row, skip);
       expect(worst.diff, describeWorst(`${name} ${field}`, worst, tolerance)).toBeLessThanOrEqual(tolerance);
     }
+  });
+});
+
+interface PerCell {
+  count: Uint32Array;
+  meanVx: Float64Array;
+  meanVy: Float64Array;
+}
+
+// Particles binned by the cell they sit in, with the mean velocity per cell: compaction reorders the particles, so
+// they are compared per cell.
+function binParticles(
+  width: number,
+  height: number,
+  count: number,
+  at: (p: number) => { px: number; py: number; vx: number; vy: number },
+): PerCell {
+  const bins: PerCell = { count: new Uint32Array(width * height), meanVx: new Float64Array(width * height), meanVy: new Float64Array(width * height) };
+  for (let p = 0; p < count; p++) {
+    const { px, py, vx, vy } = at(p);
+    const c = Math.floor(py) * width + Math.floor(px);
+    bins.count[c]++;
+    bins.meanVx[c] += vx;
+    bins.meanVy[c] += vy;
+  }
+  for (let c = 0; c < bins.count.length; c++) {
+    if (bins.count[c] === 0) continue;
+    bins.meanVx[c] /= bins.count[c];
+    bins.meanVy[c] /= bins.count[c];
+  }
+  return bins;
+}
+
+const isLiquidType = (c: number): boolean => (c & 0xff) === T.WATER || (c & 0xff) === T.OIL;
+
+describe.skipIf(!device)('full fluid step parity with the CPU reference', () => {
+  it.each(PARITY_SCENES)('%s: one step (no CA) matches stepGrid + stepParticles + stepRaster', async (name) => {
+    const scene = SCENES[name]();
+    const { width, height } = scene;
+
+    const cpu = new FlipModel();
+    cpu.load(scene);
+    cpu.seedVelocities(SEED);
+    const sim = createSim(width, height);
+    loadScene(sim, scene.cells);
+    await sim.fluid.seedVelocities(SEED);
+
+    cpu.stepGrid();
+    cpu.stepParticles();
+    cpu.stepRaster();
+    await runFluid(sim, 1);
+
+    const gpuCells = await readCells(sim);
+    const differing = new Set<number>();
+    cpu.cells().forEach((c, i) => {
+      if (c !== gpuCells[i]) differing.add(i);
+    });
+
+    const ref = cpu.debugState();
+    const gpuParticles = await readParticles(sim);
+    expect(gpuParticles.count, 'live particles').toBe(ref.px.length);
+    const expected = binParticles(width, height, ref.px.length, (p) => ({ px: ref.px[p], py: ref.py[p], vx: ref.vx[p], vy: ref.vy[p] }));
+    const f = gpuParticles.floats;
+    const actual = binParticles(width, height, gpuParticles.count, (p) => ({
+      px: f[p * PARTICLE_STRIDE], py: f[p * PARTICLE_STRIDE + 1], vx: f[p * PARTICLE_STRIDE + 2], vy: f[p * PARTICLE_STRIDE + 3],
+    }));
+    const countMismatch: number[] = [];
+    let worstVelocity = 0;
+    for (let c = 0; c < expected.count.length; c++) {
+      if (expected.count[c] !== actual.count[c]) {
+        countMismatch.push(c);
+        continue;
+      }
+      worstVelocity = Math.max(worstVelocity, Math.abs(expected.meanVx[c] - actual.meanVx[c]), Math.abs(expected.meanVy[c] - actual.meanVy[c]));
+    }
+
+    expect(differing.size, 'cells that differ').toBeLessThanOrEqual(2);
+    for (const c of countMismatch) expect(differing.has(c), `particle count differs in cell ${c} but its cell type does not`).toBe(true);
+    expect(worstVelocity, 'worst mean particle velocity per cell').toBeLessThanOrEqual(1e-4);
+  });
+
+  it.each(PARITY_SCENES)('%s: ten steps (with the CA) keep the volumes and nearly all liquid cells', async (name) => {
+    const scene = SCENES[name]();
+    const { width, height } = scene;
+
+    const cpu = new FlipModel();
+    cpu.load(scene);
+    cpu.seedVelocities(SEED);
+    const sim = createSim(width, height);
+    loadScene(sim, scene.cells);
+    await sim.fluid.seedVelocities(SEED);
+
+    cpu.step(10);
+    await run(sim, 10);
+
+    const gpuCells = await readCells(sim);
+    const cpuCells = cpu.cells();
+    const volume = (cells: Uint32Array, type: number): number => cells.filter((c) => (c & 0xff) === type).length;
+    for (const type of [T.WATER, T.OIL, T.SAND, T.WALL]) {
+      expect(volume(gpuCells, type), `type ${type}`).toBe(volume(cpuCells, type));
+    }
+    let liquid = 0;
+    let differing = 0;
+    cpuCells.forEach((c, i) => {
+      if (isLiquidType(c) || isLiquidType(gpuCells[i])) liquid++;
+      if (c !== gpuCells[i] && (isLiquidType(c) || isLiquidType(gpuCells[i]))) differing++;
+    });
+    expect(differing / Math.max(1, liquid), 'share of liquid cells that differ').toBeLessThanOrEqual(0.005);
   });
 });
