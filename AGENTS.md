@@ -6,29 +6,37 @@ Falling-sand sandbox running entirely on the GPU: WGSL compute shaders run a Mar
 
 ```bash
 npm run dev       # Vite dev server
-npm run build     # Production build → dist/ (does NOT typecheck)
+npm run build     # tsc --noEmit, then production build → dist/
+npm run typecheck # tsc --noEmit (strict; covers src, tests, vite.config.ts)
+npm run lint      # ESLint (typescript-eslint, type-aware)
+npm test          # Vitest
 npm run preview   # Serve dist/
-npx tsc --noEmit  # Typecheck (strict); run it, the build does not
 ```
 
-There is no lint or test setup yet (see `docs/backlog.md`).
+CI (`.github/workflows/deploy-pages.yml`) runs lint, test and build before deploying.
+
+The GPU suites in `tests/` run the real WGSL through Dawn's Node bindings (`webgpu` package, `tests/gpu.ts`) and skip themselves when no adapter is available, as on the CI runners (`docs/backlog.md` D11). `tests/gpu.ts` must keep a module-level reference to the GPU instance: Dawn crashes the process if it is garbage-collected while its device is in use.
 
 ## Stack facts not in config
 
 - WebGPU only, no WebGL fallback. Targets Chrome 113+, Edge 113+, Safari 18.2+.
-- `.github/workflows/deploy-pages.yml` builds and deploys to GitHub Pages on every push to `main`; `vite.config.js` sets `base: './'` for that.
-- The simulation grid is one cell per CSS pixel of the canvas, sized once at load (`src/main.ts`); resizing stretches it (see `docs/decisions.md`).
+- `.github/workflows/deploy-pages.yml` builds and deploys to GitHub Pages on every push to `main`; `vite.config.ts` sets `base: './'` for that.
+- The simulation grid is one cell per CSS pixel of the canvas, or the smallest integer cells-per-pixel scale that fits the device's storage-buffer limits (`src/grid.ts`). It is sized once at load (`src/main.ts`); resizing stretches it (see `docs/decisions.md`).
+- The user's npm `min-release-age` is 7 days: `npm install` picks the newest version at least that old, not `latest`.
+- TypeScript stays on 6.0.x until typescript-eslint supports 7 (`docs/backlog.md` D10).
 
 ## Layout
 
-- `src/main.ts` — entry: WebGPU init, UI wiring, speed control, frame loop.
-- `src/gpu.ts` — adapter/device/context setup, device-lost overlay.
-- `src/simulation.ts` — compute pipelines (CA, pressure, particle count) and per-frame step orchestration.
+- `src/main.ts` — entry: WebGPU init and device re-creation, UI wiring (tool selection, speed), frame loop (one encoder, one submit per frame).
+- `src/gpu.ts` — adapter/device/context setup with the adapter's buffer limits, uncaptured-error banner, device-lost callback, reload overlay.
+- `src/grid.ts` — `computeGrid`: grid size and scale from the buffer limits.
+- `src/simulation.ts` — compute pipelines (brush, CA, particle count); `simulate(encoder, supersteps, input)` records the brush pass and the CA steps into the caller's encoder.
 - `src/cell-buffer.ts` — ping-pong pair of cell storage buffers.
 - `src/display.ts` — render pipeline drawing the current cell buffer plus the brush ring.
-- `src/input.ts` — pointer, keyboard and wheel state.
-- `src/particles.ts` — particle type IDs (TS side).
-- `src/shaders/*.wgsl.ts` — WGSL sources exported as template strings: `solid-ca` (all particle rules), `pressure` (pressure/velocity diffusion), `display`.
+- `src/input.ts` — pointer, wheel and Shift state.
+- `src/particles.ts` — particle type IDs and fire max life, the single source for TS and every shader.
+- `src/shaders/*.wgsl.ts` — WGSL sources exported as template strings (functions of the grid size where needed): `cell` (shared snippet: type constants, cell accessors, PCG hash, `CELL_BYTES`), `solid-ca` (all particle rules), `brush`, `display`.
+- `tests/` — Vitest: `grid` (unit), `hash` and `simulation` (GPU), `gpu.ts` (device, scene upload and readback helpers).
 
 ## Docs map
 
@@ -40,24 +48,25 @@ There is no lint or test setup yet (see `docs/backlog.md`).
 
 ## Invariants
 
-- A cell is a 32-byte struct `{ pType: u32, variant, lifetime, pressure, velocityX, velocityY, _pad0, _pad1: f32 }`. The struct is declared separately in `solid-ca`, `pressure`, `display` and the inline count shader in `simulation.ts`, and `CELL_BYTES` in `cell-buffer.ts` must match: change all of them together.
-- Particle type IDs are hard-coded in `particles.ts`, `solid-ca.wgsl.ts`, `pressure.wgsl.ts`, the display shader's `pType == Nu` branches, the count shader (`2u` = wall) and `index.html` `data-type` attributes. Keep them in sync.
-- Every pass reads the current buffer and writes the other one, then `CellBuffer.swap()`. Bind groups for both directions are pre-created; pick them from `currentBuffer`.
-- Out-of-bounds reads (`readCell`) return a wall cell; that is the world boundary.
-- The Margolus offset alternates 0 then 1 within each superstep; never run two steps with the same offset in a row.
-- Each pass gets its own `GPUCommandEncoder` and `submit()`. For CA steps this is required: all steps share one uniform buffer and `writeBuffer` calls before a single submit would all land before any dispatch. Batching needs per-step uniform slots first (backlog D4).
-- Brush input is applied only on the first CA step of a frame, interpolated along the segment from the previous frame's position.
+- A cell is one `u32`: bits 0–7 type, 8–15 variant, 16–31 lifetime. The layout, the accessors (`cellType`, `cellVariant`, `cellLife`, `makeCell`) and `CELL_BYTES` live in `src/shaders/cell.wgsl.ts`, which every shader includes; change the layout there only.
+- Particle type IDs and the fire max life are declared once in `particles.ts` and reach the shaders through `cell.wgsl.ts`. Only the `index.html` `data-type` attributes repeat the IDs: keep them in sync.
+- Every CA dispatch reads the current buffer and writes the other one, then `CellBuffer.swap()`. Bind groups for both directions are pre-created; pick them from `currentBuffer`. The brush pass is the exception: it edits the current buffer in place (each thread touches only its own cell) and does not swap.
+- One thread handles one 2×2 block and writes all four cells. Out-of-bounds reads (`readCell`) return a wall cell, the world boundary; out-of-bounds writes are skipped.
+- The Margolus offset alternates 0 then 1; never run two steps with the same offset in a row.
+- A frame is one `GPUCommandEncoder` and one `submit()`: `simulate()` records the brush pass and all CA steps, then `main.ts` records the render. Each CA dispatch has its own `{ offset, seed }` slot in one uniform buffer (stride `minUniformBufferOffsetAlignment`, selected by dynamic offset, written once per frame). Never submit mid-frame, and never `writeBuffer` a shared uniform between dispatches: all writes land before the first dispatch runs.
+- The brush runs once per frame, before the CA steps, along the segment from the previous frame's position.
+- Block randomness comes from `pcg()` chained on `hash2(blockX, blockY, seed)`; never use a float `fract`-based hash for it.
 
 ## Adding a particle type
 
 1. Add the ID to `PARTICLE_TYPES` in `src/particles.ts`.
-2. Add `TYPE_X` and an `isX()` helper in `src/shaders/solid-ca.wgsl.ts`; update `isFalling`, `isLiquid`, `isGas`, `canDisplace`, `canRiseThrough` as needed, plus `isLiquid` in `pressure.wgsl.ts` if it is a liquid.
-3. Add movement or reaction rules in the CA phases; use `makeCellWithLife()` in the brush branch if it has a lifetime.
+2. Add an `isX()` helper in `src/shaders/solid-ca.wgsl.ts` (`TYPE_X` is generated from step 1); update `isFalling`, `isLiquid`, `isGas`, `canDisplace`, `canRiseThrough` as needed.
+3. Add movement or reaction rules in the CA phases; if it has a lifetime, declare its start value next to `FIRE_MAX_LIFE` and set it in `src/shaders/brush.wgsl.ts`.
 4. Add its color in `src/shaders/display.wgsl.ts`.
-5. Add a toolbar button in `index.html` (`data-type` = the ID) and the number-key mapping in both `src/input.ts` and `typeMap` in `src/main.ts`.
+5. Add a toolbar button in `index.html` (`data-type` = the ID). Number keys select the n-th toolbar button, so the button's position sets its key.
 6. Update the density ordering and phase list in `docs/simulation.md`.
 
 ## Never
 
 - Never claim a water or physics behavior works from a visual check alone. Water realism failed repeatedly that way; any physics change needs a measurable, repeatable check (see `docs/research/realistic-water.md`).
-- Never tune a constant without confirming that the value actually reaches a rule that moves particles (`pressure` and `velocity` currently do not, see `docs/simulation.md`).
+- Never tune a constant without confirming that the value actually reaches a rule that moves particles.

@@ -1,3 +1,5 @@
+import { PARTICLE_TYPES } from './particles';
+
 export interface Vec2 {
   x: number;
   y: number;
@@ -12,7 +14,7 @@ export class InputHandler {
   rightDown = false;
   shiftDown = false;
   brushSize = 10;
-  particleType = 1;
+  particleType: number = PARTICLE_TYPES.SAND;
 
   constructor(canvas: HTMLCanvasElement, simWidth: number, simHeight: number) {
     this.canvas = canvas;
@@ -73,13 +75,7 @@ export class InputHandler {
 
   private _setupKeyboard(): void {
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Shift') this.shiftDown = true;
-      else if (e.key === '1') this.particleType = 1;
-      else if (e.key === '2') this.particleType = 2;
-      else if (e.key === '3') this.particleType = 3;
-      else if (e.key === '4') this.particleType = 4;
-      else if (e.key === '5') this.particleType = 5;
-      else if (e.key === '6') this.particleType = 6;
+      if (e.key === 'Shift') this.shiftDown = true;
     });
     document.addEventListener('keyup', (e) => {
       if (e.key === 'Shift') this.shiftDown = false;

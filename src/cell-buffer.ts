@@ -1,14 +1,4 @@
-// 32 bytes per cell, aligned for GPU storage buffers
-export const CELL_STRIDE = 8; // 8 × f32 = 32 bytes
-export const CELL_BYTES = CELL_STRIDE * 4;
-
-// Field offsets within a cell (in f32 units)
-export const CELL_TYPE = 0;
-export const CELL_VARIANT = 1;
-export const CELL_LIFETIME = 2;
-export const CELL_PRESSURE = 3;
-export const CELL_VELOCITY_X = 4;
-export const CELL_VELOCITY_Y = 5;
+import { CELL_BYTES } from './shaders/cell.wgsl';
 
 export class CellBuffer {
   private readonly device: GPUDevice;
@@ -44,10 +34,6 @@ export class CellBuffer {
     return this.current;
   }
 
-  get nextBuffer(): GPUBuffer {
-    return this.next;
-  }
-
   get bufferA(): GPUBuffer {
     return this.bufA;
   }
@@ -67,10 +53,5 @@ export class CellBuffer {
     encoder.clearBuffer(this.bufA);
     encoder.clearBuffer(this.bufB);
     this.device.queue.submit([encoder.finish()]);
-  }
-
-  dispose(): void {
-    this.bufA.destroy();
-    this.bufB.destroy();
   }
 }

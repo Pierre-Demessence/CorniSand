@@ -26,7 +26,7 @@ Requires a WebGPU-capable browser (Chrome 113+, Edge 113+, Safari 18.2+).
 - **Left click**: draw the selected particle
 - **Right click**: erase
 - **Scroll wheel**: brush size
-- **1–6**: select Sand, Wall, Water, Smoke, Oil, Fire
+- **1–6**: select Sand, Water, Oil, Fire, Smoke, Wall
 - **[ / ]**: slower / faster
 - **Shift + click**: draw over existing particles (except walls)
 

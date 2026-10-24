@@ -116,8 +116,4 @@ export class Display {
     pass.draw(3); // Fullscreen triangle
     pass.end();
   }
-
-  dispose(): void {
-    this.uniformBuffer.destroy();
-  }
 }

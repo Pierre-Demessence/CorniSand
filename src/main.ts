@@ -1,21 +1,64 @@
-import { initGPU } from './gpu';
+import { initGPU, showBanner, showReloadOverlay, type GPUContext } from './gpu';
+import { computeGrid, maxCellsForDevice, type Grid } from './grid';
 import { Simulation } from './simulation';
 import { Display } from './display';
 import { InputHandler, type Vec2 } from './input';
-import { PARTICLE_TYPES } from './particles';
+
+interface GpuState {
+  gpu: GPUContext;
+  simulation: Simulation;
+  display: Display;
+}
+
+const TOOLBAR_HEIGHT = 48;
+// A device that keeps getting lost is not coming back; stop retrying.
+const MAX_RECOVERIES = 3;
+const TOUCH_TIP_MS = 1500;
 
 async function main(): Promise<void> {
   const canvas = document.getElementById('canvas') as HTMLCanvasElement;
 
-  const TOOLBAR_HEIGHT = 48;
-  const simWidth = window.innerWidth;
-  const simHeight = window.innerHeight - TOOLBAR_HEIGHT;
-  canvas.width = simWidth;
-  canvas.height = simHeight;
+  const cssWidth = window.innerWidth;
+  const cssHeight = window.innerHeight - TOOLBAR_HEIGHT;
+  canvas.width = cssWidth;
+  canvas.height = cssHeight;
 
-  let gpu;
+  // Sized once from the first device's limits; a re-created device keeps the same grid.
+  let grid: Grid | undefined;
+  let state: GpuState | null = null;
+  let recoveries = 0;
+  // Each recovery attempt gets a number; a result from an older attempt is dropped.
+  let attempt = 0;
+
+  async function createGpuState(): Promise<GpuState> {
+    const gpu = await initGPU(canvas, onDeviceLost);
+    grid ??= computeGrid(cssWidth, cssHeight, maxCellsForDevice(gpu.device));
+    const simulation = new Simulation(gpu.device, grid.width, grid.height);
+    const display = new Display(gpu.device, gpu.format, grid.width, grid.height, simulation.bufferA, simulation.bufferB);
+    return { gpu, simulation, display };
+  }
+
+  function onDeviceLost(): void {
+    state = null; // the frame loop idles until the new device is ready
+    if (recoveries >= MAX_RECOVERIES) {
+      showReloadOverlay();
+      return;
+    }
+    recoveries++;
+    const mine = ++attempt;
+    createGpuState().then((next) => {
+      if (mine !== attempt) return;
+      state = next;
+      showBanner('The GPU device was lost and has been re-created. The world was cleared.');
+    }).catch((err: unknown) => {
+      if (mine !== attempt) return;
+      console.error('GPU recovery failed:', err);
+      showReloadOverlay();
+    });
+  }
+
   try {
-    gpu = await initGPU(canvas);
+    state = await createGpuState();
   } catch (err) {
     document.body.innerHTML = '';
     const errDiv = document.createElement('div');
@@ -27,9 +70,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  const { device, context, format } = gpu;
-  const simulation = new Simulation(device, simWidth, simHeight);
-  const display = new Display(device, format, simWidth, simHeight, simulation.bufferA, simulation.bufferB);
+  const { width: simWidth, height: simHeight, scale } = grid!;
   const input = new InputHandler(canvas, simWidth, simHeight);
 
   const SPEED_STEPS = [1, 2, 4, 8, 16, 24, 32];
@@ -47,60 +88,51 @@ async function main(): Promise<void> {
   const speedDisplay = document.getElementById('speed-display')!;
   const particleCountEl = document.getElementById('particle-count')!;
 
-  function updateSpeedDisplay(): void {
+  function changeSpeed(delta: number): void {
+    speedIndex = Math.min(SPEED_STEPS.length - 1, Math.max(0, speedIndex + delta));
+    stepsPerFrame = SPEED_STEPS[speedIndex];
     speedDisplay.textContent = `Speed: ${SPEED_LABELS[speedIndex]}`;
   }
-  updateSpeedDisplay();
+  changeSpeed(0);
 
-  gridEl.textContent = `${simWidth}×${simHeight} (${((simWidth * simHeight) / 1e6).toFixed(1)}M cells)`;
+  const cells = `${((simWidth * simHeight) / 1e6).toFixed(1)}M cells`;
+  gridEl.textContent = `${simWidth}×${simHeight} (${cells}${scale > 1 ? `, ${scale}px each` : ''})`;
 
   setTimeout(() => { helpHint.style.opacity = '0'; }, 4000);
 
   const toolButtons = document.querySelectorAll<HTMLButtonElement>('.tool-btn[data-type]');
+  function selectTool(button: HTMLButtonElement): void {
+    toolButtons.forEach((b) => b.classList.toggle('active', b === button));
+    input.particleType = Number(button.dataset.type);
+  }
   toolButtons.forEach((btn) => {
-    btn.addEventListener('click', () => {
-      toolButtons.forEach((b) => b.classList.remove('active'));
-      btn.classList.add('active');
-      input.particleType = Number(btn.dataset.type);
+    btn.addEventListener('click', () => selectTool(btn));
+  });
+
+  document.addEventListener('keydown', (e) => {
+    // Keys 1-6 pick the n-th toolbar button.
+    const button = toolButtons[Number(e.key) - 1] as HTMLButtonElement | undefined;
+    if (button) selectTool(button);
+    if (e.key === '[') changeSpeed(-1);
+    if (e.key === ']') changeSpeed(1);
+  });
+
+  document.getElementById('speed-down')!.addEventListener('click', () => changeSpeed(-1));
+  document.getElementById('speed-up')!.addEventListener('click', () => changeSpeed(1));
+
+  // Touch has no hover or focus ring, so a tap shows the tooltip for a moment.
+  document.querySelectorAll<HTMLElement>('[data-tip]').forEach((el) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    el.addEventListener('pointerdown', (e) => {
+      if (e.pointerType !== 'touch') return;
+      el.classList.add('tip-visible');
+      clearTimeout(timer);
+      timer = setTimeout(() => el.classList.remove('tip-visible'), TOUCH_TIP_MS);
     });
   });
 
-  const typeMap: Record<string, number> = { '1': PARTICLE_TYPES.SAND, '2': PARTICLE_TYPES.WALL, '3': PARTICLE_TYPES.WATER, '4': PARTICLE_TYPES.SMOKE, '5': PARTICLE_TYPES.OIL, '6': PARTICLE_TYPES.FIRE };
-  document.addEventListener('keydown', (e) => {
-    if (typeMap[e.key] !== undefined) {
-      toolButtons.forEach((b) => {
-        b.classList.toggle('active', Number(b.dataset.type) === typeMap[e.key]);
-      });
-    }
-    if (e.key === '[' && speedIndex > 0) {
-      speedIndex--;
-      stepsPerFrame = SPEED_STEPS[speedIndex];
-      updateSpeedDisplay();
-    }
-    if (e.key === ']' && speedIndex < SPEED_STEPS.length - 1) {
-      speedIndex++;
-      stepsPerFrame = SPEED_STEPS[speedIndex];
-      updateSpeedDisplay();
-    }
-  });
-
-  document.getElementById('speed-down')!.addEventListener('click', () => {
-    if (speedIndex > 0) {
-      speedIndex--;
-      stepsPerFrame = SPEED_STEPS[speedIndex];
-      updateSpeedDisplay();
-    }
-  });
-  document.getElementById('speed-up')!.addEventListener('click', () => {
-    if (speedIndex < SPEED_STEPS.length - 1) {
-      speedIndex++;
-      stepsPerFrame = SPEED_STEPS[speedIndex];
-      updateSpeedDisplay();
-    }
-  });
-
   document.getElementById('clear-btn')!.addEventListener('click', () => {
-    simulation.clear();
+    state?.simulation.clear();
   });
 
   // --- FPS tracking ---
@@ -112,7 +144,10 @@ async function main(): Promise<void> {
   window.addEventListener('resize', () => {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight - TOOLBAR_HEIGHT;
-    context.configure({ device, format, alphaMode: 'opaque' });
+    if (state) {
+      const { device, context, format } = state.gpu;
+      context.configure({ device, format, alphaMode: 'opaque' });
+    }
   });
 
   // --- Async particle counting (fire-and-forget with stale display) ---
@@ -129,6 +164,8 @@ async function main(): Promise<void> {
   // --- Animation loop ---
   function animate(): void {
     requestAnimationFrame(animate);
+    if (!state) return;
+    const { gpu: { device, context }, simulation, display } = state;
 
     frameCount++;
     const now = performance.now();
@@ -143,20 +180,11 @@ async function main(): Promise<void> {
 
     const mouseActive = input.mouseActive;
     const erasing = input.erasing;
+    const replacing = input.shiftDown && !erasing;
 
     const prevMousePos = mouseActive && lastDrawPos.x >= 0
       ? lastDrawPos
       : input.mousePos;
-
-    simulation.simulate(stepsPerFrame, {
-      mousePos: input.mousePos,
-      prevMousePos,
-      mouseActive,
-      erasing,
-      replacing: input.shiftDown && !erasing,
-      brushSize: input.brushSize,
-      particleType: input.particleType,
-    });
 
     if (mouseActive) {
       lastDrawPos = { x: input.mousePos.x, y: input.mousePos.y };
@@ -164,22 +192,30 @@ async function main(): Promise<void> {
       lastDrawPos = { x: -1, y: -1 };
     }
 
-    // Async particle counting
+    // Async particle counting (own submit, ordered before this frame's work)
     if (now - lastCountTime >= 2000 && !mouseActive) {
       lastCountTime = now;
       simulation.requestParticleCount();
     }
 
+    // Brush, CA steps and render share one encoder and one submit.
     const encoder = device.createCommandEncoder();
-    const targetView = context.getCurrentTexture().createView();
-    display.render(encoder, targetView, simulation.currentBuffer, canvas.width, canvas.height, {
+    simulation.simulate(encoder, stepsPerFrame, {
+      mousePos: input.mousePos,
+      prevMousePos,
+      mouseActive,
+      erasing,
+      replacing,
+      brushSize: input.brushSize,
+      particleType: input.particleType,
+    });
+    display.render(encoder, context.getCurrentTexture().createView(), simulation.currentBuffer, canvas.width, canvas.height, {
       mousePos: input.mousePos,
       brushSize: input.brushSize,
       showBrush: true,
       erasing,
-      replacing: input.shiftDown && !erasing,
+      replacing,
     });
-
     device.queue.submit([encoder.finish()]);
 
     // Read back particle count (non-blocking)
@@ -189,4 +225,4 @@ async function main(): Promise<void> {
   animate();
 }
 
-main();
+void main();

@@ -5,12 +5,22 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
     "preview": "vite preview"
   },
   "devDependencies": {
-    "@webgpu/types": "^0.1.69",
-    "typescript": "^5.9.3",
-    "vite": "^6.0.0"
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^22.20.5",
+    "@webgpu/types": "^0.1.74",
+    "eslint": "^10.13.0",
+    "globals": "^17.13.0",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.71.2",
+    "vite": "^8.3.4",
+    "vitest": "^5.0.5",
+    "webgpu": "^0.6.2"
   }
 }

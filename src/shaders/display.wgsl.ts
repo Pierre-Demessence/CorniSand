@@ -1,15 +1,7 @@
-export const displayWGSL = /* wgsl */`
+import { cellWGSL } from './cell.wgsl';
 
-struct Cell {
-  pType: u32,
-  variant: f32,
-  lifetime: f32,
-  pressure: f32,
-  velocityX: f32,
-  velocityY: f32,
-  _pad0: f32,
-  _pad1: f32,
-};
+export const displayWGSL = /* wgsl */`
+${cellWGSL}
 
 struct DisplayUniforms {
   simResolution: vec2f,
@@ -46,15 +38,15 @@ fn vs_main(@builtin(vertex_index) vertexIndex: u32) -> VertexOutput {
   return out;
 }
 
-@group(0) @binding(0) var<storage, read> cells: array<Cell>;
+@group(0) @binding(0) var<storage, read> cells: array<u32>;
 @group(0) @binding(1) var<uniform> u: DisplayUniforms;
 
 fn ditherNoise(pos: vec2f) -> f32 {
   return fract(sin(dot(pos, vec2f(12.9898, 78.233))) * 43758.5453);
 }
 
-fn getFireColor(life: f32) -> vec3f {
-  let t = clamp(life / 200.0, 0.0, 1.0);
+fn getFireColor(life: u32) -> vec3f {
+  let t = clamp(f32(life) / f32(FIRE_MAX_LIFE), 0.0, 1.0);
   let bright = vec3f(1.0, 0.72, 0.12);
   let dim = vec3f(0.80, 0.18, 0.04);
   return mix(dim, bright, t);
@@ -69,24 +61,25 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {
   let cellY = min(u32(uv.y * u.simResolution.y), h - 1u);
   let idx = cellY * w + cellX;
   let cell = cells[idx];
+  let pType = cellType(cell);
 
   // Background gradient with dithering
   let gy = in.position.y / u.screenResolution.y;
   var color = mix(vec3f(0.06, 0.06, 0.08), vec3f(0.10, 0.10, 0.13), gy);
   color += (ditherNoise(in.position.xy) - 0.5) / 128.0;
 
-  if (cell.pType == 1u) {
+  if (pType == TYPE_SAND) {
     color = vec3f(0.80, 0.70, 0.48); // Sand
-  } else if (cell.pType == 2u) {
+  } else if (pType == TYPE_WALL) {
     color = vec3f(0.43, 0.45, 0.47); // Wall
-  } else if (cell.pType == 3u) {
+  } else if (pType == TYPE_WATER) {
     color = vec3f(0.18, 0.42, 0.72); // Water
-  } else if (cell.pType == 4u) {
+  } else if (pType == TYPE_SMOKE) {
     color = vec3f(0.72, 0.72, 0.74); // Smoke
-  } else if (cell.pType == 5u) {
+  } else if (pType == TYPE_OIL) {
     color = vec3f(0.22, 0.16, 0.10); // Oil
-  } else if (cell.pType == 6u) {
-    color = getFireColor(cell.lifetime);
+  } else if (pType == TYPE_FIRE) {
+    color = getFireColor(cellLife(cell));
   }
 
   // Brush cursor

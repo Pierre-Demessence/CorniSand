@@ -67,6 +67,34 @@
             border-color: rgba(255, 255, 255, 0.3);
         }
 
+        [data-tip] {
+            position: relative;
+        }
+
+        [data-tip]::after {
+            content: attr(data-tip);
+            position: absolute;
+            bottom: calc(100% + 10px);
+            right: 0;
+            padding: 4px 8px;
+            background: rgba(16, 16, 20, 0.95);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: 6px;
+            color: #f3f4f6;
+            font-size: 12px;
+            white-space: nowrap;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.15s ease;
+            z-index: 20;
+        }
+
+        [data-tip]:hover::after,
+        [data-tip]:focus-visible::after,
+        [data-tip].tip-visible::after {
+            opacity: 1;
+        }
+
         .separator {
             width: 1px;
             height: 24px;
@@ -139,9 +167,9 @@
         <div class="separator"></div>
         <span class="info-text" id="particle-count">0 particles</span>
         <div class="separator"></div>
-        <button class="tool-btn" type="button" id="speed-down" title="Slow down ([)">&#x2039;</button>
+        <button class="tool-btn" type="button" id="speed-down" aria-label="Slow down ([)" data-tip="Slow down ([)">&#x2039;</button>
         <span class="info-text" id="speed-display">Speed: 1x</span>
-        <button class="tool-btn" type="button" id="speed-up" title="Speed up (])">&#x203a;</button>
+        <button class="tool-btn" type="button" id="speed-up" aria-label="Speed up (])" data-tip="Speed up (])">&#x203a;</button>
         <button id="clear-btn">Clear</button>
     </div>
 

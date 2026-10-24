@@ -5,13 +5,13 @@ Backlog I1. Goal: water that behaves like a liquid rather than like flowing sand
 ## Why the current model cannot pass the test
 
 - **No upward movement.** One particle per cell, and the only liquid moves are fall and sideways-into-empty. In a U-tube the low arm can only rise if water in the full passage moves up, and no rule does that. Water simply stops once the passage is full.
-- **No hydrostatic pressure.** Pressure is not computed from depth. It is a decaying impulse added by splashes, and it never influences movement anyway (backlog B2, B3). Tuning pressure constants changed nothing visible because they were not wired to any movement.
-- **Sideways flow is deterministic** (B2), which produces the surface humps and column artifacts that earlier tuning tried to smooth out.
+- **No hydrostatic pressure.** Cells hold only type, variant and lifetime; nothing depends on depth. An earlier pressure overlay was removed because no rule read it, which is why tuning its constants changed nothing visible.
+- **Sideways flow is a random walk.** Each block picks one random direction, so surfaces level only by diffusion and a lone droplet drifts sideways on about half the steps; there is no force that evens out two connected columns.
 
 ## What was tried
 
 1. **Eulerian grid solver** (semi-Lagrangian advection plus Jacobi pressure projection). Abandoned: advection traced back into empty cells and zeroed velocity, so water stopped moving. Free-surface fluids on a grid need explicit handling of the liquid/air boundary, which the attempt did not have.
-2. **Pressure overlay on the CA** (the current code). Liquids carry pressure and velocity that are diffused between liquid neighbors and meant to bias sideways flow. In practice it has no effect (B3).
+2. **Pressure overlay on the CA.** Liquids carried pressure and velocity that were diffused between liquid neighbors and meant to bias sideways flow. In practice it had no effect, and it was removed.
 3. **Stabilization tuning**: more diffusion passes, retuned decay and bias constants. Discarded: the constants feed no movement rule.
 4. **Hydrostatic floor plus a "pressure lift" rule**: pressure is at least the pressure above plus a constant per liquid cell, and liquid next to a wall may move up when its pressure crosses a threshold. The low chamber rose somewhat but never equalized, and stronger settings left holes in the water (cavitation). Discarded.
 
@@ -39,6 +39,6 @@ Physically the best, but it is a different simulation alongside the grid, with i
 
 Whatever option is chosen, build the measurable check before the model:
 
-1. A CPU reference of the liquid rules in TypeScript, with a test runner (D3).
+1. A CPU reference of the liquid rules in TypeScript, with Vitest.
 2. A U-tube scene test: after N steps, both surface heights are within one cell of each other and total mass is conserved within a small epsilon. A basin test: a resting pool's surface is flat within one cell.
-3. Port the rules to WGSL only once the CPU tests pass, then run the same scene on the GPU by reading the buffer back (a debug hook that loads a scene, runs N steps and returns the heights), so the GPU result is checked against the same numbers.
+3. Port the rules to WGSL only once the CPU tests pass, then run the same scene on the real WGSL with the `tests/gpu.ts` helpers (load a scene, run N supersteps, read the buffer back), so the GPU result is checked against the same numbers.

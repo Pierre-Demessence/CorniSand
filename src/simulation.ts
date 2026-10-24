@@ -1,5 +1,6 @@
+import { brushWGSL } from './shaders/brush.wgsl';
+import { cellWGSL } from './shaders/cell.wgsl';
 import { solidCaWGSL } from './shaders/solid-ca.wgsl';
-import { pressureWGSL } from './shaders/pressure.wgsl';
 import { CellBuffer } from './cell-buffer';
 import type { Vec2 } from './input';
 
@@ -13,40 +14,44 @@ export interface SimulationInput {
   particleType: number;
 }
 
-// CA uniform: 14 f32 values padded to 16 (64 bytes)
-const CA_UNIFORM_FLOATS = 16;
-const CA_UNIFORM_SIZE = CA_UNIFORM_FLOATS * 4;
+export interface SimulationOptions {
+  // One u32 per call; injectable so tests can replay a fixed sequence.
+  seedSource?: () => number;
+}
 
-// Pressure uniform: resolution (2f) + dt (1f) + pad (1f) = 16 bytes
-const PRESSURE_UNIFORM_FLOATS = 4;
-const PRESSURE_UNIFORM_SIZE = PRESSURE_UNIFORM_FLOATS * 4;
+// A superstep is two CA dispatches (Margolus offset 0, then 1).
+export const MAX_SUPERSTEPS = 32;
+const MAX_DISPATCHES = MAX_SUPERSTEPS * 2;
 
-const PRESSURE_DIFFUSION_ITERS = 2;
+// Brush uniform: vec2f prev, vec2f cur, f32 radius, 3 x u32 flags, u32 seed, 3 pad = 48 bytes
+const BRUSH_UNIFORM_WORDS = 12;
+
+const defaultSeedSource = (): number => crypto.getRandomValues(new Uint32Array(1))[0];
 
 export class Simulation {
   private readonly device: GPUDevice;
   readonly width: number;
   readonly height: number;
-  private readonly wgX: number;
-  private readonly wgY: number;
+  private readonly seedSource: () => number;
 
   private readonly cells: CellBuffer;
 
-  // -- CA pipeline --
-  private readonly caUniformBuffer: GPUBuffer;
-  private readonly caUniformData: Float32Array<ArrayBuffer>;
+  // -- Brush pass (in place on the current buffer) --
+  private readonly brushUniformBuffer: GPUBuffer;
+  private readonly brushUniformData = new ArrayBuffer(BRUSH_UNIFORM_WORDS * 4);
+  private readonly brushFloats = new Float32Array(this.brushUniformData);
+  private readonly brushWords = new Uint32Array(this.brushUniformData);
+  private readonly brushPipeline: GPUComputePipeline;
+  private readonly brushBindGroupA: GPUBindGroup;
+  private readonly brushBindGroupB: GPUBindGroup;
+
+  // -- CA pipeline: one uniform slot per dispatch, picked with a dynamic offset --
+  private readonly slotWords: number;
+  private readonly slotData: Uint32Array<ArrayBuffer>;
+  private readonly stepUniformBuffer: GPUBuffer;
   private readonly caPipeline: GPUComputePipeline;
-  private readonly caBindGroupLayout: GPUBindGroupLayout;
   private readonly caBindGroupAtoB: GPUBindGroup;
   private readonly caBindGroupBtoA: GPUBindGroup;
-
-  // -- Pressure diffusion pipeline --
-  private readonly pressureUniformBuffer: GPUBuffer;
-  private readonly pressureUniformData: Float32Array<ArrayBuffer>;
-  private readonly pressurePipeline: GPUComputePipeline;
-  private readonly pressureBindGroupLayout: GPUBindGroupLayout;
-  private readonly pressureBindGroupAtoB: GPUBindGroup;
-  private readonly pressureBindGroupBtoA: GPUBindGroup;
 
   // Particle counting
   private readonly counterBuffer: GPUBuffer;
@@ -57,56 +62,70 @@ export class Simulation {
   private mapping = false;
   private lastCount = 0;
 
-  constructor(device: GPUDevice, width: number, height: number) {
+  constructor(device: GPUDevice, width: number, height: number, options: SimulationOptions = {}) {
     this.device = device;
     this.width = width;
     this.height = height;
-    this.wgX = Math.ceil(width / 8);
-    this.wgY = Math.ceil(height / 8);
+    this.seedSource = options.seedSource ?? defaultSeedSource;
 
     this.cells = new CellBuffer(device, width, height);
 
+    // -- Brush setup --
+    this.brushUniformBuffer = device.createBuffer({
+      size: this.brushUniformData.byteLength,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+    const brushLayout = device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+        { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
+      ],
+    });
+    this.brushPipeline = device.createComputePipeline({
+      layout: device.createPipelineLayout({ bindGroupLayouts: [brushLayout] }),
+      compute: { module: device.createShaderModule({ code: brushWGSL(width, height) }), entryPoint: 'main' },
+    });
+    const brushBindGroup = (buffer: GPUBuffer): GPUBindGroup => device.createBindGroup({
+      layout: brushLayout,
+      entries: [
+        { binding: 0, resource: { buffer } },
+        { binding: 1, resource: { buffer: this.brushUniformBuffer } },
+      ],
+    });
+    this.brushBindGroupA = brushBindGroup(this.cells.bufferA);
+    this.brushBindGroupB = brushBindGroup(this.cells.bufferB);
+
     // -- CA setup --
-    this.caUniformBuffer = device.createBuffer({
-      size: CA_UNIFORM_SIZE,
+    this.slotWords = device.limits.minUniformBufferOffsetAlignment / 4;
+    this.slotData = new Uint32Array(MAX_DISPATCHES * this.slotWords);
+    this.stepUniformBuffer = device.createBuffer({
+      size: this.slotData.byteLength,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
-    this.caUniformData = new Float32Array(CA_UNIFORM_FLOATS);
-
-    this.caBindGroupLayout = device.createBindGroupLayout({
+    const caLayout = device.createBindGroupLayout({
       entries: [
         { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
         { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
-        { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
+        { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform', hasDynamicOffset: true } },
       ],
     });
-
     this.caPipeline = device.createComputePipeline({
-      layout: device.createPipelineLayout({ bindGroupLayouts: [this.caBindGroupLayout] }),
-      compute: { module: device.createShaderModule({ code: solidCaWGSL }), entryPoint: 'main' },
+      layout: device.createPipelineLayout({ bindGroupLayouts: [caLayout] }),
+      compute: { module: device.createShaderModule({ code: solidCaWGSL(width, height) }), entryPoint: 'main' },
     });
-
-    // -- Pressure diffusion setup --
-    this.pressureUniformBuffer = device.createBuffer({
-      size: PRESSURE_UNIFORM_SIZE,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
-    this.pressureUniformData = new Float32Array(PRESSURE_UNIFORM_FLOATS);
-
-    this.pressureBindGroupLayout = device.createBindGroupLayout({
+    const caBindGroup = (input: GPUBuffer, output: GPUBuffer): GPUBindGroup => device.createBindGroup({
+      layout: caLayout,
       entries: [
-        { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
-        { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
-        { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
+        { binding: 0, resource: { buffer: input } },
+        { binding: 1, resource: { buffer: output } },
+        // Step uniforms are { offset, seed }: two u32.
+        { binding: 2, resource: { buffer: this.stepUniformBuffer, size: 8 } },
       ],
     });
+    this.caBindGroupAtoB = caBindGroup(this.cells.bufferA, this.cells.bufferB);
+    this.caBindGroupBtoA = caBindGroup(this.cells.bufferB, this.cells.bufferA);
 
-    this.pressurePipeline = device.createComputePipeline({
-      layout: device.createPipelineLayout({ bindGroupLayouts: [this.pressureBindGroupLayout] }),
-      compute: { module: device.createShaderModule({ code: pressureWGSL }), entryPoint: 'main' },
-    });
-
-    // Particle counter setup
+    // -- Particle counter setup --
     this.counterBuffer = device.createBuffer({
       size: 4,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
@@ -118,11 +137,9 @@ export class Simulation {
 
     const countShader = device.createShaderModule({
       code: /* wgsl */`
-        struct Cell {
-          pType: u32, variant: f32, lifetime: f32, pressure: f32,
-          velocityX: f32, velocityY: f32, _pad0: f32, _pad1: f32,
-        };
-        @group(0) @binding(0) var<storage, read> cells: array<Cell>;
+        ${cellWGSL}
+
+        @group(0) @binding(0) var<storage, read> cells: array<u32>;
         @group(0) @binding(1) var<storage, read_write> counter: atomic<u32>;
 
         const W: u32 = ${width}u;
@@ -131,9 +148,8 @@ export class Simulation {
         @compute @workgroup_size(8, 8)
         fn main(@builtin(global_invocation_id) gid: vec3u) {
           if (gid.x >= W || gid.y >= H) { return; }
-          let idx = gid.y * W + gid.x;
-          let cell = cells[idx];
-          if (cell.pType != 0u && cell.pType != 2u) {
+          let t = cellType(cells[gid.y * W + gid.x]);
+          if (t != TYPE_EMPTY && t != TYPE_WALL) {
             atomicAdd(&counter, 1u);
           }
         }
@@ -151,99 +167,61 @@ export class Simulation {
       layout: device.createPipelineLayout({ bindGroupLayouts: [this.countBindGroupLayout] }),
       compute: { module: countShader, entryPoint: 'main' },
     });
-
-    // Pre-create bind groups for ping-pong
-    this.caBindGroupAtoB = this.createBindGroup(this.caBindGroupLayout, this.cells.bufferA, this.cells.bufferB, this.caUniformBuffer);
-    this.caBindGroupBtoA = this.createBindGroup(this.caBindGroupLayout, this.cells.bufferB, this.cells.bufferA, this.caUniformBuffer);
-    this.pressureBindGroupAtoB = this.createBindGroup(this.pressureBindGroupLayout, this.cells.bufferA, this.cells.bufferB, this.pressureUniformBuffer);
-    this.pressureBindGroupBtoA = this.createBindGroup(this.pressureBindGroupLayout, this.cells.bufferB, this.cells.bufferA, this.pressureUniformBuffer);
-
-    // Pressure uniforms are constant — write once
-    this.pressureUniformData[0] = width;
-    this.pressureUniformData[1] = height;
-    this.pressureUniformData[2] = 1.0;
-    this.pressureUniformData[3] = 0;
-    device.queue.writeBuffer(this.pressureUniformBuffer, 0, this.pressureUniformData);
-  }
-
-  private createBindGroup(layout: GPUBindGroupLayout, input: GPUBuffer, output: GPUBuffer, uniform: GPUBuffer): GPUBindGroup {
-    return this.device.createBindGroup({
-      layout,
-      entries: [
-        { binding: 0, resource: { buffer: input } },
-        { binding: 1, resource: { buffer: output } },
-        { binding: 2, resource: { buffer: uniform } },
-      ],
-    });
-  }
-
-  private getCaBindGroup(): GPUBindGroup {
-    return this.cells.currentBuffer === this.cells.bufferA
-      ? this.caBindGroupAtoB : this.caBindGroupBtoA;
-  }
-
-  private getPressureBindGroup(): GPUBindGroup {
-    return this.cells.currentBuffer === this.cells.bufferA
-      ? this.pressureBindGroupAtoB : this.pressureBindGroupBtoA;
   }
 
   clear(): void {
     this.cells.clear();
   }
 
-  // Pipeline: CA (offset 0+1) → pressure diffusion (N×)
-  simulate(stepsPerFrame: number, input: SimulationInput): void {
-    for (let i = 0; i < stepsPerFrame; i++) {
-      // Margolus CA: two sub-steps (offset 0 and 1)
-      this.caStep(0, i === 0 && input.mouseActive, input);
-      this.caStep(1, false, input);
-
-      for (let j = 0; j < PRESSURE_DIFFUSION_ITERS; j++) {
-        this.pressurePass();
-      }
+  // Records the brush pass (while a button is down) and `supersteps` CA
+  // supersteps into the caller's encoder; submitting it is the caller's job.
+  simulate(encoder: GPUCommandEncoder, supersteps: number, input: SimulationInput): void {
+    if (supersteps < 0 || supersteps > MAX_SUPERSTEPS) {
+      throw new RangeError(`supersteps must be 0..${MAX_SUPERSTEPS}, got ${supersteps}`);
     }
-  }
+    const dispatches = supersteps * 2;
 
-  private caStep(offset: number, applyInput: boolean, input: SimulationInput): void {
-    const d = this.caUniformData;
-    d[0] = this.width;
-    d[1] = this.height;
-    d[2] = offset;
-    d[3] = Math.random() * 10000;
-    d[4] = input.mousePos.x;
-    d[5] = input.mousePos.y;
-    d[6] = input.prevMousePos.x;
-    d[7] = input.prevMousePos.y;
-    d[8] = input.brushSize;
-    d[9] = input.particleType;
-    d[10] = applyInput ? 1.0 : 0.0;
-    d[11] = input.erasing ? 1.0 : 0.0;
-    d[12] = input.replacing ? 1.0 : 0.0;
-    d[13] = 0;
+    for (let i = 0; i < dispatches; i++) {
+      this.slotData[i * this.slotWords] = i % 2;
+      this.slotData[i * this.slotWords + 1] = this.seedSource();
+    }
+    this.device.queue.writeBuffer(this.stepUniformBuffer, 0, this.slotData, 0, dispatches * this.slotWords);
 
-    this.device.queue.writeBuffer(this.caUniformBuffer, 0, this.caUniformData);
-
-    const encoder = this.device.createCommandEncoder();
     const pass = encoder.beginComputePass();
+
+    if (input.mouseActive) {
+      this.writeBrushUniforms(input);
+      pass.setPipeline(this.brushPipeline);
+      pass.setBindGroup(0, this.cells.currentBuffer === this.cells.bufferA ? this.brushBindGroupA : this.brushBindGroupB);
+      pass.dispatchWorkgroups(Math.ceil(this.width / 8), Math.ceil(this.height / 8));
+    }
+
     pass.setPipeline(this.caPipeline);
-    pass.setBindGroup(0, this.getCaBindGroup());
-    pass.dispatchWorkgroups(this.wgX, this.wgY);
+    for (let i = 0; i < dispatches; i++) {
+      const offset = i % 2;
+      const blocksX = Math.ceil((this.width + offset) / 2);
+      const blocksY = Math.ceil((this.height + offset) / 2);
+      const bindGroup = this.cells.currentBuffer === this.cells.bufferA ? this.caBindGroupAtoB : this.caBindGroupBtoA;
+      pass.setBindGroup(0, bindGroup, [i * this.slotWords * 4]);
+      pass.dispatchWorkgroups(Math.ceil(blocksX / 8), Math.ceil(blocksY / 8));
+      this.cells.swap();
+    }
     pass.end();
-    this.device.queue.submit([encoder.finish()]);
-
-    this.cells.swap();
   }
 
-  private pressurePass(): void {
-    const encoder = this.device.createCommandEncoder();
-    const pass = encoder.beginComputePass();
-    pass.setPipeline(this.pressurePipeline);
-    pass.setBindGroup(0, this.getPressureBindGroup());
-    pass.dispatchWorkgroups(this.wgX, this.wgY);
-    pass.end();
-    this.device.queue.submit([encoder.finish()]);
-
-    this.cells.swap();
+  private writeBrushUniforms(input: SimulationInput): void {
+    const f = this.brushFloats;
+    const w = this.brushWords;
+    f[0] = input.prevMousePos.x;
+    f[1] = input.prevMousePos.y;
+    f[2] = input.mousePos.x;
+    f[3] = input.mousePos.y;
+    f[4] = input.brushSize;
+    w[5] = input.particleType;
+    w[6] = input.erasing ? 1 : 0;
+    w[7] = input.replacing ? 1 : 0;
+    w[8] = this.seedSource();
+    this.device.queue.writeBuffer(this.brushUniformBuffer, 0, this.brushUniformData);
   }
 
   get currentBuffer(): GPUBuffer {
@@ -276,7 +254,7 @@ export class Simulation {
     const pass = encoder.beginComputePass();
     pass.setPipeline(this.countPipeline);
     pass.setBindGroup(0, bindGroup);
-    pass.dispatchWorkgroups(this.wgX, this.wgY);
+    pass.dispatchWorkgroups(Math.ceil(this.width / 8), Math.ceil(this.height / 8));
     pass.end();
 
     encoder.copyBufferToBuffer(this.counterBuffer, 0, this.counterStagingBuffer, 0, 4);
@@ -298,13 +276,5 @@ export class Simulation {
       this.mapping = false;
     }
     return this.lastCount;
-  }
-
-  dispose(): void {
-    this.cells.dispose();
-    this.caUniformBuffer.destroy();
-    this.pressureUniformBuffer.destroy();
-    this.counterBuffer.destroy();
-    this.counterStagingBuffer.destroy();
   }
 }

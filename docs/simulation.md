@@ -1,29 +1,28 @@
 # Simulation
 
-How a frame turns into particle movement. Code: `src/simulation.ts`, `src/shaders/solid-ca.wgsl.ts`, `src/shaders/pressure.wgsl.ts`.
+How a frame turns into particle movement. Code: `src/simulation.ts`, `src/shaders/cell.wgsl.ts`, `src/shaders/solid-ca.wgsl.ts`, `src/shaders/brush.wgsl.ts`.
 
 ## Frame pipeline
 
-Each animation frame runs `stepsPerFrame` supersteps (1, 2, 4, 8, 16, 24 or 32; the speed labelled "1x" is 4), then one render pass. A superstep is:
+Each animation frame runs `stepsPerFrame` supersteps (1, 2, 4, 8, 16, 24 or 32; the speed labelled "1x" is 4), then one render pass. All of it is recorded into one command encoder and sent with one `submit()` (`main.ts`). A frame is:
 
-1. CA step with Margolus offset 0 (brush applied here on the first superstep of the frame).
-2. CA step with Margolus offset 1.
-3. Two pressure diffusion passes.
+1. **Brush pass**, only while a mouse button is down: one thread per cell, in place on the current buffer. Each thread touches only its own cell, so there is no second buffer and no swap.
+2. **CA steps**: `2 × stepsPerFrame` dispatches, Margolus offset alternating 0, 1, 0, 1, … Each reads one cell buffer and writes the other, then the buffers swap (on the CPU, while recording). A superstep is one offset-0 plus one offset-1 dispatch.
+3. **Render** of the final buffer, with the brush ring.
 
-Every pass is a full-grid compute dispatch (8×8 workgroups, one thread per cell) that reads one cell buffer and writes the other, then swaps them. Each pass is its own command encoder and `submit()`. At "1x" that is 16 grid passes and 16 submits per frame; at "8x", 128.
+Every CA dispatch needs its own `{ offset, seed }`. They live in 256-byte slots (`minUniformBufferOffsetAlignment`) of one uniform buffer sized for the 64 dispatches of a 32-superstep frame; one `writeBuffer` fills the used slots and each dispatch selects its slot with a dynamic offset. The grid size is a shader constant.
 
-At most every 2 seconds, on frames where no mouse button is down, a separate compute pass counts non-empty, non-wall cells with an atomic counter and reads it back asynchronously for the toolbar.
+At most every 2 seconds, on frames where no mouse button is down, a separate compute pass counts non-empty, non-wall cells with an atomic counter and reads it back asynchronously for the toolbar. It has its own submit.
 
 ## Cell format
 
-32 bytes per cell (`Cell` struct, see `AGENTS.md`):
+One `u32` per cell (`src/shaders/cell.wgsl.ts`):
 
-- `pType`: particle type ID (0 empty, 1 sand, 2 wall, 3 water, 4 smoke, 5 oil, 6 fire).
-- `variant`: random 0–255 assigned at paint time. Currently not used by the display.
-- `lifetime`: fire only, starts at 200.
-- `pressure`, `velocityX`, `velocityY`: fluid fields, see below.
+- bits 0–7 `type`: particle type ID (0 empty, 1 sand, 2 wall, 3 water, 4 smoke, 5 oil, 6 fire).
+- bits 8–15 `variant`: random 0–255 assigned at paint time. Currently not used by the display.
+- bits 16–31 `lifetime`: fire only, starts at 200 and loses 4 per CA step.
 
-Cells travel as whole structs: when two cells swap, their pressure and velocity go with them.
+Cells travel as whole words: swapping two cells swaps everything.
 
 ## Margolus neighborhood
 
@@ -31,9 +30,15 @@ Intuition: the grid is cut into 2×2 blocks, and each block is updated on its ow
 
 Example with offset 0, the block whose bottom-left cell is (4, 6) holds (4, 6), (5, 6), (4, 7), (5, 7). With offset 1 the cell (4, 6) belongs instead to the block starting at (3, 5), as its top-right cell.
 
-The four threads of a block each read all four cells, run the same rules on the same input (the random numbers are seeded per block), and each writes only its own cell. The block's rules therefore run four times, once per thread.
+One thread handles one block: it reads the four cells, runs all rules and writes the four results. Block `b` has its bottom-left cell at `2·b − offset`, and there are `ceil((W + offset) / 2) × ceil((H + offset) / 2)` blocks, so at offset 1 (and at odd sizes) edge blocks stick out of the grid.
 
 y = 0 is the bottom row; gravity points toward lower y.
+
+A falling grain that starts in the top row of a block moves one cell per dispatch, two per superstep; smoke rising from a bottom row does the same.
+
+## Randomness
+
+`pcg()` is the PCG-RXS-M-XS 32-bit hash. A block's random word is `pcg(bx ^ pcg(by ^ seed))`, with `bx`, `by` the block indices and `seed` a `u32` from `crypto.getRandomValues`, drawn per dispatch. Later random choices in the same block chain `pcg()` on the previous word. A choice between two options uses the top bit.
 
 ## Rules inside a block
 
@@ -41,21 +46,15 @@ Phases run in order on the block's four cells (BL, BR, TL, TR), each phase seein
 
 0. **Smoke rises**: a bottom smoke cell swaps with the cell above if that is empty, water, oil or fire.
 1. **Fall**: sand, water and oil in the top row swap with the cell below if `canDisplace` allows it. Density order: smoke < empty < oil < water < sand < wall, so sand sinks through liquids and water sinks through oil.
-2. **Sand slides**: sand blocked below moves to the opposite bottom corner if that cell is displaceable. Only sand slides diagonally.
-3. **Liquid spreads**: a bottom-row liquid that started the step as liquid moves into an empty cell beside it; a top-row liquid does the same if it cannot fall.
-4. **Smoke spreads**: top-row smoke moves into an empty neighbor; bottom-row smoke does too when it cannot rise.
+2. **Sand slides**: sand blocked below moves to the opposite bottom corner if that cell is displaceable. Only sand slides diagonally. The two possible slides exclude each other, so no random choice is involved.
+3. **Liquid spreads**: the bottom row picks one direction at random and, if its cell on the other side is empty and held liquid at the start of the step, moves it one cell that way. The top row does the same with a fresh random choice if the liquid cannot fall. Only the picked direction is tried, so an isolated droplet moves sideways on about half the steps.
+4. **Smoke spreads**: top-row smoke moves into the empty neighbor in a randomly picked direction (one try); bottom-row smoke does too when it cannot rise.
 5. **Fire**: fire loses 4 lifetime per step and turns into smoke at 0; oil next to fire in the block becomes fire; fire next to water becomes smoke. Fire has no movement rule; it only moves when smoke rises through it.
 
-Finally all velocities are multiplied by 0.95.
+## Brush
 
-Painting writes the selected type into empty cells inside the brush (or any non-wall cell when Shift is held); erasing empties them. Painted cells skip the block rules for that step.
-
-## Pressure and velocity
-
-The CA writes pressure and velocity in a few places: sand falling into liquid adds pressure to the sand cell and vertical velocity to the liquid, water sinking through oil adds pressure, and every horizontal liquid move adds ±0.5 to `velocityX`. The pressure pass then averages pressure and velocity across neighboring liquid cells (Jacobi-style relaxation), decays them, and halves them in non-liquid cells.
-
-No rule reads these fields in a way that changes movement. The only consumer is the flow-direction bias in phase 3, and in that phase the two candidate moves are mutually exclusive, so the bias never changes which move happens. A liquid that started the step as liquid and cannot fall always moves into an empty cell beside it in its block. Backlog B2 and B3 track this; `docs/research/realistic-water.md` covers where water should go next.
+Painting writes the selected type into empty cells within the brush radius of the segment from the previous frame's pointer position to the current one (or into any non-wall cell when Shift is held); erasing empties every cell in range. The pass runs once per frame before the CA steps, so no block ever sees a half-painted state. The radius is in cells, whatever the grid scale. The painted variant comes from the cell coordinates and a per-frame seed.
 
 ## Boundaries
 
-`readCell` returns a wall for out-of-bounds coordinates, so the grid edge behaves like a wall. Threads only exist for in-bounds cells, so nothing is ever written outside.
+`readCell` returns a wall for out-of-bounds coordinates, so the grid edge behaves like a wall, and writes outside the grid are skipped. No rule moves a wall, so out-of-bounds walls never enter the grid. Without fire in the scene every type keeps its count; fire burns oil and ends as smoke.
