@@ -1,6 +1,6 @@
 # CorniSand
 
-GPU-accelerated falling sand simulation built with native WebGPU compute shaders.
+GPU-accelerated falling sand sandbox running entirely in native WebGPU compute shaders.
 
 **[Live Demo](https://pierre-demessence.github.io/CorniSand/)**
 
@@ -13,17 +13,23 @@ npm run dev
 
 Requires a WebGPU-capable browser (Chrome 113+, Edge 113+, Safari 18.2+).
 
+## Features
+
+- Sand, water, oil, fire, smoke and wall particles, one per screen pixel
+- Density layering: sand sinks through liquids, oil floats on water, smoke rises
+- Fire burns oil in chain reactions, dies into smoke, and is put out by water
+- Brush drawing (mouse or touch) with line interpolation, erasing, and Shift to draw over existing particles
+- Simulation speed from 1/4x to 8x, FPS and live particle count
+
 ## Controls
 
-- **Left click**: Draw selected particle
-- **Right click**: Erase particles
-- **Scroll wheel**: Change brush size
-- **1-6**: Select particle type
-- **[/]**: Adjust simulation speed
-- **Shift+click**: Draw over existing particles (except walls)
+- **Left click**: draw the selected particle
+- **Right click**: erase
+- **Scroll wheel**: brush size
+- **1–6**: select Sand, Wall, Water, Smoke, Oil, Fire
+- **[ / ]**: slower / faster
+- **Shift + click**: draw over existing particles (except walls)
 
-## Architecture
+## How it works
 
-The simulation runs entirely on the GPU using a **Margolus neighborhood cellular automaton** in WebGPU compute shaders (WGSL). State is stored in ping-pong RGBA8 storage textures, enabling millions of particles at 60+ FPS. No framework dependencies — direct WebGPU API usage.
-
-See [docs/INDEX.md](docs/INDEX.md) for full documentation.
+Each frame runs a Margolus-neighborhood cellular automaton in WGSL compute shaders over two ping-pong storage buffers, then draws the cells with a fullscreen render pass. No framework, direct WebGPU API. Details in [docs/simulation.md](docs/simulation.md); contributor and agent notes in [AGENTS.md](AGENTS.md).
