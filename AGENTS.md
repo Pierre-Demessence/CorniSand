@@ -42,6 +42,7 @@ The GPU suites in `tests/` run the real WGSL through Dawn's Node bindings (`webg
 
 - `docs/simulation.md` — how the step pipeline and the CA rules work. Update it when rules, passes or the cell format change.
 - `docs/decisions.md` — architectural decisions and the alternatives they rule out.
+- `docs/roadmap.md` — milestones (M1 physics foundation, M2 gases, M3 solids) and what defines each as done.
 - `docs/backlog.md` — known bugs, tech debt and ideas, one line each.
 - `docs/research/` — undecided topics with options and open questions.
 - `docs/plans/` — plans in progress only; deleted when the feature ships.
@@ -68,5 +69,5 @@ The GPU suites in `tests/` run the real WGSL through Dawn's Node bindings (`webg
 
 ## Never
 
-- Never claim a water or physics behavior works from a visual check alone. Water realism failed repeatedly that way; any physics change needs a measurable, repeatable check (see `docs/research/realistic-water.md`).
+- Never claim a water or physics behavior works from a visual check alone. Water realism failed repeatedly that way; any physics change needs a measurable, repeatable check, such as a scene test with a numeric threshold.
 - Never tune a constant without confirming that the value actually reaches a rule that moves particles.

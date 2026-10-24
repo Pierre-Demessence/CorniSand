@@ -18,11 +18,8 @@ IDs are stable: B = bug, D = tech debt, I = idea.
 
 ## Ideas
 
-- **I1** Realistic water, with communicating vessels as the acceptance test. See `docs/research/realistic-water.md`.
-- **I2** Smoke never dissipates, so burning oil eventually fills the ceiling for good; give smoke a lifetime.
 - **I3** More gas types (steam, toxic gas).
 - **I4** Temperature field driving reactions and phase changes (water ↔ steam, ice).
 - **I5** More material interactions beyond fire/oil, fire/water and sand/liquid.
-- **I6** Velocity-driven movement: a per-cell velocity (separate buffer) to advect particles, wind sources, momentum transfer on collision.
 - **I7** New materials: metal, lava, acid.
-- **I8** Debug overlay for the fields of I1's liquid model (mass, flow), once they exist.
+- **I8** Debug overlay for the fluid fields of M1 (velocity, pressure), once they exist.
