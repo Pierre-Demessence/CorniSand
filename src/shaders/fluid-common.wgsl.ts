@@ -1,4 +1,4 @@
-import { FLUID, PARTICLE_KIND } from '../fluid-params';
+import { FLUID, FLUID_FLAG, PARTICLE_KIND } from '../fluid-params';
 
 /** Bytes of the WGSL `Particle` struct { px, py, vx, vy: f32, kind: u32 }; the array stride. */
 export const PARTICLE_BYTES = 20;
@@ -36,7 +36,15 @@ const STIFFNESS: f32 = ${f32(FLUID.stiffness)};
 const PULL: f32 = ${f32(FLUID.pull)};
 const MAX_SPEED: f32 = ${f32(FLUID.maxSpeed)};
 const FIXED_SCALE: f32 = ${f32(FLUID.fixedScale)};
+// Fixed-point weight a face needs before it carries a velocity.
+const MIN_WEIGHT: f32 = ${f32(FLUID.minWeight * FLUID.fixedScale)};
+const OIL_DENSITY: f32 = ${f32(FLUID.oilDensity)};
+const RESOLVE_LIFT: f32 = ${f32(FLUID.resolveLift)};
 const COUNT_CLAMP: u32 = ${FLUID.countClamp}u;
+
+const FLAG_AIR: u32 = ${FLUID_FLAG.AIR}u;
+const FLAG_LIQUID: u32 = ${FLUID_FLAG.LIQUID}u;
+const FLAG_SOLID: u32 = ${FLUID_FLAG.SOLID}u;
 
 const KIND_WATER: u32 = ${PARTICLE_KIND.WATER}u;
 const KIND_OIL: u32 = ${PARTICLE_KIND.OIL}u;

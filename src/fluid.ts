@@ -1,14 +1,36 @@
-import { MAX_PARTICLES, spawnParticles } from './fluid-params';
+import { FLUID, MAX_PARTICLES, spawnParticles } from './fluid-params';
 import type { CellBuffer } from './cell-buffer';
 import type { SimulationInput } from './simulation';
 import { BRUSH_UNIFORM_WORDS, brushWGSL } from './shaders/brush.wgsl';
 import { GRID_WORKGROUP, PARTICLE_BYTES, PARTICLE_WORKGROUP, STATE_WORDS } from './shaders/fluid-common.wgsl';
+import { fluidGridWGSL, GRID_BINDINGS } from './shaders/fluid-grid.wgsl';
 import { fluidParticlesWGSL, PARTICLE_BINDINGS } from './shaders/fluid-particles.wgsl';
 import { mulberry32 } from './random';
 
 export interface FluidOptions {
   // Overrides the capacity computed from the grid and the device limits, for tests.
   particleCapacity?: number;
+  // Red-black sweep pairs per pressure projection; overrides `FLUID.iterations`, for tests and the bench.
+  iterations?: number;
+}
+
+/** The face-velocity, pressure and classification buffers of the last step, for tests to read and seed. */
+export interface FluidGridBuffers {
+  /** f32 per vertical face, (width + 1) x height: `u[y * (width + 1) + x]` is the face left of cell (x, y). */
+  readonly u: GPUBuffer;
+  /** f32 per horizontal face, width x (height + 1): `v[y * width + x]` is the face below cell (x, y). */
+  readonly v: GPUBuffer;
+  /** `u` and `v` as they were before gravity, for the FLIP difference. */
+  readonly uPrev: GPUBuffer;
+  readonly vPrev: GPUBuffer;
+  /** u32 per cell: 0 air, 1 liquid, 2 solid. */
+  readonly flags: GPUBuffer;
+  /** f32 per cell: mean density of the liquid, 0 outside liquid. */
+  readonly density: GPUBuffer;
+  /** f32 pressure per cell; the warm start of the next solve. */
+  readonly p: GPUBuffer;
+  /** One u32: the bits of the largest residual written by `recordResidual`. */
+  readonly residual: GPUBuffer;
 }
 
 // Functions, not constants: tests install the WebGPU globals only after this module is imported.
@@ -37,6 +59,21 @@ export async function fitParticleCapacity(device: GPUDevice, capacity: number): 
   return 1;
 }
 
+// A binding of a pass, with the buffer it takes: the cell and particle buffers vary per frame, so they are picked per variant.
+interface Binding {
+  binding: number;
+  type?: GPUBufferBindingType;
+  buffer: (cells: GPUBuffer, particles: GPUBuffer) => GPUBuffer;
+}
+
+// One compute pass of a step: bind groups per [cell buffer A or B][particle buffer A or B], and the indirect
+// arguments (one thread per particle, or the whole grid) that size it.
+interface Step {
+  pipeline: GPUComputePipeline;
+  groups: GPUBindGroup[][];
+  indirect: GPUBuffer;
+}
+
 const storageEntry = (binding: number, type: GPUBufferBindingType = 'storage'): GPUBindGroupLayoutEntry => ({
   binding,
   visibility: GPUShaderStage.COMPUTE,
@@ -44,8 +81,10 @@ const storageEntry = (binding: number, type: GPUBufferBindingType = 'storage'): 
 });
 
 /**
- * Particle store of the liquids: two particle buffers that swap every frame, the counters and the indirect
- * arguments. A frame starts with `recordFrameStart`, which applies the brush to the particles and compacts them.
+ * The liquids: a particle store (two buffers that swap every frame, the counters and the indirect arguments) and
+ * the grid passes of a step. A frame starts with `recordFrameStart`, which applies the brush to the particles and
+ * compacts them; `recordStep` then records one fluid update: particles to the grid, gravity, the pressure
+ * projection and the extrapolation of the velocities (`FlipModel.stepGrid` in tests/cpu/flip.ts, pass by pass).
  */
 export class Fluid {
   readonly capacity: number;
@@ -55,6 +94,7 @@ export class Fluid {
   readonly particleArgs: GPUBuffer;
   /** Indirect dispatch arguments: the cell and face grid, or nothing while no particle is alive. */
   readonly gridArgs: GPUBuffer;
+  readonly grid: FluidGridBuffers;
 
   private readonly device: GPUDevice;
   private readonly cells: CellBuffer;
@@ -81,6 +121,13 @@ export class Fluid {
   private readonly compactArgsGroup: GPUBindGroup;
   private readonly finalizeGroup: GPUBindGroup;
 
+  private readonly iterations: number;
+  // Passes 1-9 of a step (clear to prepare), the red and black half sweeps, passes 11-13 (gradient to the last ring).
+  private readonly beforeSweeps: Step[];
+  private readonly sweeps: [Step, Step];
+  private readonly afterSweeps: Step[];
+  private readonly residualStep: Step;
+
   constructor(device: GPUDevice, cells: CellBuffer, seedSource: () => number, options: FluidOptions = {}) {
     this.device = device;
     this.cells = cells;
@@ -89,6 +136,11 @@ export class Fluid {
     this.capacity = options.particleCapacity ?? particleCapacityFor(device, width, height);
     if (!Number.isInteger(this.capacity) || this.capacity < 1 || this.capacity > MAX_PARTICLES) {
       throw new RangeError(`particleCapacity must be an integer in 1..${MAX_PARTICLES}, got ${this.capacity}`);
+    }
+
+    this.iterations = options.iterations ?? FLUID.iterations;
+    if (!Number.isInteger(this.iterations) || this.iterations < 0) {
+      throw new RangeError(`iterations must be a non-negative integer, got ${this.iterations}`);
     }
 
     const particleBuffer = (): GPUBuffer => device.createBuffer({ size: this.capacity * PARTICLE_BYTES, usage: bufferUsage() });
@@ -100,6 +152,30 @@ export class Fluid {
       size: this.brushUniformData.byteLength,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
+
+    // Buffers of the grid passes (the layouts are described in docs/plans/physics-foundation.md, "Buffers").
+    const cellCount = width * height;
+    const uCount = (width + 1) * height;
+    const vCount = width * (height + 1);
+    const words = (n: number): GPUBuffer => device.createBuffer({ size: n * 4, usage: bufferUsage() });
+    const u = words(uCount);
+    const v = words(vCount);
+    const uPrev = words(uCount);
+    const vPrev = words(vCount);
+    const flags = words(cellCount);
+    const density = words(cellCount);
+    const p = words(cellCount);
+    const residual = words(1);
+    this.grid = { u, v, uPrev, vPrev, flags, density, p, residual };
+    const counts = words(cellCount);
+    const oilCounts = words(cellCount);
+    const uAcc = words(2 * uCount);
+    const vAcc = words(2 * vCount);
+    // Both validity copies of the extrapolation in one buffer, to stay within the binding limit of a pass.
+    const uValid = words(2 * uCount);
+    const vValid = words(2 * vCount);
+    const weights = words(4 * cellCount);
+    const diagDiv = words(2 * cellCount);
 
     const b = PARTICLE_BINDINGS;
     const particlesModule = device.createShaderModule({ code: fluidParticlesWGSL(width, height, this.capacity) });
@@ -190,6 +266,77 @@ export class Fluid {
         { binding: b.gridArgs, resource: buffer(this.gridArgs) },
       ],
     });
+
+    const step = (
+      module: GPUShaderModule,
+      entryPoint: string,
+      indirect: GPUBuffer,
+      bindings: Binding[],
+      constants?: Record<string, number>,
+    ): Step => {
+      const layout = device.createBindGroupLayout({ entries: bindings.map((x) => storageEntry(x.binding, x.type)) });
+      const pipeline = device.createComputePipeline({
+        layout: device.createPipelineLayout({ bindGroupLayouts: [layout] }),
+        compute: { module, entryPoint, constants },
+      });
+      const groups = cellBuffers.map((cellBuffer) => this.particleBuffers.map((particles) => device.createBindGroup({
+        layout,
+        entries: bindings.map((x) => ({ binding: x.binding, resource: buffer(x.buffer(cellBuffer, particles)) })),
+      })));
+      return { pipeline, groups, indirect };
+    };
+    const fixed = (binding: number, resource: GPUBuffer): Binding => ({ binding, buffer: () => resource });
+
+    const g = GRID_BINDINGS;
+    const gridModule = device.createShaderModule({ code: fluidGridWGSL(width, height, this.capacity) });
+    const gridStep = (entryPoint: string, bindings: Binding[], constants?: Record<string, number>): Step =>
+      step(gridModule, entryPoint, this.gridArgs, bindings, constants);
+    const gridCells: Binding = { binding: g.cells, type: 'read-only-storage', buffer: (c) => c };
+    const flagsB = fixed(g.flags, flags);
+    const uB = fixed(g.u, u);
+    const vB = fixed(g.v, v);
+    const countsB = fixed(g.counts, counts);
+    const oilCountsB = fixed(g.oilCounts, oilCounts);
+    const accB = [fixed(g.uAcc, uAcc), fixed(g.vAcc, vAcc)];
+    const validB = [fixed(g.uValid, uValid), fixed(g.vValid, vValid)];
+    const pB = fixed(g.p, p);
+    const solverB = [fixed(g.weights, weights), fixed(g.diagDiv, diagDiv)];
+    const extrapolation = [flagsB, uB, vB, ...validB];
+
+    const particleModuleStep = (entryPoint: string, bindings: Binding[]): Step =>
+      step(particlesModule, entryPoint, this.particleArgs, bindings);
+    const state: Binding = fixed(b.state, this.particleState);
+    const liveParticles: Binding = { binding: b.particles, buffer: (_, particles) => particles };
+    const particleCells: Binding = { binding: b.cells, type: 'read-only-storage', buffer: (c) => c };
+
+    const ring = (read: 0 | 1): Step => gridStep('extrapolate', extrapolation, { READ: read });
+    this.beforeSweeps = [
+      gridStep('clearGrid', [countsB, oilCountsB, ...accB]),
+      particleModuleStep('resolve', [state, liveParticles, particleCells]),
+      particleModuleStep('countParticles', [
+        state, liveParticles, fixed(b.counts, counts), fixed(b.oilCounts, oilCounts),
+      ]),
+      gridStep('classify', [gridCells, countsB, oilCountsB, flagsB, fixed(g.density, density)]),
+      particleModuleStep('particlesToGrid', [
+        state, liveParticles, fixed(b.uAcc, uAcc), fixed(b.vAcc, vAcc),
+      ]),
+      gridStep('normalizeFaces', [...accB, flagsB, uB, vB, ...validB]),
+      ring(0),
+      ring(1),
+      gridStep('applyGravity', [flagsB, uB, vB, fixed(g.uPrev, uPrev), fixed(g.vPrev, vPrev)]),
+      gridStep('prepare', [flagsB, fixed(g.density, density), countsB, pB, uB, vB, ...solverB]),
+    ];
+    this.sweeps = [0, 1].map((color) => gridStep('sweep', [pB, ...solverB], { COLOR: color })) as [Step, Step];
+    const film: boolean = FLUID.film;
+    this.afterSweeps = [
+      gridStep('gradient', [flagsB, pB, ...solverB, uB, vB]),
+      ...(film ? [gridStep('pinFilms', [flagsB, uB])] : []),
+      gridStep('extrapolateInit', extrapolation),
+      ring(0),
+      ring(1),
+    ];
+    this.residualStep = gridStep('measureResidual', [pB, ...solverB, fixed(g.residualMax, residual)]);
+
     this.clear();
   }
 
@@ -269,8 +416,40 @@ export class Fluid {
     this.current = source === 0 ? 1 : 0;
   }
 
+  /**
+   * Records one fluid update into the caller's compute pass, after `recordFrameStart` published the particle
+   * count: the grid passes that carry the particles' velocities through gravity, the pressure projection and the
+   * extrapolation. Binds the cell buffer that is current now and the live particle buffer. Particles do not move
+   * yet; the grid of the step is left in the `grid` buffers.
+   */
+  recordStep(pass: GPUComputePassEncoder): void {
+    const record = (step: Step): void => this.recordPass(pass, step);
+    this.beforeSweeps.forEach(record);
+    for (let i = 0; i < this.iterations; i++) this.sweeps.forEach(record);
+    this.afterSweeps.forEach(record);
+  }
+
+  /**
+   * Test only: records the pass that writes the largest remaining residual of the current pressure into
+   * `grid.residual` (as the bits of an f32). The caller zeroes the buffer first.
+   */
+  recordResidual(pass: GPUComputePassEncoder): void {
+    this.recordPass(pass, this.residualStep);
+  }
+
+  private recordPass(pass: GPUComputePassEncoder, step: Step): void {
+    const cellsIndex = this.cells.currentBuffer === this.cells.bufferA ? 0 : 1;
+    pass.setPipeline(step.pipeline);
+    pass.setBindGroup(0, step.groups[cellsIndex][this.current]);
+    pass.dispatchWorkgroupsIndirect(step.indirect, 0);
+  }
+
   private setState(count: number, water: number, oil: number): void {
     const { width, height } = this.cells;
+    // The pressure is the one grid field that carries over from step to step (the solver's warm start).
+    const encoder = this.device.createCommandEncoder();
+    encoder.clearBuffer(this.grid.p);
+    this.device.queue.submit([encoder.finish()]);
     const state = new Uint32Array(STATE_WORDS);
     state[0] = count;
     state[1] = count;

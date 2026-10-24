@@ -124,6 +124,38 @@ export function particleRows(particles: ParticleRecords): number[][] {
   });
 }
 
+export async function readFloats(buffer: GPUBuffer, count: number): Promise<Float32Array> {
+  const words = await readBuffer(device!, buffer, count * 4);
+  return new Float32Array(words.buffer);
+}
+
+// Records `steps` fluid updates (passes 1-13 only, the cells and the particles stay as they are) in one compute pass,
+// after a frame start unless `frameStart` is false; fails the test on any WebGPU validation error.
+export async function runFluid(sim: Simulation, steps: number, frameStart = true): Promise<void> {
+  const dev = device!;
+  dev.pushErrorScope('validation');
+  const encoder = dev.createCommandEncoder();
+  const pass = encoder.beginComputePass();
+  if (frameStart) sim.fluid.recordFrameStart(pass, null);
+  for (let s = 0; s < steps; s++) sim.fluid.recordStep(pass);
+  pass.end();
+  dev.queue.submit([encoder.finish()]);
+  const error = await dev.popErrorScope();
+  if (error) throw new Error(`WebGPU validation error: ${error.message}`);
+}
+
+// The largest remaining residual of the pressure solve for the current pressure, weights and divergence.
+export async function readResidual(sim: Simulation): Promise<number> {
+  const dev = device!;
+  dev.queue.writeBuffer(sim.fluid.grid.residual, 0, new Uint32Array([0]));
+  const encoder = dev.createCommandEncoder();
+  const pass = encoder.beginComputePass();
+  sim.fluid.recordResidual(pass);
+  pass.end();
+  dev.queue.submit([encoder.finish()]);
+  return (await readFloats(sim.fluid.grid.residual, 1))[0];
+}
+
 // Records and submits one encoder; fails the test on any WebGPU validation error.
 export async function run(sim: Simulation, supersteps: number, input: SimulationInput = idleInput): Promise<void> {
   const dev = device!;

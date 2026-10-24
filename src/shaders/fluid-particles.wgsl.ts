@@ -11,12 +11,17 @@ export const PARTICLE_BINDINGS = {
   brush: 4,
   particleArgs: 5,
   gridArgs: 6,
+  counts: 7,
+  oilCounts: 8,
+  uAcc: 9,
+  vAcc: 10,
 } as const;
 
-// The particle passes of the frame start, one entry point each:
+// The particle passes, one entry point each. Frame start:
 //   kill -> (cell brush) -> compactArgs -> compact -> finalize
 // The brush appends after the `count` live particles of the current buffer; compaction then copies the live ones of
 // [0, spawnCursor) into the other buffer, and finalize publishes the new count and the indirect arguments.
+// Per step: resolve -> countParticles -> (classify, in fluid-grid) -> particlesToGrid.
 export const fluidParticlesWGSL = (width: number, height: number, capacity: number): string => /* wgsl */`
 ${cellWGSL}
 ${fluidCommonWGSL(width, height, capacity)}
@@ -29,6 +34,11 @@ ${brushShapeWGSL}
 @group(0) @binding(${PARTICLE_BINDINGS.brush}) var<uniform> brush: BrushUniforms;
 @group(0) @binding(${PARTICLE_BINDINGS.particleArgs}) var<storage, read_write> particleArgs: array<u32, 3>;
 @group(0) @binding(${PARTICLE_BINDINGS.gridArgs}) var<storage, read_write> gridArgs: array<u32, 3>;
+@group(0) @binding(${PARTICLE_BINDINGS.counts}) var<storage, read_write> counts: array<atomic<u32>>;
+@group(0) @binding(${PARTICLE_BINDINGS.oilCounts}) var<storage, read_write> oilCounts: array<atomic<u32>>;
+// (sum of weight * velocity, sum of weight) per face, in fixed point.
+@group(0) @binding(${PARTICLE_BINDINGS.uAcc}) var<storage, read_write> uAcc: array<atomic<i32>>;
+@group(0) @binding(${PARTICLE_BINDINGS.vAcc}) var<storage, read_write> vAcc: array<atomic<i32>>;
 
 // Particles to process, read from the state once per workgroup: an atomic load per thread would serialize them all.
 var<workgroup> groupLimit: u32;
@@ -121,5 +131,91 @@ fn finalize() {
   gridArgs[0] = GRID_GROUPS_X * live;
   gridArgs[1] = GRID_GROUPS_Y * live;
   gridArgs[2] = live;
+}
+
+fn blocks(t: u32) -> bool { return t == TYPE_WALL || t == TYPE_SAND; }
+
+// Oil in a fire cell burns away. A particle inside a wall or sand cell (sand fell on it) moves up to just above the
+// first free cell over it, at rest; with none above it stays.
+@compute @workgroup_size(${PARTICLE_WORKGROUP})
+fn resolve(@builtin(global_invocation_id) gid: vec3u, @builtin(local_invocation_index) li: u32) {
+  if (li == 0u) { groupLimit = atomicLoad(&state.count); }
+  workgroupBarrier();
+  let i = gid.x;
+  if (i >= groupLimit) { return; }
+  let p = particles[i];
+  if (p.kind == KIND_DEAD) { return; }
+  let cell = cellOf(p.px, p.py);
+  let here = cellType(cells[cellIndex(cell.x, cell.y)]);
+  if (p.kind == KIND_OIL && here == TYPE_FIRE) {
+    particles[i].kind = KIND_DEAD;
+    return;
+  }
+  if (!blocks(here)) { return; }
+  var free = cell.y + 1u;
+  while (free < H && blocks(cellType(cells[cellIndex(cell.x, free)]))) { free++; }
+  if (free < H) {
+    particles[i].py = f32(free) + RESOLVE_LIFT;
+    particles[i].vy = 0.0;
+  }
+}
+
+// Particles per cell, and how many of them are oil.
+@compute @workgroup_size(${PARTICLE_WORKGROUP})
+fn countParticles(@builtin(global_invocation_id) gid: vec3u, @builtin(local_invocation_index) li: u32) {
+  if (li == 0u) { groupLimit = atomicLoad(&state.count); }
+  workgroupBarrier();
+  let i = gid.x;
+  if (i >= groupLimit) { return; }
+  let p = particles[i];
+  if (p.kind == KIND_DEAD) { return; }
+  let cell = cellOf(p.px, p.py);
+  atomicAdd(&counts[cellIndex(cell.x, cell.y)], 1u);
+  if (p.kind == KIND_OIL) { atomicAdd(&oilCounts[cellIndex(cell.x, cell.y)], 1u); }
+}
+
+// Particle velocities to the u and v faces with bilinear weights. u faces sit on the left edge of a cell at the
+// middle of its height, v faces on the bottom edge at the middle of its width. The sums are fixed point because
+// WebGPU has no float atomics; integer addition is exact, so they do not depend on the order of the particles.
+@compute @workgroup_size(${PARTICLE_WORKGROUP})
+fn particlesToGrid(@builtin(global_invocation_id) gid: vec3u, @builtin(local_invocation_index) li: u32) {
+  if (li == 0u) { groupLimit = atomicLoad(&state.count); }
+  workgroupBarrier();
+  let i = gid.x;
+  if (i >= groupLimit) { return; }
+  let p = particles[i];
+  if (p.kind == KIND_DEAD) { return; }
+
+  var f = vec2f(p.px, p.py - 0.5);
+  var base = floor(f);
+  var t = f - base;
+  for (var dj = 0; dj < 2; dj++) {
+    let j = i32(base.y) + dj;
+    if (j < 0 || j >= i32(H)) { continue; }
+    for (var di = 0; di < 2; di++) {
+      let x = i32(base.x) + di;
+      if (x < 0 || x > i32(W)) { continue; }
+      let w = select(1.0 - t.x, t.x, di == 1) * select(1.0 - t.y, t.y, dj == 1);
+      let face = 2u * (u32(j) * (W + 1u) + u32(x));
+      atomicAdd(&uAcc[face], i32(round(w * p.vx * FIXED_SCALE)));
+      atomicAdd(&uAcc[face + 1u], i32(round(w * FIXED_SCALE)));
+    }
+  }
+
+  f = vec2f(p.px - 0.5, p.py);
+  base = floor(f);
+  t = f - base;
+  for (var dj = 0; dj < 2; dj++) {
+    let j = i32(base.y) + dj;
+    if (j < 0 || j > i32(H)) { continue; }
+    for (var di = 0; di < 2; di++) {
+      let x = i32(base.x) + di;
+      if (x < 0 || x >= i32(W)) { continue; }
+      let w = select(1.0 - t.x, t.x, di == 1) * select(1.0 - t.y, t.y, dj == 1);
+      let face = 2u * (u32(j) * W + u32(x));
+      atomicAdd(&vAcc[face], i32(round(w * p.vy * FIXED_SCALE)));
+      atomicAdd(&vAcc[face + 1u], i32(round(w * FIXED_SCALE)));
+    }
+  }
 }
 `;

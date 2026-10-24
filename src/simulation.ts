@@ -19,6 +19,8 @@ export interface SimulationOptions {
   seedSource?: () => number;
   // Overrides the particle store's capacity, for tests; see `Fluid`.
   particleCapacity?: number;
+  // Overrides the pressure solver's sweeps per step, for tests and the bench; see `Fluid`.
+  iterations?: number;
 }
 
 // A superstep is two CA dispatches (Margolus offset 0, then 1).
@@ -62,7 +64,10 @@ export class Simulation {
 
     this.cells = new CellBuffer(device, width, height);
 
-    this.fluid = new Fluid(device, this.cells, this.seedSource, { particleCapacity: options.particleCapacity });
+    this.fluid = new Fluid(device, this.cells, this.seedSource, {
+      particleCapacity: options.particleCapacity,
+      iterations: options.iterations,
+    });
 
     // -- CA setup --
     this.slotWords = device.limits.minUniformBufferOffsetAlignment / 4;
@@ -160,8 +165,8 @@ export class Simulation {
     this.fluid.clear();
   }
 
-  // Records the frame start (the brush while a button is down, and the particle compaction) and `supersteps` CA
-  // supersteps into the caller's encoder; submitting it is the caller's job.
+  // Records the frame start (the brush while a button is down, and the particle compaction) and `supersteps`
+  // supersteps (a fluid update, then the two CA dispatches) into the caller's encoder; submitting it is the caller's job.
   simulate(encoder: GPUCommandEncoder, supersteps: number, input: SimulationInput): void {
     if (supersteps < 0 || supersteps > MAX_SUPERSTEPS) {
       throw new RangeError(`supersteps must be 0..${MAX_SUPERSTEPS}, got ${supersteps}`);
@@ -178,9 +183,10 @@ export class Simulation {
 
     this.fluid.recordFrameStart(pass, input.mouseActive ? input : null);
 
-    pass.setPipeline(this.caPipeline);
     for (let i = 0; i < dispatches; i++) {
       const offset = i % 2;
+      if (offset === 0) this.fluid.recordStep(pass);
+      pass.setPipeline(this.caPipeline);
       const blocksX = Math.ceil((this.width + offset) / 2);
       const blocksY = Math.ceil((this.height + offset) / 2);
       const bindGroup = this.cells.currentBuffer === this.cells.bufferA ? this.caBindGroupAtoB : this.caBindGroupBtoA;

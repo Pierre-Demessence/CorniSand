@@ -1,16 +1,17 @@
+import { FLUID, FLUID_FLAG } from '../../src/fluid-params';
 import { PARTICLE_TYPES as T } from '../../src/particles';
 
 // Test-only CPU reference of the fluid grid, mirroring the planned GPU buffers (docs/plans/physics-foundation.md).
 // Every fluid quantity is in fluid-cell units (one fluid cell = k x k grid cells) and one step is dt = 1.
 
-export const AIR = 0;
-export const LIQUID = 1;
-export const SOLID = 2;
+export const AIR = FLUID_FLAG.AIR;
+export const LIQUID = FLUID_FLAG.LIQUID;
+export const SOLID = FLUID_FLAG.SOLID;
 
 /** Relative densities; the solver weights each face by 1 / density, so oil is pushed more easily than water. */
 export const LIQUID_DENSITY: Readonly<Record<number, number>> = {
   [T.WATER]: 1,
-  [T.OIL]: 0.8,
+  [T.OIL]: FLUID.oilDensity,
 };
 
 export function isLiquidType(type: number): boolean {

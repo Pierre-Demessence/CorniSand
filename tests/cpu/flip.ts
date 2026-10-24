@@ -193,9 +193,15 @@ export class FlipModel implements LiquidModel {
     p: Float32Array;
     flags: Uint8Array;
     density: Float32Array;
+    uWeight: Float32Array;
+    vWeight: Float32Array;
   } {
-    const { px, py, vx, vy, kind, grid } = this;
-    return { px, py, vx, vy, kind, u: grid.u, v: grid.v, p: grid.p, flags: grid.flags, density: grid.density };
+    const { px, py, vx, vy, kind, grid, uw, vw } = this;
+    return {
+      px, py, vx, vy, kind,
+      u: grid.u, v: grid.v, p: grid.p, flags: grid.flags, density: grid.density,
+      uWeight: uw, vWeight: vw,
+    };
   }
 
   step(n: number): void {
@@ -294,7 +300,7 @@ export class FlipModel implements LiquidModel {
       let jj = j + 1;
       while (jj < height && this.isSolidCell(cells[jj * width + i])) jj++;
       if (jj < height) {
-        this.py[p] = jj + 0.05;
+        this.py[p] = jj + FLUID.resolveLift;
         this.vy[p] = 0;
       }
     }
@@ -401,8 +407,8 @@ export class FlipModel implements LiquidModel {
         }
       }
     }
-    for (let i = 0; i < grid.u.length; i++) grid.u[i] = uw[i] > 1e-6 ? usum[i] / uw[i] : 0;
-    for (let i = 0; i < grid.v.length; i++) grid.v[i] = vw[i] > 1e-6 ? vsum[i] / vw[i] : 0;
+    for (let i = 0; i < grid.u.length; i++) grid.u[i] = uw[i] > FLUID.minWeight ? usum[i] / uw[i] : 0;
+    for (let i = 0; i < grid.v.length; i++) grid.v[i] = vw[i] > FLUID.minWeight ? vsum[i] / vw[i] : 0;
   }
 
   /** Cells holding more particles than at rest ask the projection for outflow, which pushes the particles apart. */

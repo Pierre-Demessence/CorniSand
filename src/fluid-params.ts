@@ -31,6 +31,12 @@ export const FLUID = {
   maxSpeed: 1,
   /** Fixed-point scale of the GPU's particle-to-grid atomic accumulators. */
   fixedScale: 2 ** 20,
+  /** A face whose particle weight is at or below this carries no velocity (a weight in particles, before the fixed-point scale). */
+  minWeight: 1e-6,
+  /** Density of oil relative to water; the pressure solve weights each face by 1 / density, so oil moves more easily. */
+  oilDensity: 0.8,
+  /** A particle found inside a wall or sand cell is put this far above the floor of the first free cell over it. */
+  resolveLift: 0.05,
   /** Particles per cell beyond this count do not raise a cell's rasterization rank. */
   countClamp: 12,
   /** Rasterization key weights: own count, each side neighbor's count, already liquid, padding cell. */
@@ -50,6 +56,9 @@ export const FLUID = {
 export const MAX_FLUID_CELLS = 2 ** 24 - 1;
 /** The largest particle count one 1D indirect dispatch of 256-thread workgroups can cover. */
 export const MAX_PARTICLES = 65535 * 256;
+
+/** Cell flags of the fluid grid. */
+export const FLUID_FLAG = { AIR: 0, LIQUID: 1, SOLID: 2 } as const;
 
 export const PARTICLE_KIND = { WATER: 0, OIL: 1, DEAD: 2 } as const;
 
