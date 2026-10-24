@@ -15,6 +15,10 @@ IDs are stable: B = bug, D = tech debt, I = idea.
 - **D10** Move to TypeScript 7 (the native port) once typescript-eslint supports it: 8.x accepts `typescript <6.1`, so the project is on 6.0.x.
 - **D11** The GPU test suites (`tests/simulation.test.ts`, `tests/hash.test.ts`) skip themselves on machines without a GPU, which includes the GitHub Actions runners, so CI only runs the unit tests. A software adapter on the runner (for example Dawn with SwiftShader) would let CI run them.
 - **D12** ESLint uses typescript-eslint's recommended type-checked rules (`eslint.config.js`), not the `create-corniflex` template (`@antfu/eslint-config`).
+- **D13** The CPU liquid acceptance suite (`tests/liquids-*.test.ts`) takes about 100 s wall (260 s summed) on the dev machine and runs on CI too; shrink the large scenes or step counts, or run it on demand, if CI time matters.
+- **D14** FLIP particles keep moving at rest: about 19% exceed 0.3 cells/step in the settled large U-tube. The ranked cell output hides it, but it needs damping before sand sinks through water. `tests/cpu/flip.ts` `gridToParticles`
+- **D16** `FlipModel.rasterize` overwrites any non-wall, non-sand cell it picks, so smoke and fire cells (and the variant and life bits) are lost where liquid lands; no acceptance scene has them, but AC15 does. `tests/cpu/flip.ts` `rasterize`
+- **D15** FLIP at `k = 2` fails AC2, AC5, AC6 and AC11 (stray cells over the surface, oil mixing into water); only needed if the GPU cost requires the coarser solve. `tests/cpu/flip.ts`
 
 ## Ideas
 

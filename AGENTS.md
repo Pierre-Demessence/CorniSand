@@ -36,7 +36,8 @@ The GPU suites in `tests/` run the real WGSL through Dawn's Node bindings (`webg
 - `src/input.ts` — pointer, wheel and Shift state.
 - `src/particles.ts` — particle type IDs and fire max life, the single source for TS and every shader.
 - `src/shaders/*.wgsl.ts` — WGSL sources exported as template strings (functions of the grid size where needed): `cell` (shared snippet: type constants, cell accessors, PCG hash, `CELL_BYTES`), `solid-ca` (all particle rules), `brush`, `display`.
-- `tests/` — Vitest: `grid` (unit), `hash` and `simulation` (GPU), `gpu.ts` (device, scene upload and readback helpers).
+- `src/scenes.ts` — scene builders (`SCENES`) shared by the tests and, from M1.4, the `?scene=` loader.
+- `tests/` — Vitest: `grid` (unit), `hash` and `simulation` (GPU), `gpu.ts` (device, scene upload and readback helpers), `scenes`, `metrics`, `cpu/` (test-only CPU reference of the fluid code: grid, solver, particles) and `liquids-*.test.ts` (liquid acceptance criteria run on that reference through `LiquidModel`).
 
 ## Docs map
 
