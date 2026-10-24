@@ -17,7 +17,6 @@ IDs are stable: B = bug, D = tech debt, I = idea.
 - **D12** ESLint uses typescript-eslint's recommended type-checked rules (`eslint.config.js`), not the `create-corniflex` template (`@antfu/eslint-config`).
 - **D13** The CPU liquid acceptance suite (`tests/liquids-*.test.ts`) takes about 100 s wall (260 s summed) on the dev machine and runs on CI too; shrink the large scenes or step counts, or run it on demand, if CI time matters.
 - **D14** FLIP particles keep moving at rest: about 19% exceed 0.3 cells/step in the settled large U-tube. The ranked cell output hides it, but it needs damping before sand sinks through water. `tests/cpu/flip.ts` `gridToParticles`
-- **D16** `FlipModel.rasterize` overwrites any non-wall, non-sand cell it picks, so smoke and fire cells (and the variant and life bits) are lost where liquid lands; no acceptance scene has them, but AC15 does. `tests/cpu/flip.ts` `rasterize`
 - **D15** FLIP at `k = 2` fails AC2, AC5, AC6 and AC11 (stray cells over the surface, oil mixing into water); only needed if the GPU cost requires the coarser solve. `tests/cpu/flip.ts`
 
 ## Ideas
@@ -27,3 +26,4 @@ IDs are stable: B = bug, D = tech debt, I = idea.
 - **I5** More material interactions beyond fire/oil, fire/water and sand/liquid.
 - **I7** New materials: metal, lava, acid.
 - **I8** Debug overlay for the fluid fields of M1 (velocity, pressure), once they exist.
+- **I9** Liquid falls at most 1 cell per step (the FLIP velocity clamp), half the speed of falling sand; a swept wall test in the particle move would allow a clamp of 2 without particles crossing thin walls. `tests/cpu/flip.ts` `gridToParticles`

@@ -1,3 +1,4 @@
+import { FLUID } from '../../src/fluid-params';
 import { AIR, type FluidGrid, LIQUID, SOLID } from './fluid-grid';
 
 export interface SolverParams {
@@ -11,7 +12,12 @@ export interface SolverParams {
   theta: number;
 }
 
-export const DEFAULT_SOLVER: SolverParams = { gravity: 0.05, iterations: 40, omega: 1.85, theta: 0.5 };
+export const DEFAULT_SOLVER: SolverParams = {
+  gravity: FLUID.gravity,
+  iterations: FLUID.iterations,
+  omega: FLUID.omega,
+  theta: FLUID.theta,
+};
 
 function clamp(x: number, lo: number, hi: number): number {
   return x < lo ? lo : x > hi ? hi : x;

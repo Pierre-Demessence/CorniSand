@@ -1,17 +1,21 @@
 import { PARTICLE_TYPES } from '../src/particles';
 import { MAX_SUPERSTEPS, Simulation, type SimulationInput } from '../src/simulation';
+import { mulberry32 } from './random';
 
-// Dawn crashes the process if the GPU instance is garbage-collected while its device is in use.
+export { mulberry32 };
+
+// Dawn crashes the process if the GPU instance is garbage-collected while its device is in use. One instance
+// serves every device, so a device made with other adapter options cannot outlive the instance holding it.
 let gpu: GPU | undefined;
 
-async function createDevice(): Promise<GPUDevice | null> {
+export async function createDevice(options?: GPURequestAdapterOptions): Promise<GPUDevice | null> {
   try {
     // Imported lazily so a machine where the native binding does not load skips instead of failing.
     const { create, globals } = await import('webgpu');
     // Simulation code refers to GPUBufferUsage & co. as globals, as it does in a browser.
     Object.assign(globalThis, globals);
-    gpu = create([]);
-    const adapter = await gpu.requestAdapter();
+    gpu ??= create([]);
+    const adapter = await gpu.requestAdapter(options);
     if (!adapter) return null;
     return await adapter.requestDevice({
       requiredLimits: {
@@ -51,18 +55,6 @@ export const idleInput: SimulationInput = {
   brushSize: 0,
   particleType: PARTICLE_TYPES.SAND,
 };
-
-// Deterministic 32-bit PRNG so a failing GPU test can be replayed.
-export function mulberry32(seed: number): () => number {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = a;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return (t ^ (t >>> 14)) >>> 0;
-  };
-}
 
 export function cell(type: number, variant = 0, life = 0): number {
   return (type | (variant << 8) | (life << 16)) >>> 0;

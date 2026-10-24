@@ -15,5 +15,5 @@
     "outDir": "dist",
     "types": ["@webgpu/types", "node"]
   },
-  "include": ["src", "tests", "vite.config.ts"]
+  "include": ["src", "tests", "vite.config.ts", "vitest.bench.config.ts"]
 }

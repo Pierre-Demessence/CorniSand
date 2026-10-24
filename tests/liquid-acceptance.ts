@@ -32,11 +32,12 @@ export function expectLevelsSettle(model: LiquidModel, scene: Scene, within: num
   expect(result.settledAt, `steps to settle (last step outside the rest band: ${result.lastBreak})`).not.toBeNull();
 }
 
-// Per-type cell counts that must not change without brush input.
+// Per-type cell counts that must not change without brush input, and no liquid cell the rasterization failed to place.
 export function expectVolumesConstant(model: LiquidModel, total: number): void {
   const types = [T.WATER, T.OIL, T.SAND];
   const before = types.map((t) => model.volume(t));
   observe(model, total, 50, () => {
     expect(types.map((t) => model.volume(t))).toEqual(before);
+    if (model.maxShortfall !== undefined) expect(model.maxShortfall, 'maxShortfall').toBe(0);
   });
 }

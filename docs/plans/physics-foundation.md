@@ -1,6 +1,6 @@
 # M1 Physics foundation and realistic liquids
 
-Status: M1.1–M1.3 are done and stopped at the M1.3 gate: C1 (velocity CA) failed after three attempts, C2 (FLIP particles) passes AC1–AC11 on the CPU reference at `k = 1`. The gate report (results below) awaits the user's decision; M1.4 and later are still the outline and are rewritten once the user approves the representation and the cost plan. No WGSL has been written.
+Status: M1.1–M1.4a are done (the CPU reference is the GPU spec, the pre-M1.4 bench baseline is recorded). No WGSL has been written. Next: M1.4b, then the WGSL items in order.
 
 ## Goal
 
@@ -30,10 +30,11 @@ Scenes and expected levels are defined in `src/scenes.ts` (M1.1). A **step** is 
 - **AC9** WHEN a single water cell or a one-cell-thick film rests on a floor, THE SYSTEM SHALL keep it in place without losing it.
 - **AC10** WHEN sand is dropped into a pool, THE SYSTEM SHALL let the sand reach the bottom, keep water volume unchanged and raise the surface by the displaced volume (within 1 cell).
 - **AC11** WHEN the small U-tube is filled with oil, THE SYSTEM SHALL meet AC1; WHEN oil is poured onto water, THE SYSTEM SHALL keep the oil above the water.
-- **AC12** WHEN AC1, AC6 and AC7 run on the GPU through read-back, THE SYSTEM SHALL pass them with the same thresholds.
+- **AC12** WHEN AC1–AC11 run on the GPU through read-back, THE SYSTEM SHALL pass them with the same thresholds.
 - **AC13** WHEN the page is opened with `?scene=<name>`, THE SYSTEM SHALL load that scene so it can be watched.
-- **AC14** WHILE running at 1x on the default grid, THE SYSTEM SHALL keep 60 fps on the dev machine, and at 8x SHALL lose at most 25% frame rate compared to the commit before M1.4.
-- **AC15** WHEN sand, smoke, fire and the brush are used as today, THE SYSTEM SHALL behave as before: the existing `tests/simulation.test.ts` cases still pass, and sand piles, smoke rises, fire burns oil and water puts it out.
+- **AC14** WHEN the bench scene (2560×1340 grid, the bottom quarter water, M1.4a) runs at 1x (4 steps per frame) on the dev machine (RTX 4080), THE SYSTEM SHALL take at most 14 ms of GPU time per frame in `npm run bench`, and the page SHALL show 60 fps at 1x in a maximized 2560×1440 window. Above 1x the frame rate may drop with the extra steps; the bench reports 2x, 4x and 8x without a threshold.
+- **AC15** WHEN sand, smoke, fire and the brush are used as today, THE SYSTEM SHALL behave as before: the existing `tests/simulation.test.ts` cases still pass, except B2 (an isolated droplet drifts sideways), which AC9 replaces (a droplet stays in place); sand piles, smoke rises (also through water), fire burns oil and water puts it out.
+- **AC16** WHEN the brush paints water or oil, erases liquid, or paints over it with Shift, THE SYSTEM SHALL add 4 particles per painted liquid cell and remove every particle inside the stroke of an erase or a Shift paint over a non-wall cell; WHEN the particle store is full, THE SYSTEM SHALL paint no further liquid cells.
 
 ## Design
 
@@ -50,35 +51,107 @@ The packed `u32` cell grid, the Margolus CA for sand, smoke and fire, the brush 
 - **Pressure solve.** Red-black Gauss-Seidel: two dispatches per iteration, each updating every other cell like a checkerboard, so neighbors never update at the same time. Warm-started from the previous step's pressure. Air is a Dirichlet boundary (p = 0) placed at the sub-cell surface position (ghost fluid), walls are Neumann (no flow through). The CPU reference measures how many iterations per step AC1–AC7 need. If the count is too high for AC14, add multigrid (solving the same problem on coarser grids to carry long-range pressure quickly) as a separate checklist item.
 - **Gravity and units.** Cells and steps; gravity `g` is tuned so free-falling water looks as fast as falling sand (2 cells per step at most). Velocities are clamped to 1 cell per step (CFL limit: nothing may skip a cell in one step).
 
-### Liquid representation: the spike decides
+### Liquid representation: FLIP particles
 
-The CPU spike (M1.3) runs the acceptance tests on these candidates, in this order, and stops at the first that passes:
+Chosen at the M1.3 gate (`docs/decisions.md`, "Liquids are FLIP particles"); the GPU design below ports `tests/cpu/flip.ts`. The two candidates the spike compared, in the order it tried them:
 
 1. **C1 Velocity CA (lead).** Liquids stay discrete cells in the `u32` grid, so volume is exact and every existing interaction keeps working. Each liquid cell has a sub-cell displacement accumulator (two f16 or f32 per grid cell, separate buffer). Each step it adds the interpolated face velocity, and when the accumulator crosses ±1 on an axis, the cell tries to move one cell that way inside its Margolus block (swap with empty, or with a lighter liquid). A blocked move zeroes that component. Inside a full body the moves are invisible water-water swaps, and only surfaces and holes change. Risks: holes left behind when surface cells move (they are air, so the pressure solve pulls water into them, but they may linger as bubbles: AC5), and quantization of slow flows.
 2. **C2 FLIP particles.** Liquid cells become particles with sub-cell position and velocity in a separate buffer: velocity goes particles → grid (with fixed-point `atomicAdd`, since WebGPU has no float atomics), the grid solves pressure, and velocity goes back grid → particles (FLIP/PIC blend). Particles then move and are rasterized into the cell grid. This is the standard technique for game and film liquids; the surface stays sharp and splashes are natural. Risks: particles bunch up or leave gaps (needs density correction), the CA must look up which particle sits in a cell to swap sand with it, and the cost grows with millions of particles.
-
-If neither passes, stop and report: list what was tried, the measurements, and the options left (grid VOF with interface reconstruction, or the hidden-carrier fallback from the background).
 
 ### CPU reference and parity
 
 `tests/cpu/` holds the TypeScript reference: the fluid grid, the solver, the chosen representation, and the liquid-related CA phases (fall, liquid spread, sand into liquid), structured pass by pass like the GPU. It is test-only code. GPU floats differ in rounding (fused multiply-add, summation order), so CPU and GPU are compared on metrics with tolerances, not bit for bit. The GPU must pass the same acceptance tests (AC12).
 
-`AGENTS.md` gains an invariant: the fluid passes exist in WGSL and in `tests/cpu/` and change together.
+`AGENTS.md` gains an invariant: the fluid passes exist in WGSL and in `tests/cpu/` and change together. Every fluid constant lives once in `src/fluid-params.ts`, imported by the CPU reference and interpolated into the WGSL. The key formulas are necessarily written twice (TS function, WGSL function); a GPU test checks they agree.
 
 ### Scenes and metrics
 
 - `src/scenes.ts`: scene builders returning a `Uint32Array` in the packed cell format (`cell()` layout), its width and height, and metadata (chamber column ranges, floor y). Shipped, because `?scene=` uses it. Scenes: `uTube({ scale, leftArm, rightArm, liquid })`, `basin`, `damBreak`, `sealedChamber`, `droplet`, `film`, `sandIntoPool`, `oilOnWater`.
 - `tests/metrics.ts`: volume per liquid, column level (top of the contiguous liquid run above the floor), chamber level (mean over its columns), flatness, bubble count (empty cells not 4-connected to the grid's open air), foam count, max run-up height on a wall, and expected level from volume and chamber geometry.
 
-### Frame schedule (GPU, from M1.4)
+### GPU design (M1.4–M1.5)
 
-Per step: the fluid passes (classify, gravity, `N` solver iterations, project, extrapolate, move liquid, write occupancy), then the two CA dispatches. Everything stays in the frame's one encoder. Fluid uniforms are constant per frame, except a per-step seed if the representation needs one, which gets a slot like the CA's.
+The GPU runs the same passes as `FlipModel.superstep` after M1.4a, in the same order. `k = 1`, so the fluid grid is the cell grid: `nx = W`, `ny = H`. y = 0 is the bottom row on both sides.
+
+**Files.**
+
+- `src/fluid-params.ts` (shipped): the `FLUID` constants (today's `DEFAULT_FLIP` values plus `PER_CELL = 4`, the lattice offsets, `MAX_SPEED = 1`, `FIXED_SCALE = 2 ** 20`, `COUNT_CLAMP = 12`, the key weights), `rasterKey()` and `oilKey()` (below; build them as `quality * 2 ** 24 + low`, never `quality << 24`, which is a negative int32 in JS from quality 128 up), `spawnParticles(cells, width, height)` (4 particles per water or oil cell on the lattice, returning the packed particle records and per-kind totals), `MAX_FLUID_CELLS = 2 ** 24 - 1` and `MAX_PARTICLES = 65535 * 256` (the largest 1D indirect dispatch). The CPU reference imports all of it; no constant is duplicated in `tests/cpu/`.
+- `src/fluid.ts`: class `Fluid`, owned by `Simulation`. Creates the buffers, pipelines and bind groups below (cell buffer A/B × particle buffer A/B variants where a pass binds both); `recordFrameStart(pass, brush: SimulationInput | null)` and `recordStep(pass)` record into the caller's compute pass, and tests call them directly in their own pass; `recordSelect(pass)` records one radix selection alone, for its test; `load(cells)` uploads particles and resets `p`, the particle state and the args; `clear()` does the same with no particles. Buffers are created with `COPY_SRC | COPY_DST` so tests can read and seed them.
+- `src/shaders/fluid-common.wgsl.ts` (grid size, capacity and `FLUID` constants as WGSL `const`, the `Particle` struct, flag values, index helpers, fixed-point helpers), `fluid-particles.wgsl.ts`, `fluid-grid.wgsl.ts`, `fluid-raster.wgsl.ts`: one module per group, one entry point per pass. Like the CA, they are template strings that are functions of the grid size.
+
+**Buffers** (all storage; "cell" is `W×H`, "u face" `(W+1)×H`, "v face" `W×(H+1)`):
+
+| Buffer | Type | Content |
+| --- | --- | --- |
+| `particlesA`, `particlesB` | `array<Particle>`, `Particle { px, py, vx, vy: f32, kind: u32 }` (20 B) | Ping-pong for compaction. `kind` 0 water, 1 oil, 2 dead. Capacity `min(4·W·H, MAX_PARTICLES, floor(min(maxStorageBufferBindingSize, maxBufferSize) / 20))`; if creating them raises an `out-of-memory` error scope, halve the capacity and retry |
+| `particleState` | `{ count: u32, spawnCursor, compactCursor, water, oil: atomic<u32> }` | Live count after compaction; `compactCursor` is zeroed by compact args, `water` and `oil` by the pass that recounts them (finalize, raster count) |
+| `particleArgs`, `gridArgs` | 3 × `u32` each, `INDIRECT \| STORAGE` | `dispatchWorkgroupsIndirect` arguments: `(ceil(count / 256), 1, 1)` for particle passes; for cell and face passes the full 2D grid, or `(0, 0, 0)` when no live particle exists, so a world without liquid pays nothing for the fluid |
+| `u`, `v`, `uPrev`, `vPrev` | `f32` per u / v face | Face velocities; `*Prev` is the copy taken before gravity, for the FLIP difference |
+| `uAcc`, `vAcc` | `atomic<i32>`, 2 per face (sum, weight) | Fixed-point particle-to-grid accumulators |
+| `uValid`, `vValid` | `u32` per face, two copies each | Extrapolation validity, ping-pong per pass |
+| `count`, `oilCount` | `atomic<u32>` per cell | Particles per cell (reused for the post-advection count) |
+| `flags`, `density`, `p` | `u32`, `f32`, `f32` per cell | AIR 0, LIQUID 1, SOLID 2; mean liquid density; pressure (warm start: never cleared) |
+| `weights`, `diagDiv` | `vec4f`, `vec2f` per cell | Face weights (left, right, bottom, top) and (diagonal, divergence − source) from `prepare` |
+| `key`, `oilKeyBuf` | `u32` per cell | Rasterization keys, 0 = not a candidate |
+| `histogram` | 256 × `atomic<u32>` | Radix-select bins |
+| `selectState` | `{ wanted, round, remaining, prefix, none, shortfall, maxShortfall, chosen, oilWanted, ... }` | Radix-select progress for both selections. The pick pass advances `round`, so the four rounds reuse one pipeline without a `writeBuffer` between dispatches. `wanted == 0` sets `none` (nothing chosen). `maxShortfall` is a running maximum since load, for the tests |
+
+Every pipeline stays within 8 storage-buffer bindings (the WebGPU default `maxStorageBuffersPerShaderStage`); prepare already uses exactly 8, so group buffers into structs where a pass would need more. Atomic arrays are bound `read_write` and read with `atomicLoad`. No dispatch binds `particleArgs` or `gridArgs` as storage while consuming it as `INDIRECT`. At 2560×1340 the fluid buffers take about 300 MB and full-capacity particle buffers about 550 MB; the RTX 4080 has 16 GB.
+
+**Grid cap.** `MAX_FLUID_CELLS` keeps a cell index in 24 bits for the keys, and the widest per-cell fluid buffer (`weights`, 16 B) must fit the binding limit: `main.ts` passes `min(maxCellsForDevice(device), floor(limit / 16), MAX_FLUID_CELLS)` to `computeGrid`, which then coarsens the scale as it already does.
+
+**Pipeline count.** A `Simulation` now creates about 40 pipelines. If the GPU test suites' time grows noticeably (Dawn compiles slowly on a cold cache, `vite.config.ts`), cache the pipelines per device and grid size.
+
+**Frame start** (once per frame, before the first step):
+
+1. *Brush kill* (only while a button is down; particles, indirect): a particle dies when `floor(pos)` is within the brush stroke (the same segment-distance test as `brush.wgsl.ts`) and the brush is erasing, or replacing and the cell's current type is not wall. It runs before the cell brush so it sees the old type.
+2. *Brush* (existing pass, extended): when it writes water or oil into a cell, it reserves 4 slots with `atomicAdd(spawnCursor, 4)` from `count`, and writes 4 particles at the lattice offsets with zero velocity. If the reservation passes the capacity, it writes `kind = 2` into the reserved slots that fit and leaves the cell unchanged (AC16).
+3. *Compact args* (1 thread): args for `min(spawnCursor, capacity)` particles.
+4. *Compact* (particles, indirect): copies live particles from the current to the other particle buffer with an atomic counter; order is not kept (the fixed-point scatter does not depend on order). The particle buffers swap every frame, so the CPU always knows which is current.
+5. *Finalize* (1 thread): `count`, `spawnCursor = count`, per-kind totals, `particleArgs`.
+
+**Per step**, mirroring `FlipModel.superstep` (P = particle pass, indirect on `particleArgs`, workgroup 256; C = cell pass, 8×8, indirect on `gridArgs`; F = face pass, 8×8 over `(W+1)×(H+1)` covering both u and v faces, indirect on `gridArgs`). Every particle pass returns at once on `kind == 2`: dead particles stay in the buffer until the next frame's compaction but must not count, scatter or move.
+
+1. *Clear* (C+F): `count`, `oilCount`, `uAcc`, `vAcc`.
+2. *Resolve* (P): an oil particle whose cell is fire dies (oil burns); a particle in a wall or sand cell moves up to the first free cell with `vy = 0` (`FlipModel.resolveSolids`).
+3. *Count* (P): `count`, `oilCount` with `atomicAdd`.
+4. *Classify* (C): solid from the cell type, liquid where `count > 0`, density from the kinds (`classifyFromParticles`).
+5. *Particle to grid* (P): the bilinear weights of `particlesToGrid`, added as `i32(round(w · vel · FIXED_SCALE))` and `i32(round(w · FIXED_SCALE))`. Velocities are at most 1 and a face receives at most a few dozen particles, so the sums stay far below 2³¹.
+6. *Normalize* (F): `u = sum / weight` where the weight is above `1e-6 · FIXED_SCALE`, else 0; zero solid faces; then the extrapolation init of `solver.ts` `extrapolate`: `valid = face touches a liquid cell`, and `value = 0` on every face that does not (P2G writes into faces of rows next to the liquid that touch none, so this zeroing matters).
+7. *Extrapolate* ×2 (F): one pass per ring, as `extrapolate(grid, 2)`. Faces touching a solid are skipped. Values are updated in place (a pass only writes faces that were invalid and only reads faces that were valid), validity ping-pongs.
+8. *Gravity* (F): `uPrev = u`, `vPrev = v`, then `gravity / k` on interior v faces next to liquid, damping on every face, zero solid faces.
+9. *Prepare* (C): density source (`densitySource`) and the solver weights and divergence (`PressureSolver.prepare`); `p = 0` and `diag = 0` outside liquid.
+10. *Sweeps* (C): `2 × iterations` dispatches, red then black, two pipelines from one entry point with an `override` color constant; cells with `diag == 0` are skipped. Red-black updates are independent of thread order, so the GPU result matches the CPU up to float rounding.
+11. *Gradient* (F): `PressureSolver.apply`.
+12. *Pin films* (u faces): `pinFilms`, when `FLUID.film`.
+13. *Extrapolation init* (F, as in pass 6) and *extrapolate* ×2 (F).
+14. *Grid to particle* (P): `gridToParticles`: FLIP blend for particles in liquid cells, ballistic gravity otherwise, clamp, axis-by-axis move blocked by wall and sand cells.
+15. *Clear counts* (C), *raster count* (P): counts after advection and the per-kind totals; `wanted = floor((water + oil) / 4)`, `oilWanted = floor(oil / 4)`.
+16. *Key* (C): `rasterKey` per cell (below), after `FLUID.paddingRings` (6) *padding* passes (C) that grow the candidate set one ring at a time.
+17. *Select* ×4 (C histogram + 1-thread pick each): radix select of the `wanted`-th largest key, 8 bits per round from the top.
+18. *Oil key* (C), *select* ×4: among the chosen cells, the `oilWanted` largest `oilKey`.
+19. *Write* (C): chosen cells become water or oil (variant 0, life 0, as the CPU writes them); other water and oil cells become empty; every other cell is untouched.
+20. *CA* ×2: the existing dispatches, with the liquid movement rules removed (M1.4d).
+
+About `2 × iterations + 40` dispatches per step: 120 at 40 sweeps, 480 per frame at 1x, all in the frame's one compute pass. A dispatch that writes `particleArgs` followed by an indirect dispatch reading it is valid inside one compute pass, because each dispatch is its own usage scope.
+
+**Rasterization keys.** The CPU sorts by a float key `count + 0.5·(side counts) + 0.3·(already liquid) + height bias`, ties by index. Multiplied by 10 the first three terms are integers whose order is the same, and the height bias only breaks ties toward lower rows, which the index order already does. So:
+
+- `quality = 10·min(count, 12) + 5·(sideL + sideR) + 3·(cell is water or oil now)`, with a side counted as the cell's own clamped count when the neighbor is wall, sand or outside the grid, else as the neighbor's clamped count. At most 243, and at least 10 for any cell holding a particle.
+- A **candidate** is a cell of type empty, water or oil (never wall, sand, smoke or fire, which fixes D16) that holds a particle, or that holds none but lies within `FLUID.paddingRings` (6) steps of one through empty, water and oil cells (the padding rings, picked only when particle cells run out). Ring `r` (1 to 6) has `quality = weightPadding + paddingRings − r`, so nearer rings win and quality stays below 10. One ring was not enough: on the large U-tube the particles pack into fewer cells than the volume needs, and the shortfall reached 299 cells with 1 ring, 160 with 2, 64 with 3 and 0 from 5 (`rasterKeys` in `tests/cpu/flip.ts`). On the GPU each ring is one cell pass, a cell joining the next ring when a 4-neighbor is in the current set. A distance field would be a cheaper alternative if the six passes show up in the bench.
+- `rasterKey = quality * 2^24 + (2^24 − 1 − index)`: unique per cell, larger is better, so the selection has no ties and is deterministic. Non-candidates get 0.
+- `oilKey = share · 2^24 + (index + 1)` with `share = (255 · oilCount) / count` in integer division, for chosen cells (share 0 for padding cells), 0 otherwise; larger index wins ties, so oil lands on top, as in the CPU's `b − a`. With counts up to 15, two different oil shares differ by more than 1/255, so the 8-bit share keeps the CPU's order; above that, near-equal shares may tie and fall back to the index, which is acceptable.
+- If fewer candidates than `wanted` exist, every candidate is chosen and `shortfall` records the gap, `maxShortfall` its running maximum (AC4 scenes must show 0). The CPU grows `FLUID.paddingRings` rings, and the GPU does the same. If the GPU tests show a non-zero `maxShortfall`, compare with the CPU value and report. If `oilWanted` is 0 no cell is oil, and if it reaches the chosen count every chosen cell is. Flooring `wanted` and `oilWanted` only matters after oil burns (counts no longer multiples of 4): up to 3 leftover particles show no cell.
+
+**CA changes.** `isFalling` keeps only sand, Phase 3 (liquid spread) goes, and `canDisplace` keeps only sand into water, oil, smoke or empty. Smoke still rises through liquid cells, fire still ignites oil cells and is put out by water cells, but the put-out rule applies only to cells that were fire before this block's ignition rule ran. Otherwise oil beside both fire and water would turn to fire and to smoke in one dispatch, its particles would survive in the smoke cell, and that oil would never burn away. Now it burns for one step, its particles die, and the fire goes out the step after. Removing Phase 3 shifts the random words the smoke phases use; harmless. Liquid cells move only through rasterization.
 
 ### Edge cases and failure modes
 
 - Sand falling into water: sand is solid for the fluid; the CA swap moves the water cell up, and the next classify sees it.
-- Fire next to water and oil ignition stay CA rules on the cell types.
-- Brush: painting liquid gives it zero velocity; erasing removes it. The brush is outside AC4.
+- Fire next to water and oil ignition stay CA rules on the cell types. An oil cell that ignites becomes fire; the oil particles in it die at the next resolve, and rasterization never overwrites fire or smoke, so the burn is visible. Water particles inside a fire cell survive.
+- Brush: painting liquid gives it zero velocity; erasing removes it. The brush is outside AC4. Kills go by particle position, so an erase also removes stray particles over empty cells in the stroke; a Shift paint of liquid over liquid with the store full leaves that cell empty until the next rasterization.
+- Particles trapped under solid with no free cell above stay counted in `wanted` but cannot be drawn there; their volume shows up elsewhere.
+- Particle store full: the brush stops adding liquid cells (AC16); nothing else changes.
 - A body cut in two by sand: the solve treats each part separately, with no global bookkeeping.
 - Very thin water (one cell high): classification must keep a one-cell film liquid, or it never moves (AC9).
 - Solver not converged: residual divergence slowly gains or loses volume in fractional representations, and makes cells jitter in discrete ones. Track it as a metric (max divergence after projection).
@@ -177,20 +250,90 @@ The `k = 2` column comes from the full suite with damping 0.002 and FLIP ratio 0
 
 The 16.7 ms frame budget of AC14 is missed by 2–3× at `k = 1` and is borderline at `k = 2`. The levers, in the order I would try them: skip solver tiles with no liquid (the liquid is rarely the whole grid); fewer sweeps (20 sweeps level both tubes the same on the CPU); a multigrid or preconditioned solver; running the fluid update every second step while the sand CA keeps its rate; `k = 2` once its surface noise is fixed (the CPU `k = 2` model fails AC2, AC5, AC6 and AC11). The GPU-specific risks: the scatter needs fixed-point `atomicAdd` on `u`, `v` and their weights; the rasterization needs a global "N most crowded cells" selection (a histogram of the integer keys plus a threshold pass, with ties broken by an atomic counter, and a second one for the oil split); and the result must be compared with the CPU reference by metrics with tolerances, not bit for bit.
 
-**Decisions for the user.** (1) Accept FLIP particles at `k = 1` as the representation. (2) Accept that AC14 depends on the cost levers above and may need revising (for example 30 fps at 8x) once the first GPU measurement exists. (3) Whether the wetting pin, which stands in for surface tension, is acceptable for the look of thin water. M1.4–M1.6 below stay in outline until these are answered.
+#### M1.3 gate decisions
 
-### M1.4 GPU port (outline, detailed at the gate)
+Taken by the agent on the user's behalf: none of the three changes something the user can judge from a description (`AGENTS.md`, "Working with the user"). The user approves the plan as a whole, and looks at the one visible effect (3) in M1.4f.
 
-- Fluid buffers and WGSL passes for the fluid core, wired into `simulate()` within the frame's one encoder.
-- The chosen representation in WGSL, with the CA phases changed to match.
-- GPU tests: hydrostatic pool and divergence (the M1.2 tests on the GPU), then AC1, AC6 and AC7 (AC12).
-- `?scene=` loader in `main.ts` (AC13).
+1. **FLIP particles at `k = 1`.** The only candidate that passed, and the standard technique for game and film liquids. `k = 2` stays a cost lever, usable only once D15 is fixed.
+2. **AC14 revised** (criteria above). The old 8x clause compared against the CA-only commit, but 8x runs 32 fluid steps per frame, each costing more than the whole CA, so no liquid model with a global solve could meet it. 1x at 60 fps on the dev machine stays the target; higher speeds are measured, not gated. The cost table above assumed 300 GB/s, while the RTX 4080 peaks at about 717 GB/s, so it is pessimistic; M1.4g replaces it with a measurement. Levers that do not change the result (active tiles, fewer sweeps if every test still passes, multigrid, shared-memory accumulation) are applied without asking. Levers that change the look (fluid update every second step, `k = 2`, a coarser grid) need the user's approval, shown as a before and after on a `?scene=`.
+3. **Wetting pin kept.** Visible effect: a layer of liquid one cell thin stays where it is; it does not creep sideways or drip off a ledge until more liquid joins it, and can cling to a sand slope. AC9 asks for this, and it is one switch (`FLUID.film`).
 
-### M1.5 Integration and performance (outline)
+Gaps the gate report missed, now in the design and the checklist: oil could never burn (rasterization overwrote the fire cell with oil while its particles lived), the brush had no way to add or remove particles, `tests/simulation.test.ts` B2 asserts the droplet drift that AC9 forbids, and the CPU scenes are at most 240 cells tall while the screen grid is about 1,340, so the solver's convergence at screen scale is unmeasured (M1.5b).
 
-- Interactions on the GPU: sand into a pool, oil on water, fire and water (AC10, AC11, AC15).
-- Frame-rate measurement before and after at 1x and 8x (AC14); multigrid or a larger `k` if the budget is missed.
+### M1.4 GPU port
 
-### M1.6 Docs (outline)
+Order matters: each item builds on the previous one. Every item that adds WGSL keeps the game running (`npm run dev` shows no WebGPU error banner) and must show that the GPU suites ran, not skipped, on the dev machine. Each item is sized for one Sonnet sub-agent given this plan; on a parity failure with an unclear cause, stop and report instead of tuning.
 
-- `docs/simulation.md` (fluid grid, passes, liquid movement), `AGENTS.md` (layout, invariants, fluid buffers), `docs/decisions.md` (the representation chosen and why the other candidate lost), `docs/backlog.md` (anything deferred), `docs/roadmap.md` (delete M1), `README.md` features. Delete this plan.
+- [x] **M1.4a CPU reference as the GPU spec** (TypeScript only, no WGSL). Done. Deviation: 6 padding rings instead of 1 (see "Rasterization keys"); with 6, `maxShortfall` is 0 in all six AC4 scenes and every threshold is unchanged. Settle steps on the CPU are now AC1 250 (was 425), AC2 500, AC3 350 (325), AC11 475 (275, budget 2,000), AC7 run-up 18.88; the suite takes about 117 s.
+  - Create `src/fluid-params.ts` as in "GPU design / Files". `tests/cpu/flip.ts` builds `DEFAULT_FLIP` from `FLUID` and uses `spawnParticles` in `load`.
+  - Split `FlipModel.superstep` into public methods called in this order, so tests can stop between them: `stepGrid()` (resolve, count, classify, particle to grid, through the second extrapolate), `stepParticles()` (grid to particle), `stepRaster()`, `stepCa()`. Add `debugState()` returning the particle arrays and the grid's `u`, `v`, `p`, `flags` and `density`.
+  - `resolveSolids`: an oil particle whose cell is fire is removed from the particle arrays.
+  - `rasterize`: candidates, `rasterKey`, the padding ring, `oilKey` and the floors of `wanted` and `oilWanted` exactly as in "GPU design / Rasterization keys", selecting by sorting on the integer keys. Delete `padToVolume` and the `smooth` option (the weights are in the key). Record `shortfall` and its running maximum `maxShortfall`; the AC4 scenes assert `maxShortfall` 0 (if not, add a second padding ring on both sides and say so).
+  - Add `seedVelocities(seed)` to `FlipModel`: random particle velocities in ±0.5 from `mulberry32`, so the parity tests exercise a non-zero field.
+  - New `tests/cpu/flip.test.ts`: (1) on 10,000 random small count grids (`mulberry32`), sorting by `rasterKey` gives the same order as the old float key (copy the old formula into the test) whenever no count exceeds 12; (2) a smoke cell and a fire cell touching a resting pool are still smoke and fire after 100 steps, and the water volume is unchanged (D16); (3) an oil particle inside a fire cell is gone after one step and `oilWanted` drops accordingly; (4) a model holding 4·n + 3 particles shows n liquid cells.
+  - The whole acceptance suite still passes with unchanged thresholds. If a criterion fails, stop and report the measurement; do not retune constants.
+  - Bench baseline: `tests/bench.gpu.ts` and `vitest.bench.config.ts` (includes only that file; covered by `tsconfig` and ESLint), script `"bench": "vitest run --config vitest.bench.config.ts"`. `tests/gpu.ts` exports `createDevice(options)` (keeping the module-level GPU reference) so the bench can request the adapter with `powerPreference: 'high-performance'`; the bench config sets a test timeout of 10 minutes. It and prints `adapter.info.vendor`, `architecture` and `description` (the machine also has an Intel UHD 770; only numbers from the RTX 4080 count). Bench scene, built in the file: a 2560×1340 tank (2-cell walls and floor), water in the bottom quarter, a 200×200 sand block above it. For 4, 8, 16 and 32 supersteps per frame: 20 warm-up frames, then 60 frames of `simulate` + `submit` + `await device.queue.onSubmittedWorkDone()`; print the median ms per frame and per step. Write the numbers for the current CA under "M1.4 measurements" as the pre-M1.4 baseline.
+  - Delete D16 from `docs/backlog.md`.
+- [ ] **M1.4b Particle store, load and frame start.**
+  - `src/fluid.ts`, `src/shaders/fluid-common.wgsl.ts`, `src/shaders/fluid-particles.wgsl.ts` (brush kill, compact args, compact, finalize), `src/shaders/brush.wgsl.ts` (spawn), `src/simulation.ts` (owns a `Fluid`; new `load(cells)` writes the cells and the particles from `spawnParticles`; `clear()` also empties the particle store; `simulate()` records the frame-start passes), `src/main.ts` (grid cap with `MAX_FLUID_CELLS`). A `particleCapacity` option on `SimulationOptions` overrides the computed capacity, for tests.
+  - `tests/gpu.ts`: `loadScene(sim, cells)` (calls `sim.load`) replaces `loadCells` everywhere, including every case of `tests/simulation.test.ts`; `readParticles(sim)` returns the live particle records. `Fluid` gets the same `seedVelocities(seed)` as the CPU, writing the particle buffer.
+  - New `tests/fluid-particles.test.ts` (GPU): loading the small U-tube gives the same particles as `spawnParticles` (compared as sorted lists) and totals; painting water with radius 5 on an empty grid gives exactly 4 particles per new water cell, at the lattice offsets; erasing across a pool removes the particles of the erased cells only; Shift-painting sand over water removes the particles of the overwritten cells; with `particleCapacity` 40, painting 20 cells of water paints exactly 10 and every live particle has kind 0 or 1; compaction keeps exactly the live set. The D4 single-submit test still passes.
+- [ ] **M1.4c Grid passes and pressure solve.**
+  - `src/shaders/fluid-grid.wgsl.ts` (clear, classify, normalize, extrapolate, gravity, prepare, sweep, gradient, pin, and a test-only residual pass that writes the largest residual with `atomicMax` on the `u32` bits of a non-negative `f32`), `src/shaders/fluid-particles.wgsl.ts` (resolve, count, particle to grid). `Fluid.recordStep` records per-step passes 1–13; `simulate()` calls it before each superstep's CA dispatches. `Fluid` takes an `iterations` override, for tests and the bench.
+  - New `tests/fluid-parity.test.ts` (GPU): for the small U-tube, dam break, oil on water, sand into pool and film scenes, load the same scene into `FlipModel` and the GPU, seed the same velocities on both (`seedVelocities`), run one `stepGrid()` on the CPU and one step's passes 1–13 on the GPU (calling `fluid.recordStep` in the test's own pass), and compare: `flags` identical; `u`, `v`, `p` and `density` within `1e-4 · max(1, max |cpu value|)`, skipping faces whose CPU particle weight is below `1e-3` (fixed-point rounding dominates there), reporting the worst face or cell on failure. A GPU key-pass test checks the WGSL keys against `rasterKey()` and `oilKey()` on random count grids.
+  - GPU versions of the M1.2 solver tests, running passes 1–13 only (particles do not move yet): a still 32×40 pool on the pristine lattice (4 particles per cell, so the density source is 0) reaches hydrostatic pressure within 1% after 200 steps, with the residual pass at or below `1e-4`; the sealed chamber's face speeds stay at or below `1e-3`.
+- [ ] **M1.4d Particle motion, rasterization and the CA change.**
+  - `fluid-particles.wgsl.ts` (grid to particle, raster count), `src/shaders/fluid-raster.wgsl.ts` (key; histogram with a workgroup-local 256-bin histogram flushed to the global one; single-thread pick; oil key; write). `Fluid.recordStep` gains passes 14–19. `solid-ca.wgsl.ts` gets the "CA changes"; update `docs/simulation.md` phases 1 and 3 and the density note in the same item.
+  - Radix-select test (GPU, through `recordSelect` with `key` and `selectState.wanted` written by the test): random keys on a 97×61 grid (a third of them 0) with `wanted` 0, 1, half, all candidates and more than all; the chosen set equals the CPU top-`wanted` by sort, and `shortfall` is the gap.
+  - Full-step parity in `tests/fluid-parity.test.ts`, same scenes: with seeded velocities, after 1 step at most 2 cells differ and particle counts per cell match except in those cells, with the mean particle velocity per cell within `1e-4`. Particles are compared per cell because compaction reorders them. After 10 steps, per-type volumes identical and at most 0.5% of liquid cells differ (tighten or loosen once measured, and record why).
+  - `tests/simulation.test.ts`: delete B2 (AC15 names the exception; the GPU AC9 case in M1.4e replaces it). D5 must still conserve every type; if water or oil drift, report `maxShortfall` and stop.
+  - Add the CA put-out-after-ignition change with a GPU test: oil touching both fire and water becomes fire, then smoke, and its particles are gone.
+- [ ] **M1.4e GPU acceptance (AC12).**
+  - `tests/liquid-model.ts`: every `LiquidModel` method may return a Promise; `settleAndHold`, `observe` (awaiting its visitor) and `expectVolumesConstant` become async; the `tests/liquid-acceptance.ts` helpers and `tests/liquids-*.test.ts` await them (the CPU model stays synchronous).
+  - New `tests/gpu-liquid-model.ts`: `GpuLiquidModel` over `Simulation` (`load` → `sim.load`; `step(n)` → `run` in chunks of at most 32; `cells` → `readCells`; `volume` from the cells; `maxSpeed` from `readParticles`).
+  - New `tests/liquids-gpu.test.ts` (skips without a device): AC1–AC9 through the shared helpers, same thresholds, AC4 also asserting `maxShortfall` 0. If one fails while the CPU passes, run the parity test for more steps to find where they diverge; never tune a constant on the GPU side only.
+- [ ] **M1.4f `?scene=` loader (AC13), then the user looks.**
+  - `src/main.ts`: when `?scene=<name>` names a `SCENES` entry, the grid takes the scene's size (no `computeGrid`), the scene is loaded with `simulation.load`, and the display stretches it to the canvas as on resize. An unknown name logs a warning and starts the normal empty grid. Clear empties it as usual.
+  - Hand over "Needs the user" below and record the answers on the pin and the splash look here.
+- [ ] **M1.4g First GPU timing.** Extend `tests/bench.gpu.ts` to the FLIP build: the same scene and speeds, plus a run with `iterations: 0` to separate the solver's cost. Add the numbers under "M1.4 measurements" next to the baseline. Report to the user in plain words (does 1x reach 60 fps, how choppy is 8x) and list which M1.5c levers follow.
+
+#### M1.4 measurements
+
+Filled by M1.4a (baseline) and M1.4g.
+
+Pre-M1.4 baseline, M1.4a, `npm run bench` on the RTX 4080 (adapter vendor nvidia, architecture lovelace), CA only (no fluid), 2560×1340 bench scene, median of 60 frames after 20 warm-up frames and a 2 s burn-in:
+
+| Supersteps per frame | ms per frame | ms per superstep |
+| --- | --- | --- |
+| 4 (1x) | 0.40 | 0.101 |
+| 8 | 1.13 | 0.142 |
+| 16 | 2.57 | 0.161 |
+| 32 | 4.89 | 0.153 |
+
+The numbers move by up to a factor of 2 between runs (the 16-superstep frame measured 1.8 to 4.3 ms over five runs); the 1x frame is about 0.4 ms and the 32-superstep frame 5–8 ms.
+
+#### Needs the user (after M1.4f)
+
+1. `npm run dev`, open `?scene=damBreak`: the water column should collapse, run to the far wall, climb it and settle flat. Then `?scene=uTube`: both arms end at the same height.
+2. Open `?scene=droplet` and `?scene=film`, then draw a sand slope and a wall ledge on an empty grid and pour a little water on each. Expected: thin water stays where it lands, does not drip off the ledge until more joins it, and may cling to the slope. Say whether that looks right, or whether thin water should keep flowing.
+3. Pour water from a height into a pool and watch the splash. Some flying drops may flicker or look sparse (the cell count is kept exact, so lone drops compete with the pool for cells). Say whether it bothers you.
+4. A failure looks like: the WebGPU error banner, water that never settles or keeps boiling at rest, water vanishing or multiplying, oil that does not burn.
+
+### M1.5 Integration and performance
+
+- [ ] **M1.5a Interactions on the GPU (AC10, AC11, AC15).** `tests/liquids-gpu.test.ts` gains AC10 and AC11. `tests/simulation.test.ts` gains: fire burns oil (a 20×5 oil block in a tank under a row of fire: sampled every 50 steps, the oil count never rises, has dropped by at least half after 600 steps, and smoke appears); water puts out fire (a fire cell beside water is smoke two supersteps later); smoke rises through water (one smoke cell at the bottom of a pool 10 deep is above the surface within 40 supersteps, and the water count is unchanged).
+- [ ] **M1.5b Screen-scale check.** Add `uTubeHuge` (`uTube({ scale: 6 })`, 408×480) and `deepPool` (512×1200: a 2-cell tank with water 1,000 deep, and a column of water 100 wide and 150 tall dropped at one side) to `src/scenes.ts`, with GPU-only tests in `tests/liquids-gpu.test.ts`: `uTubeHuge` settles (AC1's band) within 16,000 steps; after 6,000 steps `deepPool` has flatness at most 1 and at most 35% of its particles move faster than 0.3 cells/step (the settled large U-tube has 19% on the CPU; record the GPU value). Record the residual and both numbers here. If either fails, multigrid (M1.5c lever 3) is required.
+- [ ] **M1.5c Cost levers**, only as far as M1.4g and M1.5b require, in this order; each is kept only when the parity tests and every GPU acceptance test still pass and the bench shows a gain:
+  1. Active tiles: classify marks each 8×8 tile holding liquid or within 3 cells of it and appends it to a list with an atomic counter; cell and face passes and the sweeps dispatch indirect over that list. Clear covers the tiles active in this step and the previous one, so no stale accumulator survives. The parity tests must not change. Expect this lever to be needed: 80 sweeps over 3.4M cells at 4 steps a frame is about 25–35 ms on its own.
+  2. 20 sweeps: CPU acceptance suite first, then GPU.
+  3. Multigrid or a preconditioned solver: CPU reference first (`tests/cpu/solver.ts` and its tests), then WGSL. It gets its own design section in this plan, written with Opus, before implementation.
+  4. Workgroup-shared accumulation in the particle-to-grid scatter, if the bench shows the scatter dominating.
+
+  The levers that change the look (fluid update every second step, `k = 2` after D15, a coarser grid) need the user's approval with a before and after.
+- [ ] **M1.5d Final measurement (AC14).** `npm run bench` at 1x within 14 ms per frame; record 2x–8x. Hand to the user: maximize a 2560×1440 window, fill about a quarter of the screen with water, and read the FPS counter at 1x (expected about 60) and at 8x (no target; say if it feels unusable).
+
+### M1.6 Docs
+
+- [ ] `docs/simulation.md`: a fluid section (grid, particles, the per-step passes, rasterization by ranking, how the brush and reactions add and remove particles).
+- [ ] `AGENTS.md`: layout (`src/fluid.ts`, `src/fluid-params.ts`, the fluid shaders, `tests/cpu/flip.ts`, the parity and bench files, `npm run bench`), the invariants (fluid passes exist in WGSL and `tests/cpu/` and change together; fluid constants and keys live only in `src/fluid-params.ts`; the CA never moves liquid; rasterization never overwrites wall, sand, smoke or fire), and "Adding a particle type" (a liquid needs a particle kind and a density).
+- [ ] `docs/decisions.md`: check the FLIP entry still matches what shipped; add anything from M1.5c that passes its test. `docs/backlog.md`: update D14 and D15 with the GPU measurements, add anything deferred. `docs/roadmap.md`: delete M1. `README.md`: features (connected vessels level, splashes, oil floats, the brush with liquids). Delete this plan in the final commit.

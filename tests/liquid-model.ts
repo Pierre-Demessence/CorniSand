@@ -13,6 +13,8 @@ export interface LiquidModel {
   fill?(): Float32Array;
   /** Largest face speed in cells per step. */
   maxSpeed(): number;
+  /** Largest number of liquid cells the rasterization could not place since `load`, for representations that rasterize. */
+  readonly maxShortfall?: number;
 }
 
 export interface SettleResult {

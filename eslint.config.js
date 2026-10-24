@@ -19,7 +19,7 @@ export default tseslint.config(
     languageOptions: { globals: globals.browser },
   },
   {
-    files: ['tests/**/*.ts', 'vite.config.ts', 'eslint.config.js'],
+    files: ['tests/**/*.ts', 'vite.config.ts', 'vitest.bench.config.ts', 'eslint.config.js'],
     languageOptions: { globals: globals.node },
   },
 );

@@ -1,10 +1,24 @@
+import {
+  FLUID,
+  oilKey,
+  oilKeyIndex,
+  oilShare,
+  PARTICLE_STRIDE,
+  PARTICLE_KIND,
+  rasterKey,
+  rasterKeyIndex,
+  rasterQuality,
+  spawnParticles,
+} from '../../src/fluid-params';
 import { PARTICLE_TYPES as T } from '../../src/particles';
 import type { Scene } from '../../src/scenes';
 import type { LiquidModel } from '../liquid-model';
+import { mulberry32 } from '../random';
 import { AIR, FluidGrid, LIQUID, LIQUID_DENSITY, SOLID } from './fluid-grid';
 import { sandDispatch, type SandState } from './sand-ca';
 import {
   applyGravity,
+  DEFAULT_SOLVER,
   extrapolate,
   PressureSolver,
   sampleU,
@@ -12,9 +26,6 @@ import {
   type SolverParams,
   zeroSolidFaces,
 } from './solver';
-
-/** Particles per liquid cell, on a regular 2 x 2 lattice at load. */
-const PER_CELL = 4;
 
 export interface FlipOptions {
   /** Grid cells per fluid cell: the pressure solve runs on the coarser grid, particles keep their own resolution. */
@@ -28,22 +39,56 @@ export interface FlipOptions {
   stiffness: number;
   /** Same for a cell below rest density that is surrounded by liquid, which pulls the gap closed. */
   pull: number;
-  /** Weight of the two side neighbors' particle counts when ranking cells, which keeps a surface level instead of ragged. */
-  smooth: number;
   /** Layers one cell deep that rest on a solid do not flow sideways (wetting, stands in for surface tension). */
   film: boolean;
 }
 
 export const DEFAULT_FLIP: FlipOptions = {
-  k: 1,
-  solver: { gravity: 0.05, iterations: 40, omega: 1.85, theta: 0.5 },
-  flipRatio: 0.8,
-  damping: 0.005,
-  stiffness: 0.5,
-  pull: 0.5,
-  smooth: 0.5,
-  film: true,
+  k: FLUID.k,
+  solver: DEFAULT_SOLVER,
+  flipRatio: FLUID.flipRatio,
+  damping: FLUID.damping,
+  stiffness: FLUID.stiffness,
+  pull: FLUID.pull,
+  film: FLUID.film,
 };
+
+const isOpenType = (type: number): boolean => type === T.EMPTY || type === T.WATER || type === T.OIL;
+const isBlockingType = (type: number): boolean => type === T.WALL || type === T.SAND;
+
+/**
+ * Rasterization key of every cell (see `rasterKey`), 0 for cells that cannot receive liquid. Candidates are the
+ * empty, water and oil cells that hold a particle, plus the open cells within `FLUID.paddingRings` steps of one
+ * (the padding rings, nearest first, picked only when particle cells run out). Wall, sand, smoke and fire are
+ * never candidates and the rings do not grow through them.
+ */
+export function rasterKeys(cells: Uint32Array, counts: ArrayLike<number>, width: number, height: number): Float64Array {
+  const keys = new Float64Array(width * height);
+  const rings = FLUID.paddingRings;
+  let frontier: number[] = [];
+  for (let c = 0; c < width * height; c++) {
+    if (!isOpenType(cells[c] & 0xff) || counts[c] === 0) continue;
+    const x = c % width;
+    const side = (n: number, inside: boolean): number => (inside && !isBlockingType(cells[n] & 0xff) ? counts[n] : counts[c]);
+    const liquidNow = (cells[c] & 0xff) !== T.EMPTY;
+    keys[c] = rasterKey(rasterQuality(counts[c], side(c - 1, x > 0), side(c + 1, x < width - 1), liquidNow), c);
+    frontier.push(c);
+  }
+  // Padding rings: open cells at 4-neighbor distance 1..rings from a cell holding a particle, nearer rings first.
+  for (let ring = 1; ring <= rings; ring++) {
+    const next: number[] = [];
+    for (const c of frontier) {
+      const x = c % width;
+      for (const n of [x > 0 ? c - 1 : -1, x < width - 1 ? c + 1 : -1, c >= width ? c - width : -1, c + width < width * height ? c + width : -1]) {
+        if (n < 0 || keys[n] > 0 || !isOpenType(cells[n] & 0xff)) continue;
+        keys[n] = rasterKey(FLUID.weightPadding + rings - ring, n);
+        next.push(n);
+      }
+    }
+    frontier = next;
+  }
+  return keys;
+}
 
 /**
  * Candidate C2: liquid is a set of particles carrying position and velocity. Each step moves velocity to the
@@ -53,6 +98,10 @@ export const DEFAULT_FLIP: FlipOptions = {
  */
 export class FlipModel implements LiquidModel {
   readonly options: FlipOptions;
+  /** Cells the last rasterization could not fill because fewer cells could hold the particles than the volume needs. */
+  shortfall = 0;
+  /** Largest `shortfall` since `load`; the volume tests assert it is 0. */
+  maxShortfall = 0;
   private state!: SandState;
   private grid!: FluidGrid;
   private prev!: FluidGrid;
@@ -101,26 +150,52 @@ export class FlipModel implements LiquidModel {
     this.source = new Float32Array(fluidCells);
     this.solver.source = this.source;
 
-    const liquid: number[] = [];
-    for (let i = 0; i < n; i++) if (this.isLiquidCell(this.state.cells[i])) liquid.push(i);
-    const total = liquid.length * PER_CELL;
+    this.shortfall = 0;
+    this.maxShortfall = 0;
+
+    const spawned = spawnParticles(this.state.cells, width, height);
+    const total = spawned.count;
     this.px = new Float32Array(total);
     this.py = new Float32Array(total);
     this.vx = new Float32Array(total);
     this.vy = new Float32Array(total);
     this.kind = new Uint8Array(total);
-    let p = 0;
-    for (const i of liquid) {
-      const x = i % width;
-      const y = (i - x) / width;
-      const oil = (this.state.cells[i] & 0xff) === T.OIL ? 1 : 0;
-      for (const [dx, dy] of [[0.25, 0.25], [0.75, 0.25], [0.25, 0.75], [0.75, 0.75]]) {
-        this.px[p] = x + dx;
-        this.py[p] = y + dy;
-        this.kind[p] = oil;
-        p++;
-      }
+    for (let p = 0; p < total; p++) {
+      this.px[p] = spawned.floats[p * PARTICLE_STRIDE];
+      this.py[p] = spawned.floats[p * PARTICLE_STRIDE + 1];
+      this.kind[p] = spawned.words[p * PARTICLE_STRIDE + 4];
     }
+  }
+
+  /** Random particle velocities, uniform in [-0.5, 0.5) per component, so parity tests exercise a non-zero field. */
+  seedVelocities(seed: number): void {
+    const rand = mulberry32(seed);
+    for (let p = 0; p < this.px.length; p++) {
+      this.vx[p] = rand() / 2 ** 32 - 0.5;
+      this.vy[p] = rand() / 2 ** 32 - 0.5;
+    }
+  }
+
+  /** Test hook: forgets the last `n` particles, to build a model whose particle count is not a multiple of 4. */
+  dropParticles(n: number): void {
+    this.removeParticles(new Uint8Array(this.px.length).fill(1, Math.max(0, this.px.length - n)));
+  }
+
+  /** The particles and the grid fields as they stand between two `step*` calls; the arrays are live, not copies. */
+  debugState(): {
+    px: Float32Array;
+    py: Float32Array;
+    vx: Float32Array;
+    vy: Float32Array;
+    kind: Uint8Array;
+    u: Float32Array;
+    v: Float32Array;
+    p: Float32Array;
+    flags: Uint8Array;
+    density: Float32Array;
+  } {
+    const { px, py, vx, vy, kind, grid } = this;
+    return { px, py, vx, vy, kind, u: grid.u, v: grid.v, p: grid.p, flags: grid.flags, density: grid.density };
   }
 
   step(n: number): void {
@@ -154,7 +229,15 @@ export class FlipModel implements LiquidModel {
   }
 
   private superstep(): void {
-    const { grid, prev, solver, options, state } = this;
+    this.stepGrid();
+    this.stepParticles();
+    this.stepRaster();
+    this.stepCa();
+  }
+
+  /** Resolve, count, classify, particle to grid, projection, and the extrapolation after it. */
+  stepGrid(): void {
+    const { grid, prev, solver, options } = this;
     this.resolveSolids();
     this.countParticles();
     this.classifyFromParticles();
@@ -175,20 +258,39 @@ export class FlipModel implements LiquidModel {
     this.lastResidual = solver.project(options.solver).residual;
     if (options.film) this.pinFilms();
     extrapolate(grid, 2);
-
-    this.gridToParticles();
-    this.rasterize();
-    sandDispatch(state, 0);
-    sandDispatch(state, 1);
   }
 
-  /** Particles inside a cell that became sand or wall move up to the first free cell. */
+  /** Grid to particle: velocity update and advection. */
+  stepParticles(): void {
+    this.gridToParticles();
+  }
+
+  /** Writes the liquid into the cell grid. */
+  stepRaster(): void {
+    this.rasterize();
+  }
+
+  /** The two sand dispatches. */
+  stepCa(): void {
+    sandDispatch(this.state, 0);
+    sandDispatch(this.state, 1);
+  }
+
+  /** Oil in a fire cell burns away; particles inside a cell that became sand or wall move up to the first free cell. */
   private resolveSolids(): void {
     const { width, height, cells } = this.state;
+    const burnt = new Uint8Array(this.px.length);
+    let anyBurnt = false;
     for (let p = 0; p < this.px.length; p++) {
       const i = Math.floor(this.px[p]);
       const j = Math.floor(this.py[p]);
-      if (!this.isSolidCell(cells[j * width + i])) continue;
+      const cell = cells[j * width + i];
+      if (this.kind[p] === PARTICLE_KIND.OIL && (cell & 0xff) === T.FIRE) {
+        burnt[p] = 1;
+        anyBurnt = true;
+        continue;
+      }
+      if (!this.isSolidCell(cell)) continue;
       let jj = j + 1;
       while (jj < height && this.isSolidCell(cells[jj * width + i])) jj++;
       if (jj < height) {
@@ -196,6 +298,27 @@ export class FlipModel implements LiquidModel {
         this.vy[p] = 0;
       }
     }
+    if (anyBurnt) this.removeParticles(burnt);
+  }
+
+  /** Drops the flagged particles, keeping the order of the rest. */
+  private removeParticles(dead: Uint8Array): void {
+    const { px, py, vx, vy, kind } = this;
+    let n = 0;
+    for (let p = 0; p < px.length; p++) {
+      if (dead[p] === 1) continue;
+      px[n] = px[p];
+      py[n] = py[p];
+      vx[n] = vx[p];
+      vy[n] = vy[p];
+      kind[n] = kind[p];
+      n++;
+    }
+    this.px = px.subarray(0, n);
+    this.py = py.subarray(0, n);
+    this.vx = vx.subarray(0, n);
+    this.vy = vy.subarray(0, n);
+    this.kind = kind.subarray(0, n);
   }
 
   private countParticles(): void {
@@ -291,7 +414,7 @@ export class FlipModel implements LiquidModel {
       if (grid.flags[c] !== LIQUID) continue;
       const i = c % grid.nx;
       const j = (c - i) / grid.nx;
-      const ratio = count[c] / (PER_CELL * k * k) - 1;
+      const ratio = count[c] / (FLUID.perCell * k * k) - 1;
       const interior = [[-1, 0], [1, 0], [0, -1], [0, 1]].every(([di, dj]) => grid.flagAt(i + di, j + dj) !== AIR);
       if (ratio > 0) source[c] = options.stiffness * ratio;
       else if (interior) source[c] = options.pull * ratio;
@@ -329,7 +452,7 @@ export class FlipModel implements LiquidModel {
     const { k } = options;
     const a = options.flipRatio;
     const g = options.solver.gravity;
-    const clamp = (x: number): number => Math.max(-1, Math.min(1, x));
+    const clamp = (x: number): number => Math.max(-FLUID.maxSpeed, Math.min(FLUID.maxSpeed, x));
     for (let p = 0; p < px.length; p++) {
       const x = px[p];
       const y = py[p];
@@ -353,66 +476,40 @@ export class FlipModel implements LiquidModel {
     }
   }
 
-  /** The most crowded cells become liquid, as many as the particles add up to; the oiliest of them become oil. */
+  /**
+   * The most crowded cells become liquid, as many as the particles add up to; the oiliest of them become oil.
+   * Cells are ranked by their integer `rasterKey`, which is unique, so the choice has no ties. Only empty, water
+   * and oil cells are ever written: wall, sand, smoke and fire keep their cell.
+   */
   private rasterize(): void {
     const { width, height, cells } = this.state;
     this.countParticles();
-    const { cellCount: count, cellOil: oilCount, px, kind, options } = this;
+    const { cellCount: count, cellOil: oilCount, px, kind } = this;
     let oil = 0;
     for (let p = 0; p < px.length; p++) oil += kind[p];
-    const wanted = px.length / PER_CELL;
-    const oilWanted = oil / PER_CELL;
+    const wanted = Math.floor(px.length / FLUID.perCell);
+    const oilWanted = Math.floor(oil / FLUID.perCell);
 
-    const key = new Float64Array(width * height);
-    const candidates: number[] = [];
-    for (let c = 0; c < width * height; c++) {
-      const type = cells[c] & 0xff;
-      if (type === T.WALL || type === T.SAND) continue;
-      if (count[c] > 0) {
-        const y = Math.floor(c / width);
-        const x = c % width;
-        const side = (n: number, inside: boolean): number => {
-          const t = inside ? cells[n] & 0xff : T.WALL;
-          return t === T.WALL || t === T.SAND ? count[c] : count[n];
-        };
-        const blur = options.smooth * (side(c - 1, x > 0) + side(c + 1, x < width - 1));
-        key[c] = count[c] + blur + (this.isLiquidCell(cells[c]) ? 0.3 : 0) + (height - y) / (height * 20);
-        candidates.push(c);
-      }
-    }
-    candidates.sort((a, b) => key[b] - key[a] || a - b);
-    const chosen = candidates.slice(0, wanted);
-    this.padToVolume(chosen, wanted);
+    const keys = rasterKeys(cells, count, width, height);
+    let candidates = 0;
+    for (const key of keys) if (key > 0) candidates++;
+    const ranked = new Float64Array(candidates);
+    let n = 0;
+    for (const key of keys) if (key > 0) ranked[n++] = key;
+    ranked.sort();
+    const take = Math.min(wanted, candidates);
+    const chosen: number[] = [];
+    for (let r = 0; r < take; r++) chosen.push(rasterKeyIndex(ranked[candidates - 1 - r]));
+    this.shortfall = wanted - take;
+    this.maxShortfall = Math.max(this.maxShortfall, this.shortfall);
 
     for (let c = 0; c < width * height; c++) if (this.isLiquidCell(cells[c])) cells[c] = T.EMPTY;
-    if (oilWanted > 0 && oilWanted < chosen.length) {
-      const oilShare = (c: number): number => (count[c] > 0 ? oilCount[c] / count[c] : 0);
-      chosen.sort((a, b) => oilShare(b) - oilShare(a) || b - a);
-    }
-    chosen.forEach((c, n) => {
-      cells[c] = n < oilWanted ? T.OIL : T.WATER;
-    });
-  }
-
-  /** Particles packed into fewer cells than they count for leave the liquid short: add the empty cells beside it, lowest first. */
-  private padToVolume(chosen: number[], wanted: number): void {
-    const { width, height, cells } = this.state;
-    const taken = new Uint8Array(width * height);
-    for (const c of chosen) taken[c] = 1;
-    while (chosen.length < wanted) {
-      const extra: number[] = [];
-      for (const c of chosen) {
-        const x = c % width;
-        for (const n of [x > 0 ? c - 1 : -1, x < width - 1 ? c + 1 : -1, c >= width ? c - width : -1, c + width < width * height ? c + width : -1]) {
-          const type = n >= 0 ? cells[n] & 0xff : T.WALL;
-          if (n < 0 || taken[n] === 1 || type === T.WALL || type === T.SAND) continue;
-          taken[n] = 1;
-          extra.push(n);
-        }
-      }
-      if (extra.length === 0) return;
-      extra.sort((a, b) => a - b);
-      chosen.push(...extra.slice(0, wanted - chosen.length));
-    }
+    const oiliest = chosen
+      .map((c) => oilKey(oilShare(oilCount[c], count[c]), c))
+      .sort((a, b) => b - a)
+      .slice(0, oilWanted)
+      .map(oilKeyIndex);
+    for (const c of chosen) cells[c] = T.WATER;
+    for (const c of oiliest) cells[c] = T.OIL;
   }
 }
