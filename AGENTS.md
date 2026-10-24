@@ -68,6 +68,15 @@ The GPU suites in `tests/` run the real WGSL through Dawn's Node bindings (`webg
 5. Add a toolbar button in `index.html` (`data-type` = the ID). Number keys select the n-th toolbar button, so the button's position sets its key.
 6. Update the density ordering and phase list in `docs/simulation.md`.
 
+## Working with the user
+
+The user is an experienced web developer, not a physics, numerics or GPU specialist.
+
+- Plans and docs may use precise technical terms. Anything addressed to the user (a decision request, a gate report's summary, a "needs your testing" list, a final report) says in plain words what changes for them in the game: how it looks, feels, how fast it runs, what they can do. It names the mechanism only after that, if at all.
+- Ask the user only decisions with a visible or usable effect. Technical choices without one (constants, solver settings, data layouts, which algorithm passes the tests) are the agent's to make: decide, record the reason in the plan or `docs/decisions.md`, and say in one line what was chosen.
+- When a decision does need the user, show it: a `?scene=` to open, a before and after, what to look for. Never ask them to pick between parameter values.
+- A sub-agent's decision requests are rewritten this way before they reach the user.
+
 ## Never
 
 - Never claim a water or physics behavior works from a visual check alone. Water realism failed repeatedly that way; any physics change needs a measurable, repeatable check, such as a scene test with a numeric threshold.

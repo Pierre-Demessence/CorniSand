@@ -26,7 +26,17 @@ Rejected, with prototype measurements on a 68×80 U-tube:
 
 - Compressible-mass CA (W-Shadow style): pressure stored as extra mass makes deep water look shallower (300 poured cells show as 130 at compression 0.02, 265 at 0.001) and levels slowly (37,600 steps at 0.02). Faster leveling needs more compression, so volume and speed trade against each other.
 - Hidden vacancy and surplus cells routed through the body: correct levels with exact volume (~1,500 steps), but the visible level is wrong while they travel, a GPU-friendly local routing jammed, and water has no momentum.
-- Fill fraction per cell moved by naive fluxes on the velocity grid: levels fast but smears the surface into a foam band about 10 cells deep, and limiting the fluxes stalls the flow. The surface needs a dedicated representation, chosen in M1.
+- Fill fraction per cell moved by naive fluxes on the velocity grid: levels fast but smears the surface into a foam band about 10 cells deep, and limiting the fluxes stalls the flow. The surface needs its own representation (next entry).
+
+## Liquids are FLIP particles, drawn into the cell grid by ranking
+
+Liquid is a set of particles (4 per cell at rest) with position and velocity. Each step their velocity is spread onto the staggered grid, the pressure solve corrects it, and the change is added back to the particles (FLIP, blended 0.8 with 0.2 PIC). The cell grid only shows the result: each step the N most crowded cells become liquid, N being the particle count / 4, so every liquid's cell count is exact by construction. The CA no longer moves liquids; sand still sinks through them and reactions still apply. The fluid grid has one fluid cell per grid cell (`k = 1`). Measurements: `git log --all -- docs/plans/physics-foundation.md`, section "M1.3 results".
+
+Rejected:
+
+- Velocity CA (liquids stay cells, each moving one cell once the velocity field has pushed it that far): three attempts failed AC1–AC3, AC5–AC7, AC9 and AC11 on the CPU reference. Volume can only cross the body through chains of holes, so the field cannot move water fast enough and the surface never closes.
+- A cell is liquid whenever a particle sits in it: the volume shown then varies with particle spacing; the ranking keeps it exact.
+- `k = 2` (one fluid cell per 2×2 grid cells, a 4× cheaper solve): fails AC2, AC5, AC6 and AC11 on the CPU reference. It stays a cost lever (backlog D15).
 
 ## One cell per CSS pixel, grid fixed at load
 
