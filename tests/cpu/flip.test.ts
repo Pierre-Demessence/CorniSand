@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { FLUID, MAX_FLUID_CELLS, oilKey, rasterKey, rasterQuality } from '../../src/fluid-params';
 import { PARTICLE_TYPES as T } from '../../src/particles';
 import { packCell, type Scene } from '../../src/scenes';
-import { mulberry32 } from '../random';
+import { mulberry32 } from '../../src/random';
 import { FlipModel, rasterKeys } from './flip';
 
 function tank(width: number, height: number): Uint32Array<ArrayBuffer> {

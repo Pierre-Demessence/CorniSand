@@ -1,3 +1,4 @@
+import { MAX_FLUID_CELLS } from './fluid-params';
 import { CELL_BYTES } from './shaders/cell.wgsl';
 
 export interface Grid {
@@ -7,10 +8,15 @@ export interface Grid {
   scale: number;
 }
 
-// Largest cell count one storage buffer binding can hold on this device.
+// The widest per-cell fluid buffer (face weights, a vec4f) must fit one binding as well.
+const WIDEST_FLUID_CELL_BYTES = 16;
+
+// Largest cell count the cell buffers and the per-cell fluid buffers can hold on this device, and the rasterization
+// keys can index.
 export function maxCellsForDevice(device: GPUDevice): number {
   const { maxStorageBufferBindingSize, maxBufferSize } = device.limits;
-  return Math.floor(Math.min(maxStorageBufferBindingSize, maxBufferSize) / CELL_BYTES);
+  const limit = Math.min(maxStorageBufferBindingSize, maxBufferSize);
+  return Math.min(Math.floor(limit / CELL_BYTES), Math.floor(limit / WIDEST_FLUID_CELL_BYTES), MAX_FLUID_CELLS);
 }
 
 // One cell per CSS pixel, or the smallest integer cells-per-pixel scale that fits maxCells.

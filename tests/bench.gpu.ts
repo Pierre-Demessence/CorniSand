@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { PARTICLE_TYPES as T } from '../src/particles';
 import { Simulation } from '../src/simulation';
 import { cell, createDevice, idleInput } from './gpu';
-import { mulberry32 } from './random';
+import { mulberry32 } from '../src/random';
 
 // GPU time per frame at 2560x1340, the screen-sized grid of AC14. Run with `npm run bench`; only numbers from the
 // RTX 4080 count, the machine also has an Intel iGPU.
@@ -51,7 +51,7 @@ describe.skipIf(!device)('bench', () => {
     }
 
     const sim = new Simulation(dev, WIDTH, HEIGHT, { seedSource: mulberry32(1) });
-    dev.queue.writeBuffer(sim.currentBuffer, 0, benchScene());
+    sim.load(benchScene());
 
     const frame = async (supersteps: number): Promise<number> => {
       const start = performance.now();

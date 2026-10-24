@@ -1,6 +1,7 @@
+import { PARTICLE_KIND, PARTICLE_STRIDE, type SpawnedParticles } from '../src/fluid-params';
 import { PARTICLE_TYPES } from '../src/particles';
-import { MAX_SUPERSTEPS, Simulation, type SimulationInput } from '../src/simulation';
-import { mulberry32 } from './random';
+import { MAX_SUPERSTEPS, Simulation, type SimulationInput, type SimulationOptions } from '../src/simulation';
+import { mulberry32 } from '../src/random';
 
 export { mulberry32 };
 
@@ -64,16 +65,63 @@ export function cellType(c: number): number {
   return c & 0xff;
 }
 
-export function createSim(width: number, height: number, seed = 1): Simulation {
-  return new Simulation(device!, width, height, { seedSource: mulberry32(seed) });
+export function createSim(width: number, height: number, seed = 1, options: SimulationOptions = {}): Simulation {
+  return new Simulation(device!, width, height, { seedSource: mulberry32(seed), ...options });
 }
 
-export function loadCells(sim: Simulation, cells: Uint32Array<ArrayBuffer>): void {
-  device!.queue.writeBuffer(sim.currentBuffer, 0, cells);
+// Replaces the world with `cells`: the cell buffer and the particles of its liquid cells.
+export function loadScene(sim: Simulation, cells: Uint32Array): void {
+  sim.load(cells);
 }
 
 export function readCells(sim: Simulation): Promise<Uint32Array> {
   return readBuffer(device!, sim.currentBuffer, sim.width * sim.height * 4);
+}
+
+export type ParticleRecords = Pick<SpawnedParticles, 'count' | 'floats' | 'words'>;
+
+// The live particles in buffer order (compaction does not keep one), as the 5-word records of `spawnParticles`:
+// float index `PARTICLE_STRIDE * i + 0..3` is px, py, vx, vy and word `PARTICLE_STRIDE * i + 4` the kind.
+// Dead particles are left out. Valid between frames, when the store holds exactly the compacted particles.
+export async function readParticles(sim: Simulation): Promise<ParticleRecords> {
+  const { count } = await readFluidState(sim);
+  const raw = count > 0 ? await readBuffer(device!, sim.fluid.particleBuffer, count * PARTICLE_STRIDE * 4) : new Uint32Array(0);
+  const words = new Uint32Array(count * PARTICLE_STRIDE);
+  let live = 0;
+  for (let i = 0; i < count; i++) {
+    if (raw[i * PARTICLE_STRIDE + 4] === PARTICLE_KIND.DEAD) continue;
+    words.set(raw.subarray(i * PARTICLE_STRIDE, (i + 1) * PARTICLE_STRIDE), live * PARTICLE_STRIDE);
+    live++;
+  }
+  const trimmed = words.slice(0, live * PARTICLE_STRIDE);
+  return { count: live, floats: new Float32Array(trimmed.buffer), words: trimmed };
+}
+
+// The counters of the particle store.
+export async function readFluidState(sim: Simulation): Promise<{
+  count: number;
+  spawnCursor: number;
+  compactCursor: number;
+  water: number;
+  oil: number;
+}> {
+  const [count, spawnCursor, compactCursor, water, oil] = await readBuffer(device!, sim.fluid.particleState, 20);
+  return { count, spawnCursor, compactCursor, water, oil };
+}
+
+// One row [px, py, vx, vy, kind] per particle, sorted, to compare particle sets whose order differs.
+export function particleRows(particles: ParticleRecords): number[][] {
+  const rows: number[][] = [];
+  for (let i = 0; i < particles.count; i++) {
+    const at = i * PARTICLE_STRIDE;
+    rows.push([...particles.floats.subarray(at, at + 4), particles.words[at + 4]]);
+  }
+  return rows.sort((a, b) => {
+    for (let k = 0; k < a.length; k++) {
+      if (a[k] !== b[k]) return a[k] - b[k];
+    }
+    return 0;
+  });
 }
 
 // Records and submits one encoder; fails the test on any WebGPU validation error.

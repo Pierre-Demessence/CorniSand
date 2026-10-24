@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { PARTICLE_TYPES as T } from '../src/particles';
 import { Display } from '../src/display';
-import { cell, countTypes, createSim, device, idleInput, loadCells, mulberry32, readCells, run, runMany } from './gpu';
+import { cell, countTypes, createSim, device, idleInput, loadScene, mulberry32, readCells, run, runMany } from './gpu';
 
 function emptyGrid(width: number, height: number): Uint32Array<ArrayBuffer> {
   return new Uint32Array(width * height);
@@ -23,7 +23,7 @@ describe.skipIf(!device)('GPU simulation', () => {
       starts.push(x);
       cells[x] = cell(T.WATER); // row 0: the grid edge is the floor
     }
-    loadCells(sim, cells);
+    loadScene(sim, cells);
 
     await runMany(sim, 200);
 
@@ -50,7 +50,7 @@ describe.skipIf(!device)('GPU simulation', () => {
     for (const y of [11, 12]) {
       for (const x of [4, 5, 6]) cells[y * width + x] = cell(T.WATER);
     }
-    loadCells(sim, cells);
+    loadScene(sim, cells);
 
     await run(sim, 1, {
       ...idleInput,
@@ -73,7 +73,7 @@ describe.skipIf(!device)('GPU simulation', () => {
     const kinds = [T.EMPTY, T.EMPTY, T.SAND, T.WATER, T.OIL, T.SMOKE, T.WALL];
     const cells = emptyGrid(width, height);
     for (let i = 0; i < cells.length; i++) cells[i] = cell(kinds[rand() % kinds.length]);
-    loadCells(sim, cells);
+    loadScene(sim, cells);
     const before = countTypes(cells);
 
     await runMany(sim, 100);
@@ -91,7 +91,7 @@ describe.skipIf(!device)('GPU simulation', () => {
     const sim = createSim(width, height);
     const cells = emptyGrid(width, height);
     cells[61 * width + 4] = cell(T.SAND);
-    loadCells(sim, cells);
+    loadScene(sim, cells);
 
     for (let step = 1; step <= 5; step++) {
       await run(sim, 1);
@@ -106,7 +106,7 @@ describe.skipIf(!device)('GPU simulation', () => {
     const sim = createSim(width, height);
     const cells = emptyGrid(width, height);
     cells[2 * width + 4] = cell(T.SMOKE);
-    loadCells(sim, cells);
+    loadScene(sim, cells);
 
     for (let step = 1; step <= 5; step++) {
       await run(sim, 1);

@@ -33,7 +33,7 @@ async function main(): Promise<void> {
   async function createGpuState(): Promise<GpuState> {
     const gpu = await initGPU(canvas, onDeviceLost);
     grid ??= computeGrid(cssWidth, cssHeight, maxCellsForDevice(gpu.device));
-    const simulation = new Simulation(gpu.device, grid.width, grid.height);
+    const simulation = await Simulation.create(gpu.device, grid.width, grid.height);
     const display = new Display(gpu.device, gpu.format, grid.width, grid.height, simulation.bufferA, simulation.bufferB);
     return { gpu, simulation, display };
   }

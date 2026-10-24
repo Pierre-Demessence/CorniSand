@@ -13,7 +13,7 @@ import {
 import { PARTICLE_TYPES as T } from '../../src/particles';
 import type { Scene } from '../../src/scenes';
 import type { LiquidModel } from '../liquid-model';
-import { mulberry32 } from '../random';
+import { mulberry32 } from '../../src/random';
 import { AIR, FluidGrid, LIQUID, LIQUID_DENSITY, SOLID } from './fluid-grid';
 import { sandDispatch, type SandState } from './sand-ca';
 import {
