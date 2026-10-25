@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PARTICLE_TYPES as T } from '../src/particles';
-import { packCell, SCENES, uTube } from '../src/scenes';
+import { findScene, packCell, SCENES, uTube } from '../src/scenes';
 import { cell } from './gpu';
 import { bubbleCount, chamberLevel, countType, expectedLevel, liquidVolume } from './metrics';
 
@@ -18,6 +18,12 @@ describe('scenes', () => {
       for (const c of scene.cells) expect(c >>> 8, name).toBe(0);
       for (const c of scene.cells) expect(Object.values(T), name).toContain(c & 0xff);
     }
+  });
+
+  it('look scenes up by their registered name only', () => {
+    for (const name of Object.keys(SCENES)) expect(findScene(name), name).toBeDefined();
+    expect(findScene('damBreak')?.name).toBe('damBreak');
+    for (const name of ['', 'nope', 'constructor', 'toString', '__proto__']) expect(findScene(name), name).toBeUndefined();
   });
 
   it('size the U-tubes as specified', () => {

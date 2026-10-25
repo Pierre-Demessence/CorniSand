@@ -3,6 +3,7 @@ import { computeGrid, maxCellsForDevice, type Grid } from './grid';
 import { Simulation } from './simulation';
 import { Display } from './display';
 import { InputHandler, type Vec2 } from './input';
+import { findScene, type Scene } from './scenes';
 
 interface GpuState {
   gpu: GPUContext;
@@ -23,7 +24,16 @@ async function main(): Promise<void> {
   canvas.width = cssWidth;
   canvas.height = cssHeight;
 
-  // Sized once from the first device's limits; a re-created device keeps the same grid.
+  // `?scene=<name>` replaces the empty world with a test scene and sizes the grid to it.
+  const sceneName = new URLSearchParams(window.location.search).get('scene');
+  let pendingScene: Scene | undefined;
+  if (sceneName !== null) {
+    pendingScene = findScene(sceneName);
+    if (!pendingScene) console.warn(`Unknown scene "${sceneName}", starting with an empty world.`);
+  }
+  const sceneLabel = pendingScene?.name;
+
+  // Sized once from the first device's limits (or the scene's size); a re-created device keeps the same grid.
   let grid: Grid | undefined;
   let state: GpuState | null = null;
   let recoveries = 0;
@@ -32,8 +42,15 @@ async function main(): Promise<void> {
 
   async function createGpuState(): Promise<GpuState> {
     const gpu = await initGPU(canvas, onDeviceLost);
-    grid ??= computeGrid(cssWidth, cssHeight, maxCellsForDevice(gpu.device));
+    grid ??= pendingScene
+      ? { width: pendingScene.width, height: pendingScene.height, scale: 1 }
+      : computeGrid(cssWidth, cssHeight, maxCellsForDevice(gpu.device));
     const simulation = await Simulation.create(gpu.device, grid.width, grid.height);
+    // Only the first device gets the scene; after a device loss the world is cleared, as the banner says.
+    if (pendingScene) {
+      simulation.load(pendingScene.cells);
+      pendingScene = undefined;
+    }
     const display = new Display(gpu.device, gpu.format, grid.width, grid.height, simulation.bufferA, simulation.bufferB);
     return { gpu, simulation, display };
   }
@@ -96,7 +113,7 @@ async function main(): Promise<void> {
   changeSpeed(0);
 
   const cells = `${((simWidth * simHeight) / 1e6).toFixed(1)}M cells`;
-  gridEl.textContent = `${simWidth}×${simHeight} (${cells}${scale > 1 ? `, ${scale}px each` : ''})`;
+  gridEl.textContent = `${simWidth}×${simHeight} (${cells}${scale > 1 ? `, ${scale}px each` : ''})${sceneLabel ? ` · scene ${sceneLabel}` : ''}`;
 
   setTimeout(() => { helpHint.style.opacity = '0'; }, 4000);
 

@@ -1,6 +1,6 @@
 # M1 Physics foundation and realistic liquids
 
-Status: M1.1–M1.4e are done (the CPU reference is the GPU spec, the pre-M1.4 bench baseline is recorded, the GPU particle store, load and frame start exist, the GPU grid passes and pressure solve match the CPU, particles move and are rasterized on the GPU, the CA no longer moves liquid, AC1–AC9 pass on the GPU). Next: M1.4f, then the remaining items in order.
+Status: M1.1–M1.4f are done (the CPU reference is the GPU spec, the pre-M1.4 bench baseline is recorded, the GPU particle store, load and frame start exist, the GPU grid passes and pressure solve match the CPU, particles move and are rasterized on the GPU, the CA no longer moves liquid, AC1–AC9 pass on the GPU, `?scene=` loads a scene). next: M1.4g, then the remaining items in order.
 
 ## Goal
 
@@ -293,7 +293,7 @@ Order matters: each item builds on the previous one. Every item that adds WGSL k
   - `tests/liquid-model.ts`: every `LiquidModel` method may return a Promise; `settleAndHold`, `observe` (awaiting its visitor) and `expectVolumesConstant` become async; the `tests/liquid-acceptance.ts` helpers and `tests/liquids-*.test.ts` await them (the CPU model stays synchronous).
   - New `tests/gpu-liquid-model.ts`: `GpuLiquidModel` over `Simulation` (`load` → `sim.load`; `step(n)` → `run` in chunks of at most 32; `cells` → `readCells`; `volume` from the cells; `maxSpeed` from `readParticles`).
   - New `tests/liquids-gpu.test.ts` (skips without a device): AC1–AC9 through the shared helpers, same thresholds, AC4 also asserting `maxShortfall` 0. If one fails while the CPU passes, run the parity test for more steps to find where they diverge; never tune a constant on the GPU side only.
-- [ ] **M1.4f `?scene=` loader (AC13), then the user looks.**
+- [x] **M1.4f `?scene=` loader (AC13), then the user looks.** The user checked it: everything works, no complaint about the pin or the splash. They noticed the scenes are tiny (test-sized, stretched to the window) and, on the real 1920×897 grid, about 27 FPS at 1x once any water exists, plus a 3–4 s load: the FPS is the cost M1.4g measures and M1.5c lever 1 (active tiles) addresses, the load is D17. The scene is loaded on the first device only: after a device loss the world is cleared, as the banner says. `findScene` (`src/scenes.ts`) matches own keys only, so `?scene=constructor` is unknown. The grid readout appends `· scene <name>`.
   - `src/main.ts`: when `?scene=<name>` names a `SCENES` entry, the grid takes the scene's size (no `computeGrid`), the scene is loaded with `simulation.load`, and the display stretches it to the canvas as on resize. An unknown name logs a warning and starts the normal empty grid. Clear empties it as usual.
   - Hand over "Needs the user" below and record the answers on the pin and the splash look here.
 - [ ] **M1.4g First GPU timing.** Extend `tests/bench.gpu.ts` to the FLIP build: the same scene and speeds, plus a run with `iterations: 0` to separate the solver's cost. Add the numbers under "M1.4 measurements" next to the baseline. Report to the user in plain words (does 1x reach 60 fps, how choppy is 8x) and list which M1.5c levers follow.

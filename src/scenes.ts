@@ -213,3 +213,8 @@ export const SCENES: Record<string, () => Scene> = {
   sandIntoPool,
   oilOnWater,
 };
+
+/** The scene registered under `name`; own keys only, so `?scene=constructor` does not match. */
+export function findScene(name: string): Scene | undefined {
+  return Object.hasOwn(SCENES, name) ? SCENES[name]() : undefined;
+}
