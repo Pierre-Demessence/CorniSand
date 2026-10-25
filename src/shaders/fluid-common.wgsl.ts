@@ -9,8 +9,42 @@ export const PARTICLE_WORKGROUP = 256;
 /** Cell and face passes use 8x8 workgroups. */
 export const GRID_WORKGROUP = 8;
 
+/** Workgroups per row of a list dispatch: n listed tiles run as (min(n, LIST_ROW), ceil(n / LIST_ROW)) workgroups. */
+export const LIST_ROW = 4096;
+
+/** The tiles of the fluid grid: `GRID_WORKGROUP` x `GRID_WORKGROUP` cells, one per workgroup of a cell or face pass. */
+export const tileGrid = (width: number, height: number): { columns: number; rows: number; count: number } => {
+  const columns = Math.ceil((width + 1) / GRID_WORKGROUP);
+  const rows = Math.ceil((height + 1) / GRID_WORKGROUP);
+  return { columns, rows, count: columns * rows };
+};
+
+/** Indirect dispatch arguments (and the direct dispatch size) of a list of `n` tiles. */
+export const listDispatch = (n: number): [number, number, number] => [Math.min(n, LIST_ROW), Math.max(1, Math.ceil(n / LIST_ROW)), 1];
+
 // A float literal WGSL accepts: `2` must read `2.0`.
 const f32 = (n: number): string => (Number.isInteger(n) ? n.toFixed(1) : String(n));
+
+/**
+ * A list of tiles that a pass runs over instead of the whole grid: word 0 is the count, then the tile ids
+ * (`row * GRID_GROUPS_X + column`) in ascending order. Workgroup i of the dispatch (LIST_ROW per row) takes tile i.
+ * `tileCell` is the thread's `global_invocation_id` for the tile its workgroup got: x is 0xFFFFFFFF beyond the end
+ * of the list, which every `x < W` style bounds test rejects, and z is the tile id. Control flow around barriers
+ * must not depend on it; test `listed(wid)` (the same for the whole workgroup) instead.
+ */
+export const tilesWGSL = (binding: number): string => /* wgsl */`
+@group(0) @binding(${binding}) var<storage, read> tileList: array<u32>;
+const LIST_ROW: u32 = ${LIST_ROW}u;
+const NO_CELL = vec3u(0xFFFFFFFFu, 0xFFFFFFFFu, 0u);
+
+fn listed(wid: vec3u) -> bool { return wid.y * LIST_ROW + wid.x < tileList[0]; }
+
+fn tileCell(wid: vec3u, lid: vec3u) -> vec3u {
+  if (!listed(wid)) { return NO_CELL; }
+  let t = tileList[1u + wid.y * LIST_ROW + wid.x];
+  return vec3u((t % GRID_GROUPS_X) * ${GRID_WORKGROUP}u + lid.x, (t / GRID_GROUPS_X) * ${GRID_WORKGROUP}u + lid.y, t);
+}
+`;
 
 // Shared by every fluid shader, so the grid size, the capacity, the constants of `fluid-params.ts` and the particle
 // layout exist once. Include `cellWGSL` as well where cell types are needed.

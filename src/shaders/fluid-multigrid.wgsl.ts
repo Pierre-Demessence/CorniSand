@@ -1,5 +1,5 @@
 import { FLUID, type LevelGeometry } from '../fluid-params';
-import { fluidCommonWGSL, GRID_WORKGROUP } from './fluid-common.wgsl';
+import { fluidCommonWGSL, GRID_WORKGROUP, tilesWGSL } from './fluid-common.wgsl';
 
 export const MG_BINDINGS = {
   weights: 0,
@@ -11,6 +11,7 @@ export const MG_BINDINGS = {
   cgQ: 6,
   partials: 7,
   scalars: 8,
+  tiles: 9,
 } as const;
 
 /** Threads of the single-workgroup passes (the tail cycle and the sums of the dot products). */
@@ -83,6 +84,9 @@ ${fluidCommonWGSL(width, height, capacity)}
 @group(0) @binding(${M.cgQ}) var<storage, read_write> cgQ: array<f32>;
 @group(0) @binding(${M.partials}) var<storage, read_write> partials: array<f32>;
 @group(0) @binding(${M.scalars}) var<storage, read_write> scalars: array<f32>;
+// The fine level's kernels run over the active tiles of the step (see fluid-grid.wgsl.ts); the coarser levels are
+// small and run over their whole size. 'partials' has one slot per tile, zero for a tile that is not listed.
+${tilesWGSL(M.tiles)}
 
 const SMOOTHER_OMEGA: f32 = ${f32(FLUID.smootherOmega)};
 const CORRECTION_SCALE: f32 = ${f32(FLUID.correctionScale)};
@@ -177,6 +181,7 @@ fn buildCell(fnx: u32, fny: u32, foff: u32, cnx: u32, coff: u32, cx: u32, cy: u3
 }
 
 // ---- One level per dispatch (the levels too large for the tail cycle). Level sizes and offsets are pipeline constants. ----
+// The fine level (level 0) runs over the listed tiles.
 
 override NX: u32 = 1u;
 override NY: u32 = 1u;
@@ -193,6 +198,13 @@ override COFF: u32 = 0u;
 fn smoothLevel(@builtin(global_invocation_id) gid: vec3u) {
   if (gid.x >= NX || gid.y >= NY || ((gid.x + gid.y) & 1u) != COLOR) { return; }
   smoothCell(NX, NY, OFF, gid.x, gid.y);
+}
+
+@compute @workgroup_size(${GRID_WORKGROUP}, ${GRID_WORKGROUP})
+fn smoothFine(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_id) lid: vec3u) {
+  let gid = tileCell(wid, lid);
+  if (gid.x >= W || gid.y >= H || ((gid.x + gid.y) & 1u) != COLOR) { return; }
+  smoothCell(W, H, 0u, gid.x, gid.y);
 }
 
 // Thread per coarse cell.
@@ -214,6 +226,13 @@ fn restrictLevel(@builtin(global_invocation_id) gid: vec3u) {
 fn prolongLevel(@builtin(global_invocation_id) gid: vec3u) {
   if (gid.x >= FNX || gid.y >= FNY) { return; }
   prolongCell(FNX, FOFF, CNX, COFF, gid.x, gid.y);
+}
+
+@compute @workgroup_size(${GRID_WORKGROUP}, ${GRID_WORKGROUP})
+fn prolongFine(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_id) lid: vec3u) {
+  let gid = tileCell(wid, lid);
+  if (gid.x >= W || gid.y >= H) { return; }
+  prolongCell(W, 0u, CNX, COFF, gid.x, gid.y);
 }
 
 // ---- The tail: the small levels, cycled by one workgroup. Every phase is a loop over the level's cells with a fixed
@@ -274,21 +293,23 @@ ${tailBuildBody(tail)}
 
 var<workgroup> reduction: array<f32, ${GRID_WORKGROUP * GRID_WORKGROUP}>;
 
-// Sums one value per thread of a grid workgroup into its slot of \`partials\`. Called by every thread of the workgroup.
-fn reducePartial(value: f32, lid: u32, wid: vec3u) {
+// Sums one value per thread of a grid workgroup into the slot of its tile (the z of its cell) in \`partials\`. Called by
+// every thread of the workgroup, including those of a workgroup beyond the end of the tile list, which write nothing.
+fn reducePartial(value: f32, lid: u32, wid: vec3u, tile: u32) {
   reduction[lid] = value;
   workgroupBarrier();
   for (var s = ${GRID_WORKGROUP * GRID_WORKGROUP / 2}u; s > 0u; s >>= 1u) {
     if (lid < s) { reduction[lid] += reduction[lid + s]; }
     workgroupBarrier();
   }
-  if (lid == 0u) { partials[wid.y * GRID_GROUPS_X + wid.x] = reduction[0]; }
+  if (lid == 0u && listed(wid)) { partials[tile] = reduction[0]; }
 }
 
 // -rhs_precond = -div of the preconditioner system is the negated CG residual: r = rhs - A p, stored as -r in diagDiv.y.
 // Writes it for the current pressure, and clears the preconditioner's solution.
 @compute @workgroup_size(${GRID_WORKGROUP}, ${GRID_WORKGROUP})
-fn cgInit(@builtin(global_invocation_id) gid: vec3u) {
+fn cgInit(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_id) lid3: vec3u) {
+  let gid = tileCell(wid, lid3);
   if (gid.x >= W || gid.y >= H) { return; }
   let c = cellIndex(gid.x, gid.y);
   lp[c] = 0.0;
@@ -309,10 +330,11 @@ fn cgInit(@builtin(global_invocation_id) gid: vec3u) {
 // First search direction d = z, and the partial sums of r . z.
 @compute @workgroup_size(${GRID_WORKGROUP}, ${GRID_WORKGROUP})
 fn cgDotInit(
-  @builtin(global_invocation_id) gid: vec3u,
-  @builtin(local_invocation_index) lid: u32,
   @builtin(workgroup_id) wid: vec3u,
+  @builtin(local_invocation_id) lid3: vec3u,
+  @builtin(local_invocation_index) lid: u32,
 ) {
+  let gid = tileCell(wid, lid3);
   var value = 0.0;
   if (gid.x < W && gid.y < H) {
     let c = cellIndex(gid.x, gid.y);
@@ -320,16 +342,17 @@ fn cgDotInit(
     cgD[c] = z;
     value = -diagDiv[c].y * z;
   }
-  reducePartial(value, lid, wid);
+  reducePartial(value, lid, wid, gid.z);
 }
 
 // q = A d over the liquid cells, and the partial sums of d . q. Air and inactive neighbors hold d = 0.
 @compute @workgroup_size(${GRID_WORKGROUP}, ${GRID_WORKGROUP})
 fn cgMultiply(
-  @builtin(global_invocation_id) gid: vec3u,
-  @builtin(local_invocation_index) lid: u32,
   @builtin(workgroup_id) wid: vec3u,
+  @builtin(local_invocation_id) lid3: vec3u,
+  @builtin(local_invocation_index) lid: u32,
 ) {
+  let gid = tileCell(wid, lid3);
   var value = 0.0;
   if (gid.x < W && gid.y < H) {
     let c = cellIndex(gid.x, gid.y);
@@ -347,12 +370,13 @@ fn cgMultiply(
     }
     cgQ[c] = q;
   }
-  reducePartial(value, lid, wid);
+  reducePartial(value, lid, wid, gid.z);
 }
 
 // p += alpha d and r -= alpha q (stored negated, so it grows), and clears the solution of the next preconditioner cycle.
 @compute @workgroup_size(${GRID_WORKGROUP}, ${GRID_WORKGROUP})
-fn cgUpdate(@builtin(global_invocation_id) gid: vec3u) {
+fn cgUpdate(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_id) lid3: vec3u) {
+  let gid = tileCell(wid, lid3);
   if (gid.x >= W || gid.y >= H) { return; }
   let c = cellIndex(gid.x, gid.y);
   let alpha = scalars[1];
@@ -364,21 +388,23 @@ fn cgUpdate(@builtin(global_invocation_id) gid: vec3u) {
 // Partial sums of r . z after a preconditioner cycle.
 @compute @workgroup_size(${GRID_WORKGROUP}, ${GRID_WORKGROUP})
 fn cgDot(
-  @builtin(global_invocation_id) gid: vec3u,
-  @builtin(local_invocation_index) lid: u32,
   @builtin(workgroup_id) wid: vec3u,
+  @builtin(local_invocation_id) lid3: vec3u,
+  @builtin(local_invocation_index) lid: u32,
 ) {
+  let gid = tileCell(wid, lid3);
   var value = 0.0;
   if (gid.x < W && gid.y < H) {
     let c = cellIndex(gid.x, gid.y);
     value = -diagDiv[c].y * lp[c];
   }
-  reducePartial(value, lid, wid);
+  reducePartial(value, lid, wid, gid.z);
 }
 
 // d = z + beta d.
 @compute @workgroup_size(${GRID_WORKGROUP}, ${GRID_WORKGROUP})
-fn cgDirection(@builtin(global_invocation_id) gid: vec3u) {
+fn cgDirection(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_id) lid3: vec3u) {
+  let gid = tileCell(wid, lid3);
   if (gid.x >= W || gid.y >= H) { return; }
   let c = cellIndex(gid.x, gid.y);
   cgD[c] = lp[c] + scalars[2] * cgD[c];

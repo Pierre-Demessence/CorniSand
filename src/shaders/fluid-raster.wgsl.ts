@@ -1,6 +1,6 @@
 import { FLUID } from '../fluid-params';
 import { cellWGSL } from './cell.wgsl';
-import { fluidCommonWGSL, GRID_WORKGROUP } from './fluid-common.wgsl';
+import { fluidCommonWGSL, GRID_WORKGROUP, tilesWGSL } from './fluid-common.wgsl';
 
 // Binding numbers are shared by all entry points; each pass's bind group layout lists only the ones it uses.
 export const RASTER_BINDINGS = {
@@ -13,6 +13,7 @@ export const RASTER_BINDINGS = {
   histogram: 6,
   select: 7,
   state: 8,
+  tiles: 9,
 } as const;
 
 /** Words of the `SelectState` struct, in this order; the index of a name is its word offset in the `selectState` buffer. */
@@ -70,6 +71,9 @@ ${SELECT_FIELDS.map((name) => `  ${name}: u32,`).join('\n')}
 @group(0) @binding(${RASTER_BINDINGS.histogram}) var<storage, read_write> histogram: array<atomic<u32>, 256>;
 @group(0) @binding(${RASTER_BINDINGS.select}) var<storage, read_write> sel: SelectState;
 @group(0) @binding(${RASTER_BINDINGS.state}) var<storage, read_write> state: FluidState;
+// Every pass but the key selection's single-thread ones runs over the listed tiles: the active set of the step, or for
+// \`keys\` the clear set, which wipes the keys of a tile that just left the active set (see fluid-grid.wgsl.ts).
+${tilesWGSL(RASTER_BINDINGS.tiles)}
 
 const WEIGHT_COUNT: u32 = ${FLUID.weightCount}u;
 const WEIGHT_SIDE: u32 = ${FLUID.weightSide}u;
@@ -90,12 +94,13 @@ fn isBlocking(t: u32) -> bool { return t == TYPE_WALL || t == TYPE_SAND; }
 fn chosen(key: u32) -> bool { return key != 0u && sel.none == 0u && key >= sel.threshold; }
 
 @compute @workgroup_size(${GRID_WORKGROUP}, ${GRID_WORKGROUP})
-fn clearCounts(@builtin(global_invocation_id) gid: vec3u) {
+fn clearCounts(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_id) lid: vec3u) {
+  let gid = tileCell(wid, lid);
   if (gid.x < W && gid.y < H) {
     atomicStore(&counts[cellIndex(gid.x, gid.y)], 0u);
     atomicStore(&oilCounts[cellIndex(gid.x, gid.y)], 0u);
   }
-  if (gid.x == 0u && gid.y == 0u) {
+  if (all(wid == vec3u(0u)) && all(lid == vec3u(0u))) {
     atomicStore(&state.water, 0u);
     atomicStore(&state.oil, 0u);
   }
@@ -113,7 +118,8 @@ fn setWanted() {
 // Rank of every cell that holds a particle (see rasterQuality in fluid-params.ts); other open cells get a key from
 // the padding rings. Wall, sand, smoke and fire are never candidates.
 @compute @workgroup_size(${GRID_WORKGROUP}, ${GRID_WORKGROUP})
-fn keys(@builtin(global_invocation_id) gid: vec3u) {
+fn keys(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_id) lid: vec3u) {
+  let gid = tileCell(wid, lid);
   if (gid.x >= W || gid.y >= H) { return; }
   let c = cellIndex(gid.x, gid.y);
   let t = cellType(cells[c]);
@@ -136,7 +142,8 @@ fn keys(@builtin(global_invocation_id) gid: vec3u) {
 // cells, whose quality is above every ring's) takes the ring's quality. Rings are told apart by quality, so cells
 // written during this pass are never mistaken for the previous ring.
 @compute @workgroup_size(${GRID_WORKGROUP}, ${GRID_WORKGROUP})
-fn padRing(@builtin(global_invocation_id) gid: vec3u) {
+fn padRing(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_id) lid: vec3u) {
+  let gid = tileCell(wid, lid);
   if (gid.x >= W || gid.y >= H) { return; }
   let c = cellIndex(gid.x, gid.y);
   if (atomicLoad(&keyBuf[c]) != 0u || !isOpen(cellType(cells[c]))) { return; }
@@ -160,7 +167,12 @@ fn padRing(@builtin(global_invocation_id) gid: vec3u) {
 var<workgroup> groupBins: array<atomic<u32>, 256>;
 
 @compute @workgroup_size(${GRID_WORKGROUP}, ${GRID_WORKGROUP})
-fn histogramPass(@builtin(global_invocation_id) gid: vec3u, @builtin(local_invocation_index) li: u32) {
+fn histogramPass(
+  @builtin(workgroup_id) wid: vec3u,
+  @builtin(local_invocation_id) lid: vec3u,
+  @builtin(local_invocation_index) li: u32,
+) {
+  let gid = tileCell(wid, lid);
   for (var b = li; b < 256u; b += ${GRID_WORKGROUP * GRID_WORKGROUP}u) { atomicStore(&groupBins[b], 0u); }
   workgroupBarrier();
   if (gid.x < W && gid.y < H) {
@@ -245,7 +257,8 @@ fn pick() {
 // Key of the chosen cells for the oil selection: the oiliest first (share of oil particles, 0 to 255), and among equal
 // shares the higher index, so oil settles on top. Padding cells hold no particles and have share 0.
 @compute @workgroup_size(${GRID_WORKGROUP}, ${GRID_WORKGROUP})
-fn oilKeys(@builtin(global_invocation_id) gid: vec3u) {
+fn oilKeys(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_id) lid: vec3u) {
+  let gid = tileCell(wid, lid);
   if (gid.x >= W || gid.y >= H) { return; }
   let c = cellIndex(gid.x, gid.y);
   var value = 0u;
@@ -260,7 +273,8 @@ fn oilKeys(@builtin(global_invocation_id) gid: vec3u) {
 // Chosen cells become water or oil (variant 0, life 0), the other water and oil cells become empty, and every other
 // cell is left alone: wall, sand, smoke and fire are never candidates. Each thread edits only its own cell.
 @compute @workgroup_size(${GRID_WORKGROUP}, ${GRID_WORKGROUP})
-fn writeCells(@builtin(global_invocation_id) gid: vec3u) {
+fn writeCells(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_id) lid: vec3u) {
+  let gid = tileCell(wid, lid);
   if (gid.x >= W || gid.y >= H) { return; }
   let c = cellIndex(gid.x, gid.y);
   if (chosen(atomicLoad(&keyBuf[c]))) {

@@ -1,5 +1,5 @@
 import { cellWGSL } from './cell.wgsl';
-import { fluidCommonWGSL, GRID_WORKGROUP } from './fluid-common.wgsl';
+import { fluidCommonWGSL, GRID_WORKGROUP, tilesWGSL } from './fluid-common.wgsl';
 
 // Binding numbers are shared by all entry points; each pass's bind group layout lists only the ones it uses.
 export const GRID_BINDINGS = {
@@ -21,6 +21,13 @@ export const GRID_BINDINGS = {
   diagDiv: 15,
   residualMax: 16,
   divergence: 17,
+  seeds: 18,
+  tileFlags: 19,
+  tiles: 20,
+  activeList: 21,
+  clearList: 22,
+  listArgs: 23,
+  partials: 24,
 } as const;
 
 const G = GRID_BINDINGS;
@@ -28,6 +35,14 @@ const G = GRID_BINDINGS;
 // The cell and face passes of a step, one entry point each. Cell passes cover x < W, y < H; face passes cover the
 // (W + 1) x (H + 1) lattice, where a thread owns the u face (x, y) when y < H and the v face (x, y) when x < W.
 // Grid indices: u[y * (W + 1) + x], v[y * W + x], cells y * W + x; outside the domain counts as solid.
+//
+// Active tiles: the passes with a 'tileCell' line run over a list of 8 x 8 tiles (the 'tileList' binding) instead of the
+// whole grid. A step's active set A is every tile within one tile of a tile that holds a particle or a liquid cell
+// ('classify' marks those in 'seeds', 'tileFlags' dilates them, 'tileCompact' lists them), so the 3 x 3 tiles around a
+// tile of liquid cover everything a step reads or writes near it: a particle moves at most one cell, the extrapolation
+// reaches two faces, a padding ring six cells. The clear set C is A plus the tiles that were active in the previous step;
+// the passes that write "no liquid" state (the face and diagonal initialization, the keys) run over C, so a tile that
+// leaves A is wiped once and outside C every buffer read near the active set already holds its empty value.
 export const fluidGridWGSL = (width: number, height: number, capacity: number): string => /* wgsl */`
 ${cellWGSL}
 ${fluidCommonWGSL(width, height, capacity)}
@@ -55,14 +70,28 @@ ${fluidCommonWGSL(width, height, capacity)}
 // The divergence of a liquid cell minus the outflow the density correction asks for.
 @group(0) @binding(${G.divergence}) var<storage, read_write> divergence: array<f32>;
 @group(0) @binding(${G.residualMax}) var<storage, read_write> residualMax: atomic<u32>;
+// One word per tile: 1 when 'classify' found a particle or a liquid cell in it, cleared by 'tileCompact'.
+@group(0) @binding(${G.seeds}) var<storage, read_write> seeds: array<atomic<u32>>;
+// One word per tile: bit 0 active in this step, bit 1 in the clear set (active now or in the previous step).
+@group(0) @binding(${G.tileFlags}) var<storage, read_write> tileFlagBits: array<u32>;
+// The compacted lists, [count, tile ids...], and their indirect dispatch arguments (active at word 0, clear at word 3).
+@group(0) @binding(${G.activeList}) var<storage, read_write> activeList: array<u32>;
+@group(0) @binding(${G.clearList}) var<storage, read_write> clearList: array<u32>;
+@group(0) @binding(${G.listArgs}) var<storage, read_write> listArgs: array<u32>;
+// The conjugate-gradient partial sums, one slot per tile.
+@group(0) @binding(${G.partials}) var<storage, read_write> partials: array<f32>;
+${tilesWGSL(G.tiles)}
 
 const U_FACES: u32 = (W + 1u) * H;
 const V_FACES: u32 = W * (H + 1u);
+const TILE_COUNT: u32 = GRID_GROUPS_X * GRID_GROUPS_Y;
 
 // Whether the swept color of a red-black sweep (0 or 1) and which validity copy the extrapolation reads (0 or 1):
 // two pipelines from one entry point each, so no pass needs a uniform that changes between dispatches.
 override COLOR: u32 = 0u;
 override READ: u32 = 0u;
+// Every tile active, whatever the seeds say: the reference the tests compare the tiled run with, and the bench baseline.
+override ALL_TILES: u32 = 0u;
 
 fn uIndex(x: u32, y: u32) -> u32 { return y * (W + 1u) + x; }
 fn vIndex(x: u32, y: u32) -> u32 { return y * W + x; }
@@ -79,7 +108,8 @@ fn uFaceWet(x: i32, y: i32) -> bool { return flagAt(x - 1, y) == FLAG_LIQUID || 
 fn vFaceWet(x: i32, y: i32) -> bool { return flagAt(x, y - 1) == FLAG_LIQUID || flagAt(x, y) == FLAG_LIQUID; }
 
 @compute @workgroup_size(${GRID_WORKGROUP}, ${GRID_WORKGROUP})
-fn clearGrid(@builtin(global_invocation_id) gid: vec3u) {
+fn clearGrid(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_id) lid: vec3u) {
+  let gid = tileCell(wid, lid);
   let x = gid.x;
   let y = gid.y;
   if (x < W && y < H) {
@@ -98,35 +128,131 @@ fn clearGrid(@builtin(global_invocation_id) gid: vec3u) {
   }
 }
 
+var<workgroup> tileLive: atomic<u32>;
+
 // Solid from the cell type, liquid wherever a particle sits (a cell rasterized as water without particles is air to
-// the solver), density from the mix of kinds. The pressure is zero outside liquid.
+// the solver), density from the mix of kinds. The pressure is zero outside liquid. The excess particle count of a liquid
+// cell goes to 'divergence' for 'prepare', and a tile holding a particle or a water or oil cell is marked in 'seeds'.
+// Runs over the whole grid, so the flags are right everywhere: the walls and the sand far from the liquid too.
 @compute @workgroup_size(${GRID_WORKGROUP}, ${GRID_WORKGROUP})
-fn classify(@builtin(global_invocation_id) gid: vec3u) {
-  if (gid.x >= W || gid.y >= H) { return; }
-  let c = cellIndex(gid.x, gid.y);
-  let t = cellType(cells[c]);
-  if (t == TYPE_WALL || t == TYPE_SAND) {
-    flags[c] = FLAG_SOLID;
-    density[c] = 0.0;
-    p[c] = 0.0;
-    return;
+fn classify(
+  @builtin(global_invocation_id) gid: vec3u,
+  @builtin(workgroup_id) wid: vec3u,
+  @builtin(local_invocation_index) li: u32,
+) {
+  if (li == 0u) { atomicStore(&tileLive, 0u); }
+  workgroupBarrier();
+  if (gid.x < W && gid.y < H) {
+    let c = cellIndex(gid.x, gid.y);
+    let t = cellType(cells[c]);
+    let n = atomicLoad(&counts[c]);
+    // A particle stuck in a wall or sand cell (nothing free above it) still seeds its tile: its count is cleared by the
+    // next step only if the tile is in the active set.
+    if (n > 0u) { atomicStore(&tileLive, 1u); }
+    if (t == TYPE_WALL || t == TYPE_SAND) {
+      flags[c] = FLAG_SOLID;
+      density[c] = 0.0;
+      p[c] = 0.0;
+    } else {
+      if (t == TYPE_WATER || t == TYPE_OIL) { atomicStore(&tileLive, 1u); }
+      if (n == 0u) {
+        flags[c] = FLAG_AIR;
+        density[c] = 0.0;
+        p[c] = 0.0;
+      } else {
+        let oil = atomicLoad(&oilCounts[c]);
+        flags[c] = FLAG_LIQUID;
+        density[c] = (f32(n - oil) + f32(oil) * OIL_DENSITY) / f32(n);
+        divergence[c] = f32(n) / f32(PER_CELL) - 1.0;
+      }
+    }
   }
-  let n = atomicLoad(&counts[c]);
-  if (n == 0u) {
-    flags[c] = FLAG_AIR;
-    density[c] = 0.0;
-    p[c] = 0.0;
-    return;
+  workgroupBarrier();
+  if (li == 0u && atomicLoad(&tileLive) != 0u) { atomicStore(&seeds[wid.y * GRID_GROUPS_X + wid.x], 1u); }
+}
+
+// Active set of this step: a tile is active when it or one of its 8 neighbors was seeded. The clear set adds the tiles
+// that were active in the previous step. Tiles outside the active set have no conjugate-gradient partial sum.
+@compute @workgroup_size(${GRID_WORKGROUP}, ${GRID_WORKGROUP})
+fn tileFlags(@builtin(global_invocation_id) gid: vec3u) {
+  if (gid.x >= GRID_GROUPS_X || gid.y >= GRID_GROUPS_Y) { return; }
+  let tile = gid.y * GRID_GROUPS_X + gid.x;
+  var inSet = ALL_TILES == 1u;
+  for (var dy = -1; dy <= 1; dy++) {
+    for (var dx = -1; dx <= 1; dx++) {
+      let x = i32(gid.x) + dx;
+      let y = i32(gid.y) + dy;
+      if (x >= 0 && y >= 0 && x < i32(GRID_GROUPS_X) && y < i32(GRID_GROUPS_Y)
+          && atomicLoad(&seeds[u32(y) * GRID_GROUPS_X + u32(x)]) != 0u) {
+        inSet = true;
+      }
+    }
   }
-  let oil = atomicLoad(&oilCounts[c]);
-  flags[c] = FLAG_LIQUID;
-  density[c] = (f32(n - oil) + f32(oil) * OIL_DENSITY) / f32(n);
+  let before = (tileFlagBits[tile] & 1u) != 0u;
+  tileFlagBits[tile] = select(0u, 1u, inSet) | select(0u, 2u, inSet || before);
+  if (!inSet) { partials[tile] = 0.0; }
+}
+
+const COMPACT_THREADS: u32 = 256u;
+const TILES_PER_THREAD: u32 = (TILE_COUNT + COMPACT_THREADS - 1u) / COMPACT_THREADS;
+var<workgroup> scanActive: array<u32, COMPACT_THREADS>;
+var<workgroup> scanClear: array<u32, COMPACT_THREADS>;
+
+fn listArgsFor(n: u32) -> vec3u { return vec3u(min(n, LIST_ROW), max(1u, (n + LIST_ROW - 1u) / LIST_ROW), 1u); }
+
+// Turns the tile flags into the two lists, in tile order (so the sums over tiles are reproducible), and their dispatch
+// arguments; one workgroup, each thread takes a run of tiles. Clears the seeds.
+@compute @workgroup_size(256)
+fn tileCompact(@builtin(local_invocation_index) lid: u32) {
+  let begin = min(lid * TILES_PER_THREAD, TILE_COUNT);
+  let end = min(begin + TILES_PER_THREAD, TILE_COUNT);
+  var activeCount = 0u;
+  var clearCount = 0u;
+  for (var t = begin; t < end; t++) {
+    let bits = tileFlagBits[t];
+    activeCount += bits & 1u;
+    clearCount += (bits >> 1u) & 1u;
+  }
+  scanActive[lid] = activeCount;
+  scanClear[lid] = clearCount;
+  workgroupBarrier();
+  for (var offset = 1u; offset < COMPACT_THREADS; offset <<= 1u) {
+    var nextActive = scanActive[lid];
+    var nextClear = scanClear[lid];
+    if (lid >= offset) {
+      nextActive += scanActive[lid - offset];
+      nextClear += scanClear[lid - offset];
+    }
+    workgroupBarrier();
+    scanActive[lid] = nextActive;
+    scanClear[lid] = nextClear;
+    workgroupBarrier();
+  }
+  var activeAt = scanActive[lid] - activeCount;
+  var clearAt = scanClear[lid] - clearCount;
+  for (var t = begin; t < end; t++) {
+    let bits = tileFlagBits[t];
+    if ((bits & 1u) != 0u) { activeList[1u + activeAt] = t; activeAt++; }
+    if ((bits & 2u) != 0u) { clearList[1u + clearAt] = t; clearAt++; }
+    atomicStore(&seeds[t], 0u);
+  }
+  if (lid == COMPACT_THREADS - 1u) {
+    let nActive = scanActive[lid];
+    let nClear = scanClear[lid];
+    activeList[0] = nActive;
+    clearList[0] = nClear;
+    let a = listArgsFor(nActive);
+    let c = listArgsFor(nClear);
+    listArgs[0] = a.x; listArgs[1] = a.y; listArgs[2] = a.z;
+    listArgs[3] = c.x; listArgs[4] = c.y; listArgs[5] = c.z;
+  }
 }
 
 // Accumulated sums to velocities, then the start of the extrapolation: solid faces carry nothing, faces touching a
 // liquid cell are valid, every other face is cleared (the scatter writes faces of rows beside the liquid that touch none).
 @compute @workgroup_size(${GRID_WORKGROUP}, ${GRID_WORKGROUP})
-fn normalizeFaces(@builtin(global_invocation_id) gid: vec3u) {
+fn normalizeFaces(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_id) lid: vec3u) {
+  let gid = tileCell(wid, lid);
   let x = gid.x;
   let y = gid.y;
   let i = i32(x);
@@ -155,7 +281,8 @@ fn normalizeFaces(@builtin(global_invocation_id) gid: vec3u) {
 
 // Start of the extrapolation after the projection: the same validity and clearing as normalizeFaces.
 @compute @workgroup_size(${GRID_WORKGROUP}, ${GRID_WORKGROUP})
-fn extrapolateInit(@builtin(global_invocation_id) gid: vec3u) {
+fn extrapolateInit(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_id) lid: vec3u) {
+  let gid = tileCell(wid, lid);
   let x = gid.x;
   let y = gid.y;
   let i = i32(x);
@@ -176,7 +303,8 @@ fn extrapolateInit(@builtin(global_invocation_id) gid: vec3u) {
 // updated in place, which is safe because a pass only writes faces that were invalid and only reads faces that were
 // valid; validity goes from copy READ to the other copy. Faces touching a solid stay invalid.
 @compute @workgroup_size(${GRID_WORKGROUP}, ${GRID_WORKGROUP})
-fn extrapolate(@builtin(global_invocation_id) gid: vec3u) {
+fn extrapolate(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_id) lid: vec3u) {
+  let gid = tileCell(wid, lid);
   let x = gid.x;
   let y = gid.y;
   let i = i32(x);
@@ -224,7 +352,8 @@ fn extrapolate(@builtin(global_invocation_id) gid: vec3u) {
 // Keeps the velocities before the forces (for the FLIP difference), then gravity on the interior v faces next to
 // liquid, damping on every face, and solid faces back to zero.
 @compute @workgroup_size(${GRID_WORKGROUP}, ${GRID_WORKGROUP})
-fn applyGravity(@builtin(global_invocation_id) gid: vec3u) {
+fn applyGravity(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_id) lid: vec3u) {
+  let gid = tileCell(wid, lid);
   let x = gid.x;
   let y = gid.y;
   let i = i32(x);
@@ -261,7 +390,8 @@ fn densityAt(x: i32, y: i32, flag: u32) -> f32 {
 // the density correction asks for. A cell above rest density asks for outflow, an under-dense one surrounded by
 // liquid for inflow (without it the liquid swells). The diagonal is zero outside liquid.
 @compute @workgroup_size(${GRID_WORKGROUP}, ${GRID_WORKGROUP})
-fn prepare(@builtin(global_invocation_id) gid: vec3u) {
+fn prepare(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_id) lid: vec3u) {
+  let gid = tileCell(wid, lid);
   if (gid.x >= W || gid.y >= H) { return; }
   let c = cellIndex(gid.x, gid.y);
   if (flags[c] != FLAG_LIQUID) {
@@ -283,7 +413,7 @@ fn prepare(@builtin(global_invocation_id) gid: vec3u) {
   );
   weights[c] = w;
 
-  let ratio = f32(atomicLoad(&counts[c])) / f32(PER_CELL) - 1.0;
+  let ratio = divergence[c];
   let interior = fl != FLAG_AIR && fr != FLAG_AIR && fb != FLAG_AIR && ft != FLAG_AIR;
   var source = 0.0;
   if (ratio > 0.0) { source = STIFFNESS * ratio; } else if (interior) { source = PULL * ratio; }
@@ -311,7 +441,8 @@ fn sweep(@builtin(global_invocation_id) gid: vec3u) {
 
 // Subtracts the pressure gradient from the faces between two liquid cells, or a liquid and an air cell.
 @compute @workgroup_size(${GRID_WORKGROUP}, ${GRID_WORKGROUP})
-fn gradient(@builtin(global_invocation_id) gid: vec3u) {
+fn gradient(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_id) lid: vec3u) {
+  let gid = tileCell(wid, lid);
   let x = gid.x;
   let y = gid.y;
   if (x >= 1u && x < W && y < H) {
@@ -343,7 +474,8 @@ fn isFilm(x: i32, y: i32) -> bool {
 
 // Wetting: a layer one cell deep that rests on a solid does not flow sideways, to another such cell or to air.
 @compute @workgroup_size(${GRID_WORKGROUP}, ${GRID_WORKGROUP})
-fn pinFilms(@builtin(global_invocation_id) gid: vec3u) {
+fn pinFilms(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_id) lid: vec3u) {
+  let gid = tileCell(wid, lid);
   if (gid.x < 1u || gid.x >= W || gid.y >= H) { return; }
   let i = i32(gid.x);
   let j = i32(gid.y);

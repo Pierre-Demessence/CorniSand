@@ -32,14 +32,14 @@ The GPU suites in `tests/` run the real WGSL through Dawn's Node bindings (`webg
 - `src/gpu.ts` — adapter/device/context setup with the adapter's buffer limits, uncaptured-error banner, device-lost callback, reload overlay.
 - `src/grid.ts` — `computeGrid`: grid size and scale from the buffer limits.
 - `src/simulation.ts` — compute pipelines (brush, CA, particle count); `simulate(encoder, supersteps, input)` records the brush pass and the CA steps into the caller's encoder.
-- `src/fluid.ts` — the liquids: particle store, the grid and particle passes of a fluid step, and the pressure solve (`FLUID.solver`: `'multigrid'`, conjugate gradients preconditioned by a V-cycle, or the plain red-black `'sor'`, kept as the bench baseline). `src/fluid-params.ts` holds every fluid constant and the multigrid level helpers; the CPU reference in `tests/cpu/` and the shaders read the same values.
+- `src/fluid.ts` — the liquids: particle store, the grid and particle passes of a fluid step, and the pressure solve (`FLUID.solver`: `'multigrid'`, conjugate gradients preconditioned by a V-cycle, or the plain red-black `'sor'`, kept as the bench baseline). The grid passes run over lists of active 8×8 tiles (`FluidTileBuffers`, `tilesWGSL` in `fluid-common.wgsl.ts`; `docs/simulation.md`). `src/fluid-params.ts` holds every fluid constant and the multigrid level helpers; the CPU reference in `tests/cpu/` and the shaders read the same values.
 - `src/cell-buffer.ts` — ping-pong pair of cell storage buffers.
 - `src/display.ts` — render pipeline drawing the current cell buffer plus the brush ring.
 - `src/input.ts` — pointer, wheel and Shift state.
 - `src/particles.ts` — particle type IDs and fire max life, the single source for TS and every shader.
 - `src/shaders/*.wgsl.ts` — WGSL sources exported as template strings (functions of the grid size where needed): `cell` (shared snippet: type constants, cell accessors, PCG hash, `CELL_BYTES`), `solid-ca` (all particle rules), `brush`, `display`. The fluid shaders are `fluid-common`, `fluid-grid` (grid passes and the plain sweeps), `fluid-multigrid` (coarse operators, V-cycle, conjugate-gradient kernels), `fluid-particles` and `fluid-raster`.
 - `src/scenes.ts` — scene builders (`SCENES`) shared by the tests and the `?scene=<name>` loader in `main.ts` (`findScene`).
-- `tests/` — Vitest: `grid` (unit), `hash` and `simulation` (GPU), `gpu.ts` (device, scene upload and readback helpers), `scenes`, `metrics`, `cpu/` (test-only CPU reference of the fluid code: grid, solver with SOR and multigrid, particles; `solver-experiments.ts` and `solver-screen.test.ts` measure the solvers) and `liquids-*.test.ts` (liquid acceptance criteria run on that reference through `LiquidModel`).
+- `tests/` — Vitest: `grid` (unit), `hash`, `simulation` and `fluid-tiles` (GPU; the last runs active tiles against `activeTiles: false` bit for bit), `gpu.ts` (device, scene upload and readback helpers), `scenes`, `metrics`, `cpu/` (test-only CPU reference of the fluid code: grid, solver with SOR and multigrid, particles; `solver-experiments.ts` and `solver-screen.test.ts` measure the solvers) and `liquids-*.test.ts` (liquid acceptance criteria run on that reference through `LiquidModel`).
 
 ## Docs map
 
@@ -58,6 +58,7 @@ The GPU suites in `tests/` run the real WGSL through Dawn's Node bindings (`webg
 - One thread handles one 2×2 block and writes all four cells. Out-of-bounds reads (`readCell`) return a wall cell, the world boundary; out-of-bounds writes are skipped.
 - The Margolus offset alternates 0 then 1; never run two steps with the same offset in a row.
 - A frame is one `GPUCommandEncoder` and one `submit()`: `simulate()` records the brush pass and all CA steps, then `main.ts` records the render. Each CA dispatch has its own `{ offset, seed }` slot in one uniform buffer (stride `minUniformBufferOffsetAlignment`, selected by dynamic offset, written once per frame). Never submit mid-frame, and never `writeBuffer` a shared uniform between dispatches: all writes land before the first dispatch runs.
+- A fluid pass that runs over the tile lists reads `tileCell(wid, lid)` instead of `global_invocation_id`, and a new pass over liquid state needs the clear set (not only the active set) if it writes "no liquid" values. `activeTiles: false` must stay bit-identical to the default (`tests/fluid-tiles.test.ts`).
 - The brush runs once per frame, before the CA steps, along the segment from the previous frame's position.
 - Block randomness comes from `pcg()` chained on `hash2(blockX, blockY, seed)`; never use a float `fract`-based hash for it.
 

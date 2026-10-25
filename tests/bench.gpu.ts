@@ -55,9 +55,11 @@ describe.skipIf(!device)('bench', () => {
     }
 
     // Solver cost per frame before and after M1.5c.3, in one run: the default multigrid solve against the plain 40 sweep
-    // pairs it replaces, and against no solve at all (the difference to either row is that solver's cost).
-    const variants: { name: string; options: Pick<SimulationOptions, 'iterations' | 'solver'> }[] = [
+    // pairs it replaces, and against no solve at all (the difference to either row is that solver's cost). The all tiles
+    // row runs every pass over the whole grid, the cost before the active tiles of M1.5c lever 1.
+    const variants: { name: string; options: Pick<SimulationOptions, 'activeTiles' | 'iterations' | 'solver'> }[] = [
       { name: 'multigrid', options: {} },
+      { name: 'multigrid, all tiles', options: { activeTiles: false } },
       { name: 'sor 40 pairs', options: { solver: 'sor' } },
       { name: 'no solver', options: { solver: 'sor', iterations: 0 } },
     ];
@@ -101,6 +103,7 @@ describe.skipIf(!device)('bench', () => {
     const steps = 4;
     const sims = {
       multigrid: new Simulation(dev, WIDTH, HEIGHT, { seedSource: mulberry32(1) }),
+      allTiles: new Simulation(dev, WIDTH, HEIGHT, { seedSource: mulberry32(1), activeTiles: false }),
       sor: new Simulation(dev, WIDTH, HEIGHT, { seedSource: mulberry32(1), solver: 'sor' }),
       noSolver: new Simulation(dev, WIDTH, HEIGHT, { seedSource: mulberry32(1), solver: 'sor', iterations: 0 }),
     };
@@ -114,6 +117,7 @@ describe.skipIf(!device)('bench', () => {
       { name: 'all passes, no solver', sim: sims.noSolver, steps, stage: 'full' },
       { name: 'all passes, 40 sweep pairs', sim: sims.sor, steps, stage: 'full' },
       { name: 'all passes, multigrid', sim: sims.multigrid, steps, stage: 'full' },
+      { name: 'all passes, multigrid, all tiles', sim: sims.allTiles, steps, stage: 'full' },
     ];
     const measureRow = async (row: (typeof rowsToMeasure)[number]): Promise<number> => {
       const frame = async (): Promise<number> => {
@@ -142,7 +146,7 @@ describe.skipIf(!device)('bench', () => {
   });
 
   // M1.5c lever 0: GPU time of every pass of a 1x frame (frame start plus 4 fluid steps), from timestamp queries.
-  it('times every fluid pass of a 1x frame at 2560x1340', async () => {
+  it.each([true, false])('times every fluid pass of a 1x frame at 2560x1340 (active tiles: %s)', async (activeTiles) => {
     const dev = device!;
     if (!dev.features.has('timestamp-query')) {
       console.log('timestamp-query is not available on this adapter; skipping the per-pass timing.');
@@ -150,7 +154,7 @@ describe.skipIf(!device)('bench', () => {
     }
     const steps = 4;
     const frames = 15;
-    const sim = new Simulation(dev, WIDTH, HEIGHT, { seedSource: mulberry32(1) });
+    const sim = new Simulation(dev, WIDTH, HEIGHT, { seedSource: mulberry32(1), activeTiles });
     sim.load(benchScene());
 
     const maxPasses = 2048;
@@ -208,6 +212,7 @@ describe.skipIf(!device)('bench', () => {
     // The same samples by pass group (the solver's levels and kernels collapse into a few rows).
     const groupOf = (key: string): string => key.slice(0, key.indexOf('/') < 0 ? undefined : key.indexOf('/'));
     const groups = [...new Set([...samples[0].keys()].map(groupOf))];
+    console.log(`Active tiles: ${activeTiles}`);
     console.table(groups.map((group) => ({
       group,
       msPerFrame: Number(median(samples.map((sample) => [...sample].reduce((sum, [key, ms]) => sum + (groupOf(key) === group ? ms : 0), 0))).toFixed(2)),

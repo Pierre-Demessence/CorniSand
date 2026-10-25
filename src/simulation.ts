@@ -22,6 +22,8 @@ export interface SimulationOptions {
   // Overrides the pressure solver and the sweeps of the 'sor' one, for tests and the bench; see `Fluid`.
   solver?: FluidSolver;
   iterations?: number;
+  // False runs the fluid passes over the whole grid; see `Fluid`.
+  activeTiles?: boolean;
 }
 
 // A superstep is two CA dispatches (Margolus offset 0, then 1).
@@ -69,6 +71,7 @@ export class Simulation {
       particleCapacity: options.particleCapacity,
       solver: options.solver,
       iterations: options.iterations,
+      activeTiles: options.activeTiles,
     });
 
     // -- CA setup --

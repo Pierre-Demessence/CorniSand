@@ -20,6 +20,7 @@ export const PARTICLE_BINDINGS = {
   v: 13,
   uPrev: 14,
   vPrev: 15,
+  tileArgs: 16,
 } as const;
 
 // The particle passes, one entry point each. Frame start:
@@ -50,6 +51,8 @@ ${brushShapeWGSL}
 @group(0) @binding(${PARTICLE_BINDINGS.v}) var<storage, read> v: array<f32>;
 @group(0) @binding(${PARTICLE_BINDINGS.uPrev}) var<storage, read> uPrev: array<f32>;
 @group(0) @binding(${PARTICLE_BINDINGS.vPrev}) var<storage, read> vPrev: array<f32>;
+// The previous step's dispatch arguments of the tile lists: words 0-2 the active set, 3-5 the clear set.
+@group(0) @binding(${PARTICLE_BINDINGS.tileArgs}) var<storage, read> tileArgs: array<u32, 6>;
 
 // Particles to process, read from the state once per workgroup: an atomic load per thread would serialize them all.
 var<workgroup> groupLimit: u32;
@@ -128,8 +131,9 @@ fn compact(@builtin(global_invocation_id) gid: vec3u, @builtin(local_invocation_
 }
 
 // Publishes the compaction: the live count, the append position for the next brush, and the arguments of the
-// particle passes (one thread per particle) and of the cell and face passes (none when no particle is alive, so a
-// world without liquid pays nothing for the fluid).
+// particle passes (one thread per particle) and of the whole-grid passes (none when no particle is alive, so a world
+// without liquid pays nothing for the fluid). The frame after the last particle died still runs them once: the clear
+// set of the previous step is not empty, and 'classify' and the tile passes must wipe those tiles.
 @compute @workgroup_size(1)
 fn finalize() {
   let count = atomicLoad(&state.compactCursor);
@@ -138,7 +142,7 @@ fn finalize() {
   particleArgs[0] = groupsFor(count);
   particleArgs[1] = 1u;
   particleArgs[2] = 1u;
-  let live = select(0u, 1u, count > 0u);
+  let live = select(0u, 1u, count > 0u || tileArgs[3] > 0u);
   gridArgs[0] = GRID_GROUPS_X * live;
   gridArgs[1] = GRID_GROUPS_Y * live;
   gridArgs[2] = live;
