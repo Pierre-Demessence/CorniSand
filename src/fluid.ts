@@ -93,6 +93,8 @@ interface Step {
   groups: GPUBindGroup[][];
   // Null for a single-thread pass.
   indirect: GPUBuffer | null;
+  // The entry point, with its override constants when it has any: how `recordStepTimed` names the pass.
+  label: string;
 }
 
 const storageEntry = (binding: number, type: GPUBufferBindingType = 'storage'): GPUBindGroupLayoutEntry => ({
@@ -318,7 +320,8 @@ export class Fluid {
         layout,
         entries: bindings.map((x) => ({ binding: x.binding, resource: buffer(x.buffer(cellBuffer, particles)) })),
       })));
-      return { pipeline, groups, indirect };
+      const overrides = constants ? `[${Object.entries(constants).map(([k, x]) => `${k}=${x}`).join(',')}]` : '';
+      return { pipeline, groups, indirect, label: `${entryPoint}${overrides}` };
     };
     const fixed = (binding: number, resource: GPUBuffer, type?: GPUBufferBindingType): Binding => ({ binding, type, buffer: () => resource });
     const readOnly = (binding: number, resource: GPUBuffer): Binding => fixed(binding, resource, 'read-only-storage');
@@ -494,17 +497,45 @@ export class Fluid {
    * The CA dispatches of the step are the caller's.
    */
   recordStep(pass: GPUComputePassEncoder, stage: FluidStage = 'full'): void {
-    const record = (step: Step): void => this.recordPass(pass, step);
-    this.beforeSweeps.forEach(record);
-    for (let i = 0; i < this.iterations; i++) this.sweeps.forEach(record);
-    this.afterSweeps.forEach(record);
+    this.forEachStep(stage, (step) => this.recordPass(pass, step));
+  }
+
+  /**
+   * Bench only: `recordStep` with every pass in a compute pass of its own, so `stamp` can ask for the timestamps
+   * of each one. `stamp` gets the pass's group (the step list it belongs to) and label, and returns where to write.
+   * The extra pass boundaries cost a little, so the sum is not a frame time; compare passes with each other.
+   */
+  recordStepTimed(
+    encoder: GPUCommandEncoder,
+    stage: FluidStage,
+    stamp: (group: string, label: string) => GPUComputePassTimestampWrites,
+  ): void {
+    this.forEachStep(stage, (step, group) => {
+      const pass = encoder.beginComputePass({ timestampWrites: stamp(group, step.label) });
+      this.recordPass(pass, step);
+      pass.end();
+    });
+  }
+
+  /** Bench only: `recordFrameStart` with the compaction in a compute pass of its own, timestamped as `recordStepTimed`. */
+  recordFrameStartTimed(encoder: GPUCommandEncoder, timestampWrites: GPUComputePassTimestampWrites): void {
+    const pass = encoder.beginComputePass({ timestampWrites });
+    this.recordFrameStart(pass, null);
+    pass.end();
+  }
+
+  // The passes of one step in order, each with the name of the list it comes from.
+  private forEachStep(stage: FluidStage, visit: (step: Step, group: string) => void): void {
+    this.beforeSweeps.forEach((step) => visit(step, 'beforeSweeps'));
+    for (let i = 0; i < this.iterations; i++) this.sweeps.forEach((step) => visit(step, 'sweeps'));
+    this.afterSweeps.forEach((step) => visit(step, 'afterSweeps'));
     if (stage === 'grid') return;
-    this.moveParticles.forEach(record);
-    this.padKeys.forEach(record);
-    this.selectCells.forEach(record);
-    record(this.oilKeyStep);
-    this.selectOil.forEach(record);
-    record(this.writeStep);
+    this.moveParticles.forEach((step) => visit(step, 'moveParticles'));
+    this.padKeys.forEach((step) => visit(step, 'padKeys'));
+    this.selectCells.forEach((step) => visit(step, 'selectCells'));
+    visit(this.oilKeyStep, 'oilKeys');
+    this.selectOil.forEach((step) => visit(step, 'selectOil'));
+    visit(this.writeStep, 'write');
   }
 
   /**

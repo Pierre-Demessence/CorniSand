@@ -17,6 +17,9 @@ const WARMUP_FRAMES = 20;
 const MEASURED_FRAMES = 60;
 // The GPU clocks down when idle: spend this long at full load first, or the first speed measures the clock ramp.
 const BURN_IN_MS = 2000;
+// The scene keeps evolving (sand falls into the water), and the cost of a step depends on it: measure the per-pass split
+// after the same run time as the other tests' later rows.
+const TIMED_BURN_IN_MS = 20_000;
 
 // A tank with 2-cell walls and floor, water in the bottom quarter of its interior, a sand block just above the water.
 function benchScene(): Uint32Array<ArrayBuffer> {
@@ -40,7 +43,7 @@ function median(values: number[]): number {
   return sorted[Math.floor(sorted.length / 2)];
 }
 
-const device = await createDevice({ powerPreference: 'high-performance' });
+const device = await createDevice({ powerPreference: 'high-performance' }, ['timestamp-query']);
 
 describe.skipIf(!device)('bench', () => {
   it('times the simulation at 2560x1340', async () => {
@@ -133,6 +136,80 @@ describe.skipIf(!device)('bench', () => {
     for (const row of rowsToMeasure) rows.push({ passes: row.name, msPerFrame: await measureRow(row) });
     console.table(rows);
     expect(rows).toHaveLength(rowsToMeasure.length);
+  });
+
+  // M1.5c lever 0: GPU time of every pass of a 1x frame (frame start plus 4 fluid steps), from timestamp queries.
+  it('times every fluid pass of a 1x frame at 2560x1340', async () => {
+    const dev = device!;
+    if (!dev.features.has('timestamp-query')) {
+      console.log('timestamp-query is not available on this adapter; skipping the per-pass timing.');
+      return;
+    }
+    const steps = 4;
+    const frames = 15;
+    const sim = new Simulation(dev, WIDTH, HEIGHT, { seedSource: mulberry32(1) });
+    sim.load(benchScene());
+
+    const maxPasses = 1024;
+    const querySet = dev.createQuerySet({ type: 'timestamp', count: 2 * maxPasses });
+    const resolved = dev.createBuffer({ size: 2 * maxPasses * 8, usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC });
+    const staging = dev.createBuffer({ size: 2 * maxPasses * 8, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+
+    // One frame: the frame start, then `steps` fluid updates without the CA. Returns ms per "group/pass" summed over the frame.
+    let encodeMs = 0;
+    let wallMs = 0;
+    let spanMs = 0;
+    const timedFrame = async (): Promise<Map<string, number>> => {
+      const wallStart = performance.now();
+      const keys: string[] = [];
+      const stamp = (key: string): GPUComputePassTimestampWrites => {
+        keys.push(key);
+        const i = keys.length - 1;
+        if (keys.length > maxPasses) throw new RangeError('raise maxPasses');
+        return { querySet, beginningOfPassWriteIndex: 2 * i, endOfPassWriteIndex: 2 * i + 1 };
+      };
+      const encoder = dev.createCommandEncoder();
+      sim.fluid.recordFrameStartTimed(encoder, stamp('frameStart'));
+      for (let s = 0; s < steps; s++) sim.fluid.recordStepTimed(encoder, 'full', (group, label) => stamp(`${group}/${label}`));
+      encoder.resolveQuerySet(querySet, 0, 2 * keys.length, resolved, 0);
+      encoder.copyBufferToBuffer(resolved, 0, staging, 0, 2 * keys.length * 8);
+      dev.queue.submit([encoder.finish()]);
+      encodeMs = performance.now() - wallStart;
+      await staging.mapAsync(GPUMapMode.READ, 0, 2 * keys.length * 8);
+      const stamps = new BigUint64Array(staging.getMappedRange(0, 2 * keys.length * 8).slice(0));
+      staging.unmap();
+      wallMs = performance.now() - wallStart;
+      spanMs = Number(stamps[2 * keys.length - 1] - stamps[0]) / 1e6;
+      const perKey = new Map<string, number>();
+      keys.forEach((key, i) => perKey.set(key, (perKey.get(key) ?? 0) + Number(stamps[2 * i + 1] - stamps[2 * i]) / 1e6));
+      return perKey;
+    };
+
+    for (const start = performance.now(); performance.now() - start < TIMED_BURN_IN_MS;) await timedFrame();
+    const samples: Map<string, number>[] = [];
+    const encodeTimes: number[] = [];
+    const wallTimes: number[] = [];
+    const spanTimes: number[] = [];
+    for (let i = 0; i < frames; i++) {
+      samples.push(await timedFrame());
+      encodeTimes.push(encodeMs);
+      wallTimes.push(wallMs);
+      spanTimes.push(spanMs);
+    }
+
+    const rows = [...samples[0].keys()].map((key) => ({
+      pass: key,
+      msPerFrame: Number(median(samples.map((sample) => sample.get(key) ?? 0)).toFixed(2)),
+    }));
+    const total = rows.reduce((sum, row) => sum + row.msPerFrame, 0);
+    console.table([
+      ...rows,
+      { pass: 'TOTAL (sum of medians)', msPerFrame: Number(total.toFixed(2)) },
+      { pass: 'GPU span: first pass begins to last pass ends', msPerFrame: Number(median(spanTimes).toFixed(2)) },
+      { pass: 'CPU: record and submit', msPerFrame: Number(median(encodeTimes).toFixed(2)) },
+      { pass: 'wall: record to results read', msPerFrame: Number(median(wallTimes).toFixed(2)) },
+    ]);
+    expect(rows.length).toBeGreaterThan(10);
   });
 
   // Backlog D17: what `main.ts` waits for before the first frame. Pipelines are created on the first call (Dawn

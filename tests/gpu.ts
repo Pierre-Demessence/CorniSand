@@ -11,7 +11,7 @@ export { mulberry32 };
 // serves every device, so a device made with other adapter options cannot outlive the instance holding it.
 let gpu: GPU | undefined;
 
-export async function createDevice(options?: GPURequestAdapterOptions): Promise<GPUDevice | null> {
+export async function createDevice(options?: GPURequestAdapterOptions, features: GPUFeatureName[] = []): Promise<GPUDevice | null> {
   try {
     // Imported lazily so a machine where the native binding does not load skips instead of failing.
     const { create, globals } = await import('webgpu');
@@ -21,6 +21,7 @@ export async function createDevice(options?: GPURequestAdapterOptions): Promise<
     const adapter = await gpu.requestAdapter(options);
     if (!adapter) return null;
     return await adapter.requestDevice({
+      requiredFeatures: features.filter((feature) => adapter.features.has(feature)),
       requiredLimits: {
         maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize,
         maxBufferSize: adapter.limits.maxBufferSize,
