@@ -1,7 +1,7 @@
 import { FLUID, FLUID_FLAG } from '../../src/fluid-params';
 import { PARTICLE_TYPES as T } from '../../src/particles';
 
-// Test-only CPU reference of the fluid grid, mirroring the planned GPU buffers (docs/plans/physics-foundation.md).
+// Test-only CPU reference of the fluid grid, mirroring the planned GPU buffers (the finished plan, found with `git log --all -- docs/plans/physics-foundation.md`).
 // Every fluid quantity is in fluid-cell units (one fluid cell = k x k grid cells) and one step is dt = 1.
 
 export const AIR = FLUID_FLAG.AIR;

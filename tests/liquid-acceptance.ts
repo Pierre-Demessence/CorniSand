@@ -5,7 +5,7 @@ import { FlipModel } from './cpu/flip';
 import { type LiquidModel, observe, type SettleResult, settleAndHold } from './liquid-model';
 import { bubbleCount, chamberLevel, columnLevel, flatness, foamCount, liquidVolume, LIQUIDS } from './metrics';
 
-// Shared pieces of the acceptance suite for the liquid criteria AC1-AC11 of docs/plans/physics-foundation.md.
+// Shared pieces of the acceptance suite for the liquid criteria AC1-AC11 of the finished plan, found with `git log --all -- docs/plans/physics-foundation.md`.
 // The cases are written against LiquidModel so another implementation can run them: the CPU reference
 // (tests/liquids-*.test.ts, split over several files because it is slow and vitest runs files in parallel) and
 // the GPU (tests/liquids-gpu.test.ts).

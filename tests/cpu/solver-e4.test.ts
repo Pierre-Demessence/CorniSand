@@ -6,7 +6,7 @@ import { FlipModel } from './flip';
 
 // M1.5c experiment E4: the deep pool at half size (256x600) for 3,000 steps under multigrid and under 40 sweep pairs.
 // Minutes per solver, so run on demand, one solver per process if you want them in parallel:
-// `E4=1 npx vitest run solver-e4 -t multigrid` (add `E4_STIFFNESS=0.5` to restore the values before M1.5c.3b, at which this scene fails). The numbers it logs are recorded in docs/plans/physics-foundation.md.
+// `E4=1 npx vitest run solver-e4 -t multigrid` (add `E4_STIFFNESS=0.5` to restore the values before M1.5c.3b, at which this scene fails). The numbers it logs are recorded in the finished plan, found with `git log --all -- docs/plans/physics-foundation.md`.
 
 const WALL = 2;
 const SIZE = { width: 256, height: 600, depth: 500, columnWidth: 50, columnHeight: 75, columnY: 520 };

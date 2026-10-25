@@ -248,7 +248,7 @@ export class Fluid {
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
-    // Buffers of the grid passes (the layouts are described in docs/plans/physics-foundation.md, "Buffers").
+    // Buffers of the grid passes (the layouts are described in the finished plan, found with `git log --all -- docs/plans/physics-foundation.md`, "Buffers").
     const cellCount = width * height;
     const uCount = (width + 1) * height;
     const vCount = width * (height + 1);

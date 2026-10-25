@@ -48,6 +48,12 @@ Rejected:
 - A W-cycle: 0.2 to 0.8 per cycle depending on the correction scale and the coarsest size, with no setting that works on every scene.
 - Bilinear prolongation: needs 9-point coarse operators, which red-black smoothing cannot update in two colors; not needed once conjugate gradients met the bar.
 
+## The density correction is weak (`stiffness` and `pull` 0.1)
+
+Particles sit slightly closer or further apart than 4 per cell, and the pressure solve only sees volume through the liquid cells, so the solve adds a source that asks crowded cells to push outward (`stiffness`) and gaps inside the liquid to pull closed (`pull`). The source asks for an outflow proportional to the excess times the depth of the column below it. At 0.5, a 5% excess over 500 cells of depth asks the surface for an upward flow of 12 cells per step against a speed clamp of 1, so deep water boils instead of relaxing. At 0.1 the half-size `deepPool` reaches its expected level with no shortfall; at 0 it ends a few cells low. The price is that a single interior cell with half the particles of its neighbors is not chosen by the rasterization, so a one-cell hole appears now and then in calm deep water (backlog D19). Measurements: `git log --all -- docs/plans/physics-foundation.md`, section "M1.5c measurements".
+
+Rejected: a stronger `pull` with a weak `stiffness`, to close those holes faster (a rarefaction wave is a deficit over many rows, and `pull` then overdrives the same way, leaving particles at the speed clamp).
+
 ## One cell per CSS pixel, grid fixed at load
 
 The grid matches the canvas size in CSS pixels when the page loads and ignores `devicePixelRatio`: the falling-sand look is one visible pixel per cell, and a HiDPI grid would multiply memory and GPU cost by up to 4× or more. Resizing reconfigures the swap chain and stretches the existing grid instead of reallocating it, so the world is never lost on resize.

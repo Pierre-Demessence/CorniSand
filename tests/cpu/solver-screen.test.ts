@@ -4,7 +4,7 @@ import { DEFAULT_MULTIGRID } from './solver';
 import { convergenceFactor, multigridResiduals, oilAbove, sorResidual, warmStart } from './solver-experiments';
 
 // M1.5c experiments E1 and E2 at screen size. About 15 s on top of a suite that is already long, so run on demand: `SCREEN=1 npx vitest run solver-screen`.
-// The numbers it logs are recorded in docs/plans/physics-foundation.md ("M1.5c measurements").
+// The numbers it logs are recorded in the finished plan, found with `git log --all -- docs/plans/physics-foundation.md` ("M1.5c measurements").
 
 const problems = [
   SCENES.deepPool(),

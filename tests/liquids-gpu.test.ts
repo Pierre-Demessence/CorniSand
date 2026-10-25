@@ -67,7 +67,7 @@ describe.skipIf(!device)('liquid acceptance (GPU)', () => {
   }, LONG);
 
   // M1.5b: the solver at screen scale, where one pressure wave must cross 480 to 1,200 rows. Both cases fail with 40
-  // sweeps (docs/plans/physics-foundation.md, "M1.5b measurements") and pass with the multigrid solve.
+  // sweeps (the finished plan, found with `git log --all -- docs/plans/physics-foundation.md`, "M1.5b measurements") and pass with the multigrid solve.
   it('M1.5b: the huge U-tube (408x480) settles within 16000 steps', async () => {
     const model = new GpuLiquidModel();
     const result = await expectLevelsSettle(model, await load(model, SCENES.uTubeHuge()), 16_000);
