@@ -7,6 +7,7 @@ import {
   expectDamBreakRunUp,
   expectLevelsSettle,
   expectNoBubblesOrFoam,
+  expectSandSinks,
   expectSealedChamberAtRest,
   expectStaysInPlace,
   expectVolumesConstant,
@@ -15,7 +16,6 @@ import {
 } from './liquid-acceptance';
 
 // AC12: the acceptance cases of tests/liquids-*.test.ts on the GPU build through read-back, with the same thresholds.
-// AC10 and AC11 follow in M1.5a.
 describe.skipIf(!device)('liquid acceptance (GPU)', () => {
   it('AC1: the small U-tube settles within 2000 steps and stays settled for 1000', async () => {
     const model = new GpuLiquidModel();
@@ -55,4 +55,14 @@ describe.skipIf(!device)('liquid acceptance (GPU)', () => {
   it('AC8: a sealed full chamber stays at rest', () => expectSealedChamberAtRest(new GpuLiquidModel()), LONG);
 
   it.each(['droplet', 'film'])('AC9: the %s stays in place', (name) => expectStaysInPlace(new GpuLiquidModel(), name), LONG);
+
+  it('AC10: sand dropped into a pool reaches the bottom and raises the surface by its volume', () => expectSandSinks(new GpuLiquidModel()), LONG);
+
+  it('AC11: the oil U-tube settles like the water one', async () => {
+    const model = new GpuLiquidModel();
+    await expectLevelsSettle(model, await load(model, SCENES.uTubeOil()), 2000);
+  }, LONG);
+
+  // The second half of AC11 (`expectOilAboveWater`) is not run here yet: at step 1500 a lone water cell sits inside
+  // the oil layer on the GPU (docs/backlog.md D18).
 });

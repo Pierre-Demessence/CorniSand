@@ -36,6 +36,89 @@ describe.skipIf(!device)('GPU simulation', () => {
     expect(countTypes(after).get(T.FIRE) ?? 0).toBe(0);
   });
 
+  it('AC15: fire burns oil: the oil count never rises, at least half is gone after 600 supersteps and smoke appears', async () => {
+    // A 20x5 oil block resting in a walled tank, a row of fire on top of it.
+    const width = 30;
+    const height = 24;
+    const sim = createSim(width, height);
+    const cells = emptyGrid(width, height);
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        if (y < 2 || x < 2 || x >= width - 2) cells[y * width + x] = cell(T.WALL);
+      }
+    }
+    for (let y = 2; y < 7; y++) {
+      for (let x = 5; x < 25; x++) cells[y * width + x] = cell(T.OIL);
+    }
+    for (let x = 5; x < 25; x++) cells[7 * width + x] = cell(T.FIRE, 0, FIRE_MAX_LIFE);
+    loadScene(sim, cells);
+
+    const oilCells: number[] = [];
+    let smoke = 0;
+    for (let step = 0; step <= 600; step += 50) {
+      if (step > 0) await runMany(sim, 50);
+      const counts = countTypes(await readCells(sim));
+      oilCells.push(counts.get(T.OIL) ?? 0);
+      smoke = Math.max(smoke, counts.get(T.SMOKE) ?? 0);
+    }
+
+    expect(oilCells[0]).toBe(100);
+    for (let i = 1; i < oilCells.length; i++) {
+      expect(oilCells[i], `oil cells after ${i * 50} supersteps`).toBeLessThanOrEqual(oilCells[i - 1]);
+    }
+    expect(oilCells.at(-1), `oil cells over time: ${oilCells.join(', ')}`).toBeLessThanOrEqual(50);
+    expect(smoke).toBeGreaterThan(0);
+  }, 120_000);
+
+  it('AC15: water puts out fire: a fire cell beside water is smoke two supersteps later, and burns on without it', async () => {
+    const width = 8;
+    const height = 8;
+    const withWater = createSim(width, height);
+    const dry = createSim(width, height);
+    const cells = emptyGrid(width, height);
+    cells[2] = cell(T.FIRE, 0, FIRE_MAX_LIFE);
+    loadScene(dry, cells);
+    cells[3] = cell(T.WATER);
+    loadScene(withWater, cells);
+
+    await run(withWater, 2);
+    await run(dry, 2);
+
+    const wet = countTypes(await readCells(withWater));
+    expect(wet.get(T.FIRE) ?? 0, 'fire cells next to water').toBe(0);
+    expect(wet.get(T.SMOKE), 'smoke cells next to water').toBe(1);
+    expect(wet.get(T.WATER), 'water cells').toBe(1);
+    const control = countTypes(await readCells(dry));
+    expect(control.get(T.FIRE), 'fire cells without water').toBe(1);
+    expect(control.get(T.SMOKE) ?? 0).toBe(0);
+  });
+
+  it('AC15: smoke rises through water: it is above the surface within 40 supersteps and the water count is unchanged', async () => {
+    const width = 12;
+    const height = 30;
+    const depth = 10;
+    const sim = createSim(width, height);
+    const cells = emptyGrid(width, height);
+    for (let y = 0; y < depth; y++) {
+      for (let x = 0; x < width; x++) cells[y * width + x] = cell(T.WATER);
+    }
+    cells[6] = cell(T.SMOKE);
+    loadScene(sim, cells);
+    const water = width * depth - 1;
+
+    await runMany(sim, 40);
+
+    const after = await readCells(sim);
+    expect(countTypes(after).get(T.WATER), 'water cells').toBe(water);
+    const smokeAt = after.findIndex((c) => cellType(c) === T.SMOKE);
+    expect(countTypes(after).get(T.SMOKE), 'smoke cells').toBe(1);
+    let surfaceRow = 0;
+    for (let i = 0; i < after.length; i++) {
+      if (cellType(after[i]) === T.WATER) surfaceRow = Math.max(surfaceRow, Math.floor(i / width));
+    }
+    expect(Math.floor(smokeAt / width), 'smoke row above the top water row').toBeGreaterThan(surfaceRow);
+  });
+
   it('B5: painting next to falling water loses and duplicates nothing', async () => {
     const width = 16;
     const height = 16;
