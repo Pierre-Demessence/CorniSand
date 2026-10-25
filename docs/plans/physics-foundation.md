@@ -1,6 +1,6 @@
 # M1 Physics foundation and realistic liquids
 
-Status: M1.1–M1.4f are done (the CPU reference is the GPU spec, the pre-M1.4 bench baseline is recorded, the GPU particle store, load and frame start exist, the GPU grid passes and pressure solve match the CPU, particles move and are rasterized on the GPU, the CA no longer moves liquid, AC1–AC9 pass on the GPU, `?scene=` loads a scene). next: M1.4g, then the remaining items in order.
+Status: M1.1–M1.4g are done (the CPU reference is the GPU spec, the pre-M1.4 bench baseline is recorded, the GPU particle store, load and frame start exist, the GPU grid passes and pressure solve match the CPU, particles move and are rasterized on the GPU, the CA no longer moves liquid, AC1–AC9 pass on the GPU, `?scene=` loads a scene, the first GPU timing is recorded). next: M1.5a, then the remaining items in order; M1.5c is needed (1x costs about 120 ms per frame at 2560×1340).
 
 ## Goal
 
@@ -296,8 +296,7 @@ Order matters: each item builds on the previous one. Every item that adds WGSL k
 - [x] **M1.4f `?scene=` loader (AC13), then the user looks.** The user checked it: everything works, no complaint about the pin or the splash. They noticed the scenes are tiny (test-sized, stretched to the window) and, on the real 1920×897 grid, about 27 FPS at 1x once any water exists, plus a 3–4 s load: the FPS is the cost M1.4g measures and M1.5c lever 1 (active tiles) addresses, the load is D17. The scene is loaded on the first device only: after a device loss the world is cleared, as the banner says. `findScene` (`src/scenes.ts`) matches own keys only, so `?scene=constructor` is unknown. The grid readout appends `· scene <name>`.
   - `src/main.ts`: when `?scene=<name>` names a `SCENES` entry, the grid takes the scene's size (no `computeGrid`), the scene is loaded with `simulation.load`, and the display stretches it to the canvas as on resize. An unknown name logs a warning and starts the normal empty grid. Clear empties it as usual.
   - Hand over "Needs the user" below and record the answers on the pin and the splash look here.
-- [ ] **M1.4g First GPU timing.** Extend `tests/bench.gpu.ts` to the FLIP build: the same scene and speeds, plus a run with `iterations: 0` to separate the solver's cost. Add the numbers under "M1.4 measurements" next to the baseline. Report to the user in plain words (does 1x reach 60 fps, how choppy is 8x) and list which M1.5c levers follow.
-
+- [x] **M1.4g First GPU timing.** Done. 1x costs about 120 ms per frame on the 2560×1340 bench scene (8 fps), about 8× over the AC14 budget; the numbers are under "M1.4 measurements". Deviations: besides the `iterations: 0` run the bench has an `iterations: 20` run (to check the solver cost scales with the sweep count), a second test that splits a 1x frame by pass group (`runFluid`-style recording of the fluid passes alone), and a third that times `Simulation.create` (D17). The bench constructs one `Simulation` per variant.
 #### M1.4 measurements
 
 Filled by M1.4a (baseline) and M1.4g.
@@ -313,6 +312,31 @@ Pre-M1.4 baseline, M1.4a, `npm run bench` on the RTX 4080 (adapter vendor nvidia
 
 The numbers move by up to a factor of 2 between runs (the 16-superstep frame measured 1.8 to 4.3 ms over five runs); the 1x frame is about 0.4 ms and the 32-superstep frame 5–8 ms.
 
+FLIP build, M1.4g, `npm run bench`, same machine, scene and method (the 1x frame is 4 fluid steps plus 8 CA dispatches; a superstep is one fluid step). Ms per frame, second of two runs; the first run was 1.5–2× slower on its first rows (the GPU had not reached full clock after a 2 s burn-in) and agreed within 25% on the others:
+
+| Supersteps per frame | full solver (40 sweep pairs) | 20 sweep pairs | no solver (`iterations: 0`) |
+| --- | --- | --- | --- |
+| 4 (1x) | 120 | 100 | 72 |
+| 8 | 248 | 196 | 142 |
+| 16 | 504 | 400 | 285 |
+| 32 | 1000 | 812 | 567 |
+
+Per fluid step that is about 30 ms with the full solver, 25 ms with 20 pairs, 18 ms with none: the solver costs about 13 ms per step and scales with the sweep count, but 18 ms per step remains with no solver. The estimate table above predicted 14 ms per step at 300 GB/s for the whole step, and 1.5 GB for the non-solver passes (about 2 ms at the card's 717 GB/s): the non-solver passes are about 9× slower than their memory traffic suggests.
+
+Where a 1x frame goes (4 fluid steps, no CA, `tests/bench.gpu.ts` "splits a 1x frame"; the second run, the first in brackets; this test's total is 140–149 ms against 120 ms in the table above, so read the proportions, not the sum):
+
+| Pass group | ms per frame |
+| --- | --- |
+| Frame start (compaction) | 2.7 (1.2) |
+| Grid passes 1–13 without the sweeps | 40 (39) |
+| Sweeps, 40 pairs | 52 (68) |
+| Particle motion and rasterization, passes 14–19 | 56 (39) |
+
+Cell count scaling is assumed, not measured: the grid passes cost the same wherever the liquid is, so the user's 1920×898 grid (half the cells) should cost about 60 ms at 1x with the same quarter-full tank, 17 fps. The user saw 27 fps there with a small scene (little water); that fits a mostly fixed per-cell cost plus a per-particle part.
+
+Creating a `Simulation` in Node (Dawn, same backend as Chrome on Windows): the first one costs 460–650 ms at 64×64 and 756 ms at 1920×898 (pipelines; the shaders depend on the grid size), the second of the same size 7–31 ms (cached shaders; the buffers cost nothing measurable); the first frame afterwards 15–30 ms. This does not reproduce the 3–4 s seen in Chrome (D17).
+
+Which M1.5c levers follow (inferred from the table, not measured): active tiles (lever 1) shrink the grid passes and the sweeps, about 90 of the 120 ms when the liquid fills a quarter of the grid, to roughly a quarter; the particle passes 14–19 shrink only in their grid-wide parts (keys, histogram, write) and not in their per-particle parts, so tiles alone should land near 50–60 ms, not 14. Fewer sweeps (lever 2) save 6–7 ms per step at 20 pairs before tiles. The particle passes (about 40–56 ms, 14 ms per step) are the largest single group left after tiles and are not split any further, so M1.5c starts with per-pass timing.
 #### Needs the user (after M1.4f)
 
 1. `npm run dev`, open `?scene=damBreak`: the water column should collapse, run to the far wall, climb it and settle flat. Then `?scene=uTube`: both arms end at the same height.
@@ -325,6 +349,7 @@ The numbers move by up to a factor of 2 between runs (the 16-superstep frame mea
 - [ ] **M1.5a Interactions on the GPU (AC10, AC11, AC15).** `tests/liquids-gpu.test.ts` gains AC10 and AC11. `tests/simulation.test.ts` gains: fire burns oil (a 20×5 oil block in a tank under a row of fire: sampled every 50 steps, the oil count never rises, has dropped by at least half after 600 steps, and smoke appears); water puts out fire (a fire cell beside water is smoke two supersteps later); smoke rises through water (one smoke cell at the bottom of a pool 10 deep is above the surface within 40 supersteps, and the water count is unchanged).
 - [ ] **M1.5b Screen-scale check.** Add `uTubeHuge` (`uTube({ scale: 6 })`, 408×480) and `deepPool` (512×1200: a 2-cell tank with water 1,000 deep, and a column of water 100 wide and 150 tall dropped at one side) to `src/scenes.ts`, with GPU-only tests in `tests/liquids-gpu.test.ts`: `uTubeHuge` settles (AC1's band) within 16,000 steps; after 6,000 steps `deepPool` has flatness at most 1 and at most 35% of its particles move faster than 0.3 cells/step (the settled large U-tube has 19% on the CPU; record the GPU value). Record the residual and both numbers here. If either fails, multigrid (M1.5c lever 3) is required.
 - [ ] **M1.5c Cost levers**, only as far as M1.4g and M1.5b require, in this order; each is kept only when the parity tests and every GPU acceptance test still pass and the bench shows a gain:
+  0. Per-pass timing: `timestamp-query` (or one pass per group in the bench) over passes 1–19, to split the particle passes (14–19), the grid passes before the sweeps (1–9) and passes 11–13 further. It decides whether lever 4 or something else comes after lever 1.
   1. Active tiles: classify marks each 8×8 tile holding liquid or within 3 cells of it and appends it to a list with an atomic counter; cell and face passes and the sweeps dispatch indirect over that list. Clear covers the tiles active in this step and the previous one, so no stale accumulator survives. The parity tests must not change. Expect this lever to be needed: 80 sweeps over 3.4M cells at 4 steps a frame is about 25–35 ms on its own.
   2. 20 sweeps: CPU acceptance suite first, then GPU.
   3. Multigrid or a preconditioned solver: CPU reference first (`tests/cpu/solver.ts` and its tests), then WGSL. It gets its own design section in this plan, written with Opus, before implementation.
