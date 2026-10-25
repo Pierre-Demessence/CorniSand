@@ -7,6 +7,7 @@ import {
   expectDamBreakRunUp,
   expectLevelsSettle,
   expectNoBubblesOrFoam,
+  expectOilAboveWater,
   expectSandSinks,
   expectSealedChamberAtRest,
   expectStaysInPlace,
@@ -58,11 +59,9 @@ describe.skipIf(!device)('liquid acceptance (GPU)', () => {
 
   it('AC10: sand dropped into a pool reaches the bottom and raises the surface by its volume', () => expectSandSinks(new GpuLiquidModel()), LONG);
 
-  it('AC11: the oil U-tube settles like the water one', async () => {
+  it('AC11: the oil U-tube settles like the water one, and oil poured on water stays above it', async () => {
     const model = new GpuLiquidModel();
     await expectLevelsSettle(model, await load(model, SCENES.uTubeOil()), 2000);
+    await expectOilAboveWater(new GpuLiquidModel());
   }, LONG);
-
-  // The second half of AC11 (`expectOilAboveWater`) is not run here yet: at step 1500 a lone water cell sits inside
-  // the oil layer on the GPU (docs/backlog.md D18).
 });

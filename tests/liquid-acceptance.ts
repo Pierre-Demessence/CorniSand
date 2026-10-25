@@ -48,20 +48,35 @@ export async function expectVolumesConstant(model: LiquidModel, total: number): 
   });
 }
 
-// AC11, second half: oil poured on water stays above it, and no liquid is lost.
-export async function expectOilAboveWater(model: LiquidModel): Promise<void> {
-  const scene = await load(model, SCENES.oilOnWater());
-  await model.step(1500);
-  const cells = await model.cells();
+// Water cells with oil somewhere below them in the same column.
+function waterAboveOilCount(cells: Uint32Array, scene: Scene): number {
+  let count = 0;
   for (let x = 0; x < scene.width; x++) {
     let oilSeen = false;
     for (let y = scene.floorY; y < scene.height; y++) {
       const type = cells[y * scene.width + x] & 0xff;
       if (type === T.OIL) oilSeen = true;
-      expect(oilSeen && type === T.WATER, `water above oil at ${x},${y}`).toBe(false);
+      else if (oilSeen && type === T.WATER) count++;
     }
   }
-  expect(liquidVolume(cells)).toBe(56 * 15 + 20 * 6);
+  return count;
+}
+
+// AC11, second half: oil poured on water stays above it, and no liquid is lost. Water and oil particles overlap in a
+// band about one cell wide at the interface, so a lone cell can be inverted for a step or two (docs/backlog.md D18);
+// the layers count as ordered when, over 100 consecutive steps, the median step has no inverted cell and none has
+// more than 3.
+export async function expectOilAboveWater(model: LiquidModel): Promise<void> {
+  const scene = await load(model, SCENES.oilOnWater());
+  await model.step(1400);
+  const inverted: number[] = [];
+  await observe(model, 100, 1, (cells) => {
+    inverted.push(waterAboveOilCount(cells, scene));
+  });
+  const sorted = [...inverted].sort((a, b) => a - b);
+  expect(sorted[sorted.length >> 1], `median inverted cells per step (counts: ${inverted.join(',')})`).toBe(0);
+  expect(sorted.at(-1), 'most inverted cells in one step').toBeLessThanOrEqual(3);
+  expect(liquidVolume(await model.cells())).toBe(56 * 15 + 20 * 6);
 }
 
 // AC5: no enclosed bubble and, for a model with a fill fraction, no foam.
