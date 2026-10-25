@@ -1,5 +1,6 @@
-import { describe, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { SCENES } from '../src/scenes';
+import { flatness } from './metrics';
 import { device } from './gpu';
 import { GpuLiquidModel } from './gpu-liquid-model';
 import {
@@ -63,5 +64,24 @@ describe.skipIf(!device)('liquid acceptance (GPU)', () => {
     const model = new GpuLiquidModel();
     await expectLevelsSettle(model, await load(model, SCENES.uTubeOil()), 2000);
     await expectOilAboveWater(new GpuLiquidModel());
+  }, LONG);
+
+  // M1.5b: the solver at screen scale, where one pressure wave must cross 480 to 1,200 rows. Both cases fail with 40
+  // sweeps (the measurements are in docs/plans/physics-foundation.md, "M1.5b measurements"); `it.fails` keeps the
+  // thresholds and the rest of the suite green until multigrid (M1.5c lever 3) lands, and then flags itself for removal.
+  it.fails('M1.5b: the huge U-tube (408x480) settles within 16000 steps', async () => {
+    const model = new GpuLiquidModel();
+    await expectLevelsSettle(model, await load(model, SCENES.uTubeHuge()), 16_000);
+  }, LONG);
+
+  it.fails('M1.5b: the deep pool (512x1200) is flat and mostly calm after 6000 steps', async () => {
+    const model = new GpuLiquidModel();
+    const scene = await load(model, SCENES.deepPool());
+    await model.step(6000);
+    const flat = flatness(model.cells(), scene.width, scene.height, scene.chambers[0], scene.floorY);
+    const fast = await model.fractionFasterThan(0.3);
+    console.log(`deepPool: flatness ${flat}, maxShortfall ${model.maxShortfall}, residual ${await model.residual()}, particles over 0.3 cells/step ${fast}`);
+    expect(flat, 'flatness').toBeLessThanOrEqual(1);
+    expect(fast, 'share of particles faster than 0.3 cells/step').toBeLessThanOrEqual(0.35);
   }, LONG);
 });

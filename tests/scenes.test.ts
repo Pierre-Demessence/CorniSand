@@ -83,6 +83,16 @@ describe('scenes', () => {
     expect(SCENES.damBreak().expectedLevel).toBeCloseTo(1200 / 196, 9);
   });
 
+  it('size the screen-scale scenes and hold the deep pool at its documented level', () => {
+    const huge = SCENES.uTubeHuge();
+    expect([huge.width, huge.height]).toEqual([408, 480]);
+    expect(huge.expectedLevel).toBe(228);
+    const pool = SCENES.deepPool();
+    expect([pool.width, pool.height]).toEqual([512, 1200]);
+    expect(liquidVolume(pool.cells)).toBe(508 * 1000 + 100 * 150);
+    expect(pool.expectedLevel).toBeCloseTo(1000 + 15000 / 508, 9);
+  });
+
   it('start with no sealed air pocket in any scene', () => {
     for (const [name, build] of Object.entries(SCENES)) {
       const { cells, width, height } = build();

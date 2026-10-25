@@ -200,9 +200,35 @@ export function oilOnWater(): Scene {
   };
 }
 
+// The column starts 38 cells above the pool and 10 below the top of the grid, so it falls and splashes.
+const DEEP_POOL = { width: 512, height: 1200, depth: 1000, columnWidth: 100, columnHeight: 150, columnY: 1040 };
+
+/**
+ * A 508-wide pool 1,000 deep in a 512x1200 tank, with a 100x150 column of water hanging above the left end.
+ * It is the screen-scale case for the pressure solve: the grid is taller than any other scene.
+ */
+export function deepPool(): Scene {
+  const { width, height, depth, columnWidth, columnHeight, columnY } = DEEP_POOL;
+  const canvas = tank(width, height);
+  canvas.fill(T.WATER, WALL, width - WALL, WALL, WALL + depth);
+  canvas.fill(T.WATER, WALL, WALL + columnWidth, columnY, columnY + columnHeight);
+  const interior = width - 2 * WALL;
+  return {
+    name: 'deepPool',
+    width,
+    height,
+    cells: canvas.cells,
+    floorY: WALL,
+    chambers: [{ name: 'tank', x0: WALL, x1: width - WALL }],
+    expectedLevel: (interior * depth + columnWidth * columnHeight) / interior,
+  };
+}
+
 export const SCENES: Record<string, () => Scene> = {
   uTube,
   uTubeLarge: () => uTube({ scale: 3 }),
+  uTubeHuge: () => uTube({ scale: 6 }),
+  deepPool,
   uTubeUnequal: () => uTube({ leftArm: 8, rightArm: 32 }),
   uTubeOil: () => uTube({ liquid: T.OIL }),
   basin,

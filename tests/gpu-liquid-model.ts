@@ -2,7 +2,7 @@ import { PARTICLE_STRIDE } from '../src/fluid-params';
 import { PARTICLE_TYPES as T } from '../src/particles';
 import type { Scene } from '../src/scenes';
 import type { Simulation } from '../src/simulation';
-import { createSim, readCells, readParticles, readSelectState, runMany } from './gpu';
+import { createSim, readCells, readParticles, readResidual, readSelectState, runMany } from './gpu';
 import type { LiquidModel } from './liquid-model';
 
 /** The acceptance tests' view of the real GPU build: every query reads back from the device. */
@@ -33,6 +33,21 @@ export class GpuLiquidModel implements LiquidModel {
     let count = 0;
     for (const c of this.current) if ((c & 0xff) === type) count++;
     return count;
+  }
+
+  /** Largest remaining residual of the pressure solve for the state after the last `step`. */
+  residual(): Promise<number> {
+    return readResidual(this.sim);
+  }
+
+  /** Share of the particles whose larger velocity component exceeds `speed` cells per step (the measure of `maxSpeed`). */
+  async fractionFasterThan(speed: number): Promise<number> {
+    const { count, floats } = await readParticles(this.sim);
+    let fast = 0;
+    for (let p = 0; p < count; p++) {
+      if (Math.max(Math.abs(floats[p * PARTICLE_STRIDE + 2]), Math.abs(floats[p * PARTICLE_STRIDE + 3])) > speed) fast++;
+    }
+    return count === 0 ? 0 : fast / count;
   }
 
   /** Largest particle speed in cells per step, as the CPU model reports it. */

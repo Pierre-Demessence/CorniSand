@@ -1,6 +1,6 @@
 # M1 Physics foundation and realistic liquids
 
-Status: M1.1–M1.4g and M1.5a are done (the CPU reference is the GPU spec, the pre-M1.4 bench baseline is recorded, the GPU particle store, load and frame start exist, the GPU grid passes and pressure solve match the CPU, particles move and are rasterized on the GPU, the CA no longer moves liquid, AC1–AC9 pass on the GPU, `?scene=` loads a scene, the first GPU timing is recorded). next: M1.5b, then the remaining items in order; M1.5c is needed (1x costs about 120 ms per frame at 2560×1340).
+Status: M1.1–M1.4g, M1.5a and M1.5b are done (the CPU reference is the GPU spec, the pre-M1.4 bench baseline is recorded, the GPU particle store, load and frame start exist, the GPU grid passes and pressure solve match the CPU, particles move and are rasterized on the GPU, the CA no longer moves liquid, AC1–AC9 pass on the GPU, `?scene=` loads a scene, the first GPU timing is recorded; both M1.5b screen-scale cases fail). next: M1.5c, which includes multigrid (lever 3, with its own design section written first) because 40 sweep pairs do not converge at 408×480 and 512×1200 (see "M1.5b measurements"); 1x costs about 120 ms per frame at 2560×1340.
 
 ## Goal
 
@@ -258,7 +258,7 @@ Taken by the agent on the user's behalf: none of the three changes something the
 2. **AC14 revised** (criteria above). The old 8x clause compared against the CA-only commit, but 8x runs 32 fluid steps per frame, each costing more than the whole CA, so no liquid model with a global solve could meet it. 1x at 60 fps on the dev machine stays the target; higher speeds are measured, not gated. The cost table above assumed 300 GB/s, while the RTX 4080 peaks at about 717 GB/s, so it is pessimistic; M1.4g replaces it with a measurement. Levers that do not change the result (active tiles, fewer sweeps if every test still passes, multigrid, shared-memory accumulation) are applied without asking. Levers that change the look (fluid update every second step, `k = 2`, a coarser grid) need the user's approval, shown as a before and after on a `?scene=`.
 3. **Wetting pin kept.** Visible effect: a layer of liquid one cell thin stays where it is; it does not creep sideways or drip off a ledge until more liquid joins it, and can cling to a sand slope. AC9 asks for this, and it is one switch (`FLUID.film`).
 
-Gaps the gate report missed, now in the design and the checklist: oil could never burn (rasterization overwrote the fire cell with oil while its particles lived), the brush had no way to add or remove particles, `tests/simulation.test.ts` B2 asserts the droplet drift that AC9 forbids, and the CPU scenes are at most 240 cells tall while the screen grid is about 1,340, so the solver's convergence at screen scale is unmeasured (M1.5b).
+Gaps the gate report missed, now in the design and the checklist: oil could never burn (rasterization overwrote the fire cell with oil while its particles lived), the brush had no way to add or remove particles, `tests/simulation.test.ts` B2 asserts the droplet drift that AC9 forbids, and the CPU scenes are at most 240 cells tall while the screen grid is about 1,340, so the solver's convergence at screen scale was unmeasured until M1.5b.
 
 ### M1.4 GPU port
 
@@ -347,7 +347,7 @@ Which M1.5c levers follow (inferred from the table, not measured): active tiles 
 ### M1.5 Integration and performance
 
 - [x] **M1.5a Interactions on the GPU (AC10, AC11, AC15).** Done. Deviation: AC11's oil-above-water check counts inverted cells (water with oil below it in its column) over 100 consecutive steps after step 1400 and requires a median of 0 and a maximum of 3, instead of zero at step 1500 only. The interface flickers a lone cell for single steps on both builds (GPU 8 of 60 steps, CPU 1 of 60; D18), and the GPU is deterministic but diverges from the CPU from step ~30; the shared helper runs on both. `tests/liquids-gpu.test.ts` gains AC10 and AC11. `tests/simulation.test.ts` gains: fire burns oil (a 20×5 oil block in a tank under a row of fire: sampled every 50 steps, the oil count never rises, has dropped by at least half after 600 steps, and smoke appears); water puts out fire (a fire cell beside water is smoke two supersteps later); smoke rises through water (one smoke cell at the bottom of a pool 10 deep is above the surface within 40 supersteps, and the water count is unchanged).
-- [ ] **M1.5b Screen-scale check.** Add `uTubeHuge` (`uTube({ scale: 6 })`, 408×480) and `deepPool` (512×1200: a 2-cell tank with water 1,000 deep, and a column of water 100 wide and 150 tall dropped at one side) to `src/scenes.ts`, with GPU-only tests in `tests/liquids-gpu.test.ts`: `uTubeHuge` settles (AC1's band) within 16,000 steps; after 6,000 steps `deepPool` has flatness at most 1 and at most 35% of its particles move faster than 0.3 cells/step (the settled large U-tube has 19% on the CPU; record the GPU value). Record the residual and both numbers here. If either fails, multigrid (M1.5c lever 3) is required.
+- [x] **M1.5b Screen-scale check.** Add `uTubeHuge` (`uTube({ scale: 6 })`, 408×480) and `deepPool` (512×1200: a 2-cell tank with water 1,000 deep, and a column of water 100 wide and 150 tall dropped at one side) to `src/scenes.ts`, with GPU-only tests in `tests/liquids-gpu.test.ts`: `uTubeHuge` settles (AC1's band) within 16,000 steps; after 6,000 steps `deepPool` has flatness at most 1 and at most 35% of its particles move faster than 0.3 cells/step (the settled large U-tube has 19% on the CPU; record the GPU value). Record the residual and both numbers here. If either fails, multigrid (M1.5c lever 3) is required. Done: both cases fail. Both tests are `it.fails` in `tests/liquids-gpu.test.ts` (thresholds unchanged) so the suite stays green; that also hides an unrelated failure (timeout, device error), so rerun them and read the logged numbers when touching the solver. Change them to `it` when lever 3 lands. `uTubeHuge` and `deepPool` are in `SCENES`; `GpuLiquidModel` gains `residual()` and `fractionFasterThan(speed)`. Numbers under "M1.5b measurements".
 - [ ] **M1.5c Cost levers**, only as far as M1.4g and M1.5b require, in this order; each is kept only when the parity tests and every GPU acceptance test still pass and the bench shows a gain:
   0. Per-pass timing: `timestamp-query` (or one pass per group in the bench) over passes 1–19, to split the particle passes (14–19), the grid passes before the sweeps (1–9) and passes 11–13 further. It decides whether lever 4 or something else comes after lever 1.
   1. Active tiles: classify marks each 8×8 tile holding liquid or within 3 cells of it and appends it to a list with an atomic counter; cell and face passes and the sweeps dispatch indirect over that list. Clear covers the tiles active in this step and the previous one, so no stale accumulator survives. The parity tests must not change. Expect this lever to be needed: 80 sweeps over 3.4M cells at 4 steps a frame is about 25–35 ms on its own.
@@ -357,6 +357,27 @@ Which M1.5c levers follow (inferred from the table, not measured): active tiles 
 
   The levers that change the look (fluid update every second step, `k = 2` after D15, a coarser grid) need the user's approval with a before and after.
 - [ ] **M1.5d Final measurement (AC14).** `npm run bench` at 1x within 14 ms per frame; record 2x–8x. Hand to the user: maximize a 2560×1440 window, fill about a quarter of the screen with water, and read the FPS counter at 1x (expected about 60) and at 8x (no target; say if it feels unusable).
+
+#### M1.5b measurements
+
+GPU, RTX 4080, 40 sweep pairs, seeded as the tests; "fast" is the share of particles whose larger velocity component exceeds 0.3 cells/step; "residual" is the test-only residual pass (largest remaining error of the pressure equation) after the last step.
+
+| Scene | Steps | Arm or column level (expected) | Residual | Fast | `maxShortfall` |
+| --- | --- | --- | --- | --- | --- |
+| `uTubeLarge` (204×240, the AC2 scene, for scale) | 2,000–8,000 | 114.0 both arms (114) | 0.12–0.19 | 8–17% | 0 |
+| `uTubeHuge` (408×480) | 2,000 | 221.5 / 218.6 (228) | 0.29 | 36% | 1,886 |
+| `uTubeHuge` | 16,000 | 219.8 / 219.5 (228) | 0.42 (0.26–0.71 along the way) | 39% | not read |
+| `deepPool` (512×1200) | 1,000 | 834 (1029.5) | 3.2 | 80% | 99,116 |
+| `deepPool` | 3,000 | 823.7 (1029.5) | 1.6 | 80% | not read |
+| `deepPool` | 6,000 | 823.8 (1029.5), flatness 2 | 2.0 | 80% | not read |
+| `deepPool`, 160 sweep pairs (a one-off run with `iterations: 160`) | 3,000 | 897.6 (1029.5) | 0.33 | 76% | not read |
+
+What fails and why (read from the numbers above):
+
+- `uTubeHuge` reaches equal arms (within 1 cell of each other) but 8–9 cells under the expected level, and never enters the AC1 band in 16,000 steps. The pool is also 3% short of its water: 51,459 of 52,992 water cells are drawn at step 2,000.
+- `deepPool` has flatness 2 (the test needs 1) and 80% of its particles are fast (the limit is 35%). It also loses a fifth of its water to the eye: 423,933 water cells are drawn out of 523,000 loaded at step 1,000, with the 2.09M particles all alive, and the surface sits at 824 instead of 1,030 from step 2,000 on.
+- The cause (inferred from these numbers, not isolated further) is the pressure solve not converging at this height: the residual is about 5–10× the 408×480 scene's and the water column compresses, so the particles crowd into fewer cells than the 4-per-cell count the rasterization uses to size the liquid (`maxShortfall`, which AC4 requires to be 0, is 1,886 and 99,116). Four times as many sweeps (160 pairs, compared at step 3,000) cut the residual 5× (1.6 to 0.33) and lift the level from 824 to 898, which is still 130 cells low with 76% fast particles, so more sweeps on the same method do not fix it: multigrid is needed.
+- The large U-tube's fast share (8–17%) is at or below the CPU reference's 19%; that suggests, without proving it, that the GPU build is not at fault below this size.
 
 ### M1.6 Docs
 
