@@ -20,6 +20,7 @@ export const GRID_BINDINGS = {
   weights: 14,
   diagDiv: 15,
   residualMax: 16,
+  divergence: 17,
 } as const;
 
 const G = GRID_BINDINGS;
@@ -47,9 +48,12 @@ ${fluidCommonWGSL(width, height, capacity)}
 @group(0) @binding(${G.uValid}) var<storage, read_write> uValid: array<u32>;
 @group(0) @binding(${G.vValid}) var<storage, read_write> vValid: array<u32>;
 @group(0) @binding(${G.p}) var<storage, read_write> p: array<f32>;
-// Face weights (left, right, bottom, top) of a liquid cell, and (diagonal, divergence - source).
+// Face weights (left, right, bottom, top) of a liquid cell, and the diagonal (the multigrid solve keeps its working
+// vectors in the second component and in the coarse levels behind these, see fluid-multigrid.wgsl.ts).
 @group(0) @binding(${G.weights}) var<storage, read_write> weights: array<vec4f>;
 @group(0) @binding(${G.diagDiv}) var<storage, read_write> diagDiv: array<vec2f>;
+// The divergence of a liquid cell minus the outflow the density correction asks for.
+@group(0) @binding(${G.divergence}) var<storage, read_write> divergence: array<f32>;
 @group(0) @binding(${G.residualMax}) var<storage, read_write> residualMax: atomic<u32>;
 
 const U_FACES: u32 = (W + 1u) * H;
@@ -95,7 +99,7 @@ fn clearGrid(@builtin(global_invocation_id) gid: vec3u) {
 }
 
 // Solid from the cell type, liquid wherever a particle sits (a cell rasterized as water without particles is air to
-// the solver), density from the mix of kinds.
+// the solver), density from the mix of kinds. The pressure is zero outside liquid.
 @compute @workgroup_size(${GRID_WORKGROUP}, ${GRID_WORKGROUP})
 fn classify(@builtin(global_invocation_id) gid: vec3u) {
   if (gid.x >= W || gid.y >= H) { return; }
@@ -104,12 +108,14 @@ fn classify(@builtin(global_invocation_id) gid: vec3u) {
   if (t == TYPE_WALL || t == TYPE_SAND) {
     flags[c] = FLAG_SOLID;
     density[c] = 0.0;
+    p[c] = 0.0;
     return;
   }
   let n = atomicLoad(&counts[c]);
   if (n == 0u) {
     flags[c] = FLAG_AIR;
     density[c] = 0.0;
+    p[c] = 0.0;
     return;
   }
   let oil = atomicLoad(&oilCounts[c]);
@@ -251,15 +257,14 @@ fn densityAt(x: i32, y: i32, flag: u32) -> f32 {
   return density[cellIndex(u32(x), u32(y))];
 }
 
-// Face weights, and the divergence the sweeps have to cancel: the net outflow of the cell's faces minus the outflow
+// Face weights, and the divergence the solve has to cancel: the net outflow of the cell's faces minus the outflow
 // the density correction asks for. A cell above rest density asks for outflow, an under-dense one surrounded by
-// liquid for inflow (without it the liquid swells). Pressure and diagonal are zero outside liquid.
+// liquid for inflow (without it the liquid swells). The diagonal is zero outside liquid.
 @compute @workgroup_size(${GRID_WORKGROUP}, ${GRID_WORKGROUP})
 fn prepare(@builtin(global_invocation_id) gid: vec3u) {
   if (gid.x >= W || gid.y >= H) { return; }
   let c = cellIndex(gid.x, gid.y);
   if (flags[c] != FLAG_LIQUID) {
-    p[c] = 0.0;
     diagDiv[c] = vec2f(0.0, 0.0);
     return;
   }
@@ -282,11 +287,12 @@ fn prepare(@builtin(global_invocation_id) gid: vec3u) {
   let interior = fl != FLAG_AIR && fr != FLAG_AIR && fb != FLAG_AIR && ft != FLAG_AIR;
   var source = 0.0;
   if (ratio > 0.0) { source = STIFFNESS * ratio; } else if (interior) { source = PULL * ratio; }
-  let divergence = u[uIndex(gid.x + 1u, gid.y)] - u[uIndex(gid.x, gid.y)] + v[vIndex(gid.x, gid.y + 1u)] - v[vIndex(gid.x, gid.y)];
-  diagDiv[c] = vec2f(w.x + w.y + w.z + w.w, divergence - source);
+  let netOutflow = u[uIndex(gid.x + 1u, gid.y)] - u[uIndex(gid.x, gid.y)] + v[vIndex(gid.x, gid.y + 1u)] - v[vIndex(gid.x, gid.y)];
+  diagDiv[c] = vec2f(w.x + w.y + w.z + w.w, 0.0);
+  divergence[c] = netOutflow - source;
 }
 
-// One red-black Gauss-Seidel half sweep with over-relaxation. A cell's neighbors are all the other color, so threads
+// One red-black Gauss-Seidel half sweep with over-relaxation (the plain solver). A cell's neighbors are all the other color, so threads
 // of one dispatch never read what another writes and the result does not depend on their order.
 @compute @workgroup_size(${GRID_WORKGROUP}, ${GRID_WORKGROUP})
 fn sweep(@builtin(global_invocation_id) gid: vec3u) {
@@ -300,7 +306,7 @@ fn sweep(@builtin(global_invocation_id) gid: vec3u) {
   if (gid.x + 1u < W) { sum += w.y * p[c + 1u]; }
   if (gid.y > 0u) { sum += w.z * p[c - W]; }
   if (gid.y + 1u < H) { sum += w.w * p[c + W]; }
-  p[c] += OMEGA * ((sum - dd.y) / dd.x - p[c]);
+  p[c] += OMEGA * ((sum - divergence[c]) / dd.x - p[c]);
 }
 
 // Subtracts the pressure gradient from the faces between two liquid cells, or a liquid and an air cell.
@@ -362,6 +368,6 @@ fn measureResidual(@builtin(global_invocation_id) gid: vec3u) {
   if (gid.x + 1u < W) { flow += w.y * (p[c + 1u] - p[c]); }
   if (gid.y > 0u) { flow += w.z * (p[c - W] - p[c]); }
   if (gid.y + 1u < H) { flow += w.w * (p[c + W] - p[c]); }
-  atomicMax(&residualMax, bitcast<u32>(abs(dd.y - flow)));
+  atomicMax(&residualMax, bitcast<u32>(abs(divergence[c] - flow)));
 }
 `;

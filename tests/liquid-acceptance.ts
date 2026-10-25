@@ -2,7 +2,7 @@ import { expect } from 'vitest';
 import { PARTICLE_TYPES as T } from '../src/particles';
 import { SAND_POOL, SCENES, type Scene } from '../src/scenes';
 import { FlipModel } from './cpu/flip';
-import { type LiquidModel, observe, settleAndHold } from './liquid-model';
+import { type LiquidModel, observe, type SettleResult, settleAndHold } from './liquid-model';
 import { bubbleCount, chamberLevel, columnLevel, flatness, foamCount, liquidVolume, LIQUIDS } from './metrics';
 
 // Shared pieces of the acceptance suite for the liquid criteria AC1-AC11 of docs/plans/physics-foundation.md.
@@ -28,9 +28,10 @@ function armsAtRest(scene: Scene): (cells: Uint32Array) => boolean {
     );
 }
 
-export async function expectLevelsSettle(model: LiquidModel, scene: Scene, within: number): Promise<void> {
+export async function expectLevelsSettle(model: LiquidModel, scene: Scene, within: number): Promise<SettleResult> {
   const result = await settleAndHold(model, armsAtRest(scene), { within, hold: 1000 });
   expect(result.settledAt, `steps to settle (last step outside the rest band: ${result.lastBreak})`).not.toBeNull();
+  return result;
 }
 
 // Per-type cell counts that must not change without brush input, and no liquid cell the rasterization failed to place.

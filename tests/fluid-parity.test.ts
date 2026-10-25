@@ -43,7 +43,7 @@ describe.skipIf(!device)('fluid grid parity with the CPU reference', () => {
     const scene = SCENES[name]();
     const { width, height } = scene;
 
-    const cpu = new FlipModel({ method: 'sor' });
+    const cpu = new FlipModel();
     cpu.load(scene);
     cpu.seedVelocities(SEED);
 
@@ -116,7 +116,7 @@ describe.skipIf(!device)('full fluid step parity with the CPU reference', () => 
     const scene = SCENES[name]();
     const { width, height } = scene;
 
-    const cpu = new FlipModel({ method: 'sor' });
+    const cpu = new FlipModel();
     cpu.load(scene);
     cpu.seedVelocities(SEED);
     const sim = createSim(width, height);
@@ -161,7 +161,7 @@ describe.skipIf(!device)('full fluid step parity with the CPU reference', () => 
     const scene = SCENES[name]();
     const { width, height } = scene;
 
-    const cpu = new FlipModel({ method: 'sor' });
+    const cpu = new FlipModel();
     cpu.load(scene);
     cpu.seedVelocities(SEED);
     const sim = createSim(width, height);

@@ -9,8 +9,8 @@ export const FLUID = {
   /** Downward acceleration in cells per step squared. */
   gravity: 0.05,
   /**
-   * Pressure solver of the CPU reference (`tests/cpu/flip.ts`): 'multigrid' or the plain red-black 'sor' below.
-   * The WGSL passes still run the sweeps until M1.5c.3c, so the GPU parity tests pin the reference to 'sor'.
+   * Pressure solver, for the CPU reference (`tests/cpu/flip.ts`) and the WGSL passes alike: 'multigrid' or the plain
+   * red-black 'sor' below, which the GPU keeps as the baseline of the bench.
    */
   solver: 'multigrid',
   /** Red-black sweeps per pressure projection of the plain solver. */
@@ -32,8 +32,22 @@ export const FLUID = {
   coarsestSize: 8,
   /** Red-black pairs on the coarsest level, run forward then again in reverse so the cycle stays symmetric. */
   coarsestSweeps: 10,
-  /** Use the V-cycle as the conjugate-gradient preconditioner; false runs bare V-cycles, which can diverge. */
+  /**
+   * Use the V-cycle as the conjugate-gradient preconditioner; false runs bare V-cycles, which can diverge.
+   * Only the CPU reference implements the bare form.
+   */
   preconditioned: true,
+  /**
+   * Conjugate gradients stop once the residual dot product falls below this: what is left is the rounding noise of the
+   * residual, and a step along it can add a large constant to a sealed body's pressure (which moves nothing, but
+   * makes the next residual noisier).
+   */
+  cgFloor: 1e-12,
+  /**
+   * GPU only: the levels whose sides are both at most this are cycled by one workgroup in one dispatch (256 threads,
+   * barriers between the half-sweeps) instead of ten dispatches per level.
+   */
+  tailSize: 64,
   /** Where the surface sits between a liquid cell center (0) and the air cell center (1). */
   theta: 0.5,
   /** Share of the grid's velocity change added to a particle's own velocity (1 = pure FLIP, 0 = pure PIC). */
@@ -79,6 +93,35 @@ export const FLUID = {
 export const MAX_FLUID_CELLS = 2 ** 24 - 1;
 /** The largest particle count one 1D indirect dispatch of 256-thread workgroups can cover. */
 export const MAX_PARTICLES = 65535 * 256;
+
+/** One level of the multigrid hierarchy: its size and where its cells start in the level-concatenated GPU buffers. */
+export interface LevelGeometry {
+  width: number;
+  height: number;
+  offset: number;
+}
+
+/** Level 0 is the fluid grid; each next level halves both sides (rounding up) until both are at most `coarsestSize`. */
+export function multigridLevels(width: number, height: number): LevelGeometry[] {
+  const levels: LevelGeometry[] = [{ width, height, offset: 0 }];
+  for (let last = levels[0]; last.width > FLUID.coarsestSize || last.height > FLUID.coarsestSize;) {
+    const next = { width: Math.ceil(last.width / 2), height: Math.ceil(last.height / 2), offset: last.offset + last.width * last.height };
+    levels.push(next);
+    last = next;
+  }
+  return levels;
+}
+
+/** Index of the first level the single-workgroup tail cycle covers (see `FLUID.tailSize`). */
+export function multigridTailStart(levels: readonly LevelGeometry[]): number {
+  return levels.findIndex((level) => level.width <= FLUID.tailSize && level.height <= FLUID.tailSize);
+}
+
+/** Cells of all levels together: the length of the level-concatenated GPU buffers. */
+export function multigridCells(levels: readonly LevelGeometry[]): number {
+  const last = levels[levels.length - 1];
+  return last.offset + last.width * last.height;
+}
 
 /** Cell flags of the fluid grid. */
 export const FLUID_FLAG = { AIR: 0, LIQUID: 1, SOLID: 2 } as const;

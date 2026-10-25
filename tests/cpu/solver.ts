@@ -494,7 +494,7 @@ export class MultigridSolver extends PressureSolver {
     d.set(this.applyPreconditioner());
     let rz = dot(r, d);
     let done = 0;
-    while (done < limit && rz > 0) {
+    while (done < limit && rz > FLUID.cgFloor) {
       this.multiply(d, q);
       const dq = dot(d, q);
       if (dq <= 0) break;

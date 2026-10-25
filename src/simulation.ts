@@ -1,7 +1,7 @@
 import { cellWGSL } from './shaders/cell.wgsl';
 import { solidCaWGSL } from './shaders/solid-ca.wgsl';
 import { CellBuffer } from './cell-buffer';
-import { Fluid, fitParticleCapacity, particleCapacityFor } from './fluid';
+import { Fluid, type FluidSolver, fitParticleCapacity, particleCapacityFor } from './fluid';
 import type { Vec2 } from './input';
 
 export interface SimulationInput {
@@ -19,7 +19,8 @@ export interface SimulationOptions {
   seedSource?: () => number;
   // Overrides the particle store's capacity, for tests; see `Fluid`.
   particleCapacity?: number;
-  // Overrides the pressure solver's sweeps per step, for tests and the bench; see `Fluid`.
+  // Overrides the pressure solver and the sweeps of the 'sor' one, for tests and the bench; see `Fluid`.
+  solver?: FluidSolver;
   iterations?: number;
 }
 
@@ -66,6 +67,7 @@ export class Simulation {
 
     this.fluid = new Fluid(device, this.cells, this.seedSource, {
       particleCapacity: options.particleCapacity,
+      solver: options.solver,
       iterations: options.iterations,
     });
 

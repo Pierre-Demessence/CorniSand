@@ -32,11 +32,12 @@ The GPU suites in `tests/` run the real WGSL through Dawn's Node bindings (`webg
 - `src/gpu.ts` — adapter/device/context setup with the adapter's buffer limits, uncaptured-error banner, device-lost callback, reload overlay.
 - `src/grid.ts` — `computeGrid`: grid size and scale from the buffer limits.
 - `src/simulation.ts` — compute pipelines (brush, CA, particle count); `simulate(encoder, supersteps, input)` records the brush pass and the CA steps into the caller's encoder.
+- `src/fluid.ts` — the liquids: particle store, the grid and particle passes of a fluid step, and the pressure solve (`FLUID.solver`: `'multigrid'`, conjugate gradients preconditioned by a V-cycle, or the plain red-black `'sor'`, kept as the bench baseline). `src/fluid-params.ts` holds every fluid constant and the multigrid level helpers; the CPU reference in `tests/cpu/` and the shaders read the same values.
 - `src/cell-buffer.ts` — ping-pong pair of cell storage buffers.
 - `src/display.ts` — render pipeline drawing the current cell buffer plus the brush ring.
 - `src/input.ts` — pointer, wheel and Shift state.
 - `src/particles.ts` — particle type IDs and fire max life, the single source for TS and every shader.
-- `src/shaders/*.wgsl.ts` — WGSL sources exported as template strings (functions of the grid size where needed): `cell` (shared snippet: type constants, cell accessors, PCG hash, `CELL_BYTES`), `solid-ca` (all particle rules), `brush`, `display`.
+- `src/shaders/*.wgsl.ts` — WGSL sources exported as template strings (functions of the grid size where needed): `cell` (shared snippet: type constants, cell accessors, PCG hash, `CELL_BYTES`), `solid-ca` (all particle rules), `brush`, `display`. The fluid shaders are `fluid-common`, `fluid-grid` (grid passes and the plain sweeps), `fluid-multigrid` (coarse operators, V-cycle, conjugate-gradient kernels), `fluid-particles` and `fluid-raster`.
 - `src/scenes.ts` — scene builders (`SCENES`) shared by the tests and the `?scene=<name>` loader in `main.ts` (`findScene`).
 - `tests/` — Vitest: `grid` (unit), `hash` and `simulation` (GPU), `gpu.ts` (device, scene upload and readback helpers), `scenes`, `metrics`, `cpu/` (test-only CPU reference of the fluid code: grid, solver with SOR and multigrid, particles; `solver-experiments.ts` and `solver-screen.test.ts` measure the solvers) and `liquids-*.test.ts` (liquid acceptance criteria run on that reference through `LiquidModel`).
 

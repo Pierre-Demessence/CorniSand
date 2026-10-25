@@ -1,17 +1,30 @@
-import { FLUID, MAX_PARTICLES, spawnParticles } from './fluid-params';
+import {
+  FLUID,
+  type LevelGeometry,
+  MAX_PARTICLES,
+  multigridCells,
+  multigridLevels,
+  multigridTailStart,
+  spawnParticles,
+} from './fluid-params';
 import type { CellBuffer } from './cell-buffer';
 import type { SimulationInput } from './simulation';
 import { BRUSH_UNIFORM_WORDS, brushWGSL } from './shaders/brush.wgsl';
 import { GRID_WORKGROUP, PARTICLE_BYTES, PARTICLE_WORKGROUP, STATE_WORDS } from './shaders/fluid-common.wgsl';
 import { fluidGridWGSL, GRID_BINDINGS } from './shaders/fluid-grid.wgsl';
+import { fluidMultigridWGSL, MG_BINDINGS, SCALAR_WORDS } from './shaders/fluid-multigrid.wgsl';
 import { fluidParticlesWGSL, PARTICLE_BINDINGS } from './shaders/fluid-particles.wgsl';
 import { fluidRasterWGSL, RASTER_BINDINGS, SELECT_WORDS } from './shaders/fluid-raster.wgsl';
 import { mulberry32 } from './random';
 
+export type FluidSolver = 'multigrid' | 'sor';
+
 export interface FluidOptions {
   // Overrides the capacity computed from the grid and the device limits, for tests.
   particleCapacity?: number;
-  // Red-black sweep pairs per pressure projection; overrides `FLUID.iterations`, for tests and the bench.
+  // Overrides `FLUID.solver`: the pressure solve is multigrid-preconditioned conjugate gradients or red-black sweeps.
+  solver?: FluidSolver;
+  // Red-black sweep pairs per projection of the 'sor' solver; overrides `FLUID.iterations`, for tests and the bench.
   iterations?: number;
 }
 
@@ -30,6 +43,16 @@ export interface FluidGridBuffers {
   readonly density: GPUBuffer;
   /** f32 pressure per cell; the warm start of the next solve. */
   readonly p: GPUBuffer;
+  /**
+   * vec4f face weights (left, right, bottom, top) of every multigrid level, from each level's offset: level 0 holds
+   * the liquid cells' weights of the pressure problem (a liquid-air weight is the surface weight), a coarser level
+   * the summed liquid-liquid couplings.
+   */
+  readonly weights: GPUBuffer;
+  /** vec2f per cell and level: the diagonal (0 where there is no liquid), and a working vector of the solve. */
+  readonly diagDiv: GPUBuffer;
+  /** The multigrid levels in the buffers above; a single level for the 'sor' solver. */
+  readonly levels: readonly LevelGeometry[];
   /** One u32: the bits of the largest residual written by `recordResidual`. */
   readonly residual: GPUBuffer;
 }
@@ -91,8 +114,9 @@ interface Binding {
 interface Step {
   pipeline: GPUComputePipeline;
   groups: GPUBindGroup[][];
-  // Null for a single-thread pass.
+  // Null for a direct dispatch of `groups` workgroups.
   indirect: GPUBuffer | null;
+  workgroups: [number, number];
   // The entry point, with its override constants when it has any: how `recordStepTimed` names the pass.
   label: string;
 }
@@ -146,11 +170,13 @@ export class Fluid {
   private readonly compactArgsGroup: GPUBindGroup;
   private readonly finalizeGroup: GPUBindGroup;
 
+  private readonly solver: FluidSolver;
   private readonly iterations: number;
-  // Passes 1-9 of a step (clear to prepare), the red and black half sweeps, passes 11-13 (gradient to the last ring).
-  private readonly beforeSweeps: Step[];
-  private readonly sweeps: [Step, Step];
-  private readonly afterSweeps: Step[];
+  // Passes 1-9 of a step (clear to prepare), pass 10 (the pressure solve, each pass with the name of its group),
+  // passes 11-13 (gradient to the last ring).
+  private readonly beforeSolve: Step[];
+  private readonly solve: { step: Step; group: string }[] = [];
+  private readonly afterSolve: Step[];
   private readonly residualStep: Step;
   // Passes 14-15 (move the particles, count them in their new cells), then the rasterization chain of passes 16-19.
   private readonly moveParticles: Step[];
@@ -170,6 +196,7 @@ export class Fluid {
       throw new RangeError(`particleCapacity must be an integer in 1..${MAX_PARTICLES}, got ${this.capacity}`);
     }
 
+    this.solver = options.solver ?? FLUID.solver;
     this.iterations = options.iterations ?? FLUID.iterations;
     if (!Number.isInteger(this.iterations) || this.iterations < 0) {
       throw new RangeError(`iterations must be a non-negative integer, got ${this.iterations}`);
@@ -198,7 +225,12 @@ export class Fluid {
     const density = words(cellCount);
     const p = words(cellCount);
     const residual = words(1);
-    this.grid = { u, v, uPrev, vPrev, flags, density, p, residual };
+    const multigrid = this.solver === 'multigrid';
+    const levels = multigrid ? multigridLevels(width, height) : [{ width, height, offset: 0 }];
+    const levelCells = multigridCells(levels);
+    const weights = words(4 * levelCells);
+    const diagDiv = words(2 * levelCells);
+    this.grid = { u, v, uPrev, vPrev, flags, density, p, weights, diagDiv, levels, residual };
     const counts = words(cellCount);
     const oilCounts = words(cellCount);
     const keys = words(cellCount);
@@ -211,8 +243,7 @@ export class Fluid {
     // Both validity copies of the extrapolation in one buffer, to stay within the binding limit of a pass.
     const uValid = words(2 * uCount);
     const vValid = words(2 * vCount);
-    const weights = words(4 * cellCount);
-    const diagDiv = words(2 * cellCount);
+    const divergence = words(cellCount);
 
     const b = PARTICLE_BINDINGS;
     const particlesModule = device.createShaderModule({ code: fluidParticlesWGSL(width, height, this.capacity) });
@@ -310,6 +341,7 @@ export class Fluid {
       indirect: GPUBuffer | null,
       bindings: Binding[],
       constants?: Record<string, number>,
+      workgroups: [number, number] = [1, 1],
     ): Step => {
       const layout = device.createBindGroupLayout({ entries: bindings.map((x) => storageEntry(x.binding, x.type)) });
       const pipeline = device.createComputePipeline({
@@ -321,7 +353,7 @@ export class Fluid {
         entries: bindings.map((x) => ({ binding: x.binding, resource: buffer(x.buffer(cellBuffer, particles)) })),
       })));
       const overrides = constants ? `[${Object.entries(constants).map(([k, x]) => `${k}=${x}`).join(',')}]` : '';
-      return { pipeline, groups, indirect, label: `${entryPoint}${overrides}` };
+      return { pipeline, groups, indirect, workgroups, label: `${entryPoint}${overrides}` };
     };
     const fixed = (binding: number, resource: GPUBuffer, type?: GPUBufferBindingType): Binding => ({ binding, type, buffer: () => resource });
     const readOnly = (binding: number, resource: GPUBuffer): Binding => fixed(binding, resource, 'read-only-storage');
@@ -340,6 +372,7 @@ export class Fluid {
     const validB = [fixed(g.uValid, uValid), fixed(g.vValid, vValid)];
     const pB = fixed(g.p, p);
     const solverB = [fixed(g.weights, weights), fixed(g.diagDiv, diagDiv)];
+    const divergenceB = fixed(g.divergence, divergence);
     const extrapolation = [flagsB, uB, vB, ...validB];
 
     const particleModuleStep = (entryPoint: string, bindings: Binding[]): Step =>
@@ -349,13 +382,13 @@ export class Fluid {
     const particleCells: Binding = { binding: b.cells, type: 'read-only-storage', buffer: (c) => c };
 
     const ring = (read: 0 | 1): Step => gridStep('extrapolate', extrapolation, { READ: read });
-    this.beforeSweeps = [
+    this.beforeSolve = [
       gridStep('clearGrid', [countsB, oilCountsB, ...accB]),
       particleModuleStep('resolve', [state, liveParticles, particleCells]),
       particleModuleStep('countParticles', [
         state, liveParticles, fixed(b.counts, counts), fixed(b.oilCounts, oilCounts),
       ]),
-      gridStep('classify', [gridCells, countsB, oilCountsB, flagsB, fixed(g.density, density)]),
+      gridStep('classify', [gridCells, countsB, oilCountsB, flagsB, fixed(g.density, density), pB]),
       particleModuleStep('particlesToGrid', [
         state, liveParticles, fixed(b.uAcc, uAcc), fixed(b.vAcc, vAcc),
       ]),
@@ -363,18 +396,109 @@ export class Fluid {
       ring(0),
       ring(1),
       gridStep('applyGravity', [flagsB, uB, vB, fixed(g.uPrev, uPrev), fixed(g.vPrev, vPrev)]),
-      gridStep('prepare', [flagsB, fixed(g.density, density), countsB, pB, uB, vB, ...solverB]),
+      gridStep('prepare', [flagsB, fixed(g.density, density), countsB, uB, vB, ...solverB, divergenceB]),
     ];
-    this.sweeps = [0, 1].map((color) => gridStep('sweep', [pB, ...solverB], { COLOR: color })) as [Step, Step];
     const film: boolean = FLUID.film;
-    this.afterSweeps = [
+    this.afterSolve = [
       gridStep('gradient', [flagsB, pB, ...solverB, uB, vB]),
       ...(film ? [gridStep('pinFilms', [flagsB, uB])] : []),
       gridStep('extrapolateInit', extrapolation),
       ring(0),
       ring(1),
     ];
-    this.residualStep = gridStep('measureResidual', [pB, ...solverB, fixed(g.residualMax, residual)]);
+    this.residualStep = gridStep('measureResidual', [pB, ...solverB, divergenceB, fixed(g.residualMax, residual)]);
+
+    if (multigrid) {
+      const m = MG_BINDINGS;
+      const levelP = words(levelCells);
+      const cgD = words(cellCount);
+      const cgQ = words(cellCount);
+      const partials = words(Math.ceil((width + 1) / GRID_WORKGROUP) * Math.ceil((height + 1) / GRID_WORKGROUP));
+      const scalars = words(SCALAR_WORDS);
+      const tailStart = multigridTailStart(levels);
+      const mgModule = device.createShaderModule({
+        code: fluidMultigridWGSL(width, height, this.capacity, levels.slice(tailStart)),
+      });
+      // Passes over the fluid grid ride its indirect arguments (nothing runs while no particle is alive); a coarser
+      // level is dispatched by its own size, and the single-workgroup passes by [1, 1].
+      const mgStep = (entryPoint: string, bindings: Binding[], constants?: Record<string, number>, groups?: [number, number]): Step =>
+        step(mgModule, entryPoint, groups ? null : this.gridArgs, bindings, constants, groups);
+      const cover = (level: LevelGeometry): [number, number] =>
+        [Math.ceil(level.width / GRID_WORKGROUP), Math.ceil(level.height / GRID_WORKGROUP)];
+      const own = (k: number): [number, number] | undefined => (k === 0 ? undefined : cover(levels[k]));
+
+      const weightsB = fixed(m.weights, weights);
+      const diagDivB = fixed(m.diagDiv, diagDiv);
+      const levelPB = fixed(m.levelP, levelP);
+      const mgPB = fixed(m.p, p);
+      const divergenceMgB = fixed(m.divergence, divergence);
+      const dB = fixed(m.cgD, cgD);
+      const qB = fixed(m.cgQ, cgQ);
+      const partialsB = fixed(m.partials, partials);
+      const scalarsB = fixed(m.scalars, scalars);
+      const levelB = [weightsB, diagDivB, levelPB];
+
+      // Level k's smoothing, and the transfer between level k and k + 1 (restriction and building run one thread per
+      // coarse cell, prolongation one per fine cell).
+      const smooth = (k: number, color: 0 | 1): Step => mgStep(
+        'smoothLevel', levelB, { NX: levels[k].width, NY: levels[k].height, OFF: levels[k].offset, COLOR: color }, own(k),
+      );
+      const between = (entryPoint: string, k: number, byFine: boolean): Step => {
+        const fine = levels[k];
+        const coarse = levels[k + 1];
+        const constants = {
+          FNX: fine.width, FNY: fine.height, FOFF: fine.offset, CNX: coarse.width, CNY: coarse.height, COFF: coarse.offset,
+        };
+        return mgStep(entryPoint, levelB, constants, byFine ? own(k) : cover(coarse));
+      };
+      const perLevel = <T>(make: (k: number) => T): T[] => Array.from({ length: tailStart }, (_, k) => make(k));
+      const smoothing = perLevel((k) => [smooth(k, 0), smooth(k, 1)] as const);
+      const restriction = perLevel((k) => between('restrictLevel', k, false));
+      const prolongation = perLevel((k) => between('prolongLevel', k, true));
+      const building = perLevel((k) => between('buildLevel', k, false));
+      const tailBuild = tailStart < levels.length - 1 ? mgStep('tailBuild', levelB, undefined, [1, 1]) : null;
+      const tailCycle = mgStep('tailCycle', levelB, undefined, [1, 1]);
+
+      // One V-cycle on the preconditioner system: the levels above the tail by dispatches, the tail in one.
+      const vCycle: Step[] = [];
+      for (let k = 0; k < tailStart; k++) {
+        for (let i = 0; i < FLUID.preSweeps; i++) vCycle.push(smoothing[k][0], smoothing[k][1]);
+        vCycle.push(restriction[k]);
+      }
+      vCycle.push(tailCycle);
+      for (let k = tailStart - 1; k >= 0; k--) {
+        vCycle.push(prolongation[k]);
+        for (let i = 0; i < FLUID.postSweeps; i++) vCycle.push(smoothing[k][1], smoothing[k][0]);
+      }
+
+      const cgInit = mgStep('cgInit', [weightsB, diagDivB, levelPB, mgPB, divergenceMgB]);
+      const cgDotInit = mgStep('cgDotInit', [diagDivB, levelPB, dB, partialsB]);
+      const cgMultiply = mgStep('cgMultiply', [weightsB, diagDivB, dB, qB, partialsB]);
+      const cgUpdate = mgStep('cgUpdate', [diagDivB, levelPB, mgPB, dB, qB, scalarsB]);
+      const cgDot = mgStep('cgDot', [diagDivB, levelPB, partialsB]);
+      const cgDirection = mgStep('cgDirection', [levelPB, dB, scalarsB]);
+      const scalarSteps = ['scalarInit', 'scalarAlpha', 'scalarBeta'].map((name) => mgStep(name, [partialsB, scalarsB], undefined, [1, 1]));
+      const [scalarInit, scalarAlpha, scalarBeta] = scalarSteps;
+
+      const add = (group: string, ...steps: Step[]): void => {
+        for (const added of steps) this.solve.push({ step: added, group });
+      };
+      add('buildLevels', ...building);
+      if (tailBuild) add('buildLevels', tailBuild);
+      // Warm-started conjugate gradients: each iteration but the last ends in a V-cycle on the new residual.
+      add('cgSetup', cgInit);
+      add('vCycle', ...vCycle);
+      add('cgSetup', cgDotInit, scalarInit);
+      for (let i = 1; i <= FLUID.cycles; i++) {
+        add('cgIteration', cgMultiply, scalarAlpha, cgUpdate);
+        if (i === FLUID.cycles) break;
+        add('vCycle', ...vCycle);
+        add('cgIteration', cgDot, scalarBeta, cgDirection);
+      }
+    } else {
+      const sweeps = [0, 1].map((color) => gridStep('sweep', [pB, ...solverB, divergenceB], { COLOR: color }));
+      for (let i = 0; i < this.iterations; i++) sweeps.forEach((sweep) => this.solve.push({ step: sweep, group: 'sweeps' }));
+    }
 
     const rb = RASTER_BINDINGS;
     const rasterModule = device.createShaderModule({ code: fluidRasterWGSL(width, height, this.capacity) });
@@ -526,9 +650,9 @@ export class Fluid {
 
   // The passes of one step in order, each with the name of the list it comes from.
   private forEachStep(stage: FluidStage, visit: (step: Step, group: string) => void): void {
-    this.beforeSweeps.forEach((step) => visit(step, 'beforeSweeps'));
-    for (let i = 0; i < this.iterations; i++) this.sweeps.forEach((step) => visit(step, 'sweeps'));
-    this.afterSweeps.forEach((step) => visit(step, 'afterSweeps'));
+    this.beforeSolve.forEach((step) => visit(step, 'beforeSolve'));
+    this.solve.forEach(({ step, group }) => visit(step, group));
+    this.afterSolve.forEach((step) => visit(step, 'afterSolve'));
     if (stage === 'grid') return;
     this.moveParticles.forEach((step) => visit(step, 'moveParticles'));
     this.padKeys.forEach((step) => visit(step, 'padKeys'));
@@ -573,7 +697,7 @@ export class Fluid {
   private recordPass(pass: GPUComputePassEncoder, step: Step): void {
     this.bind(pass, step);
     if (step.indirect) pass.dispatchWorkgroupsIndirect(step.indirect, 0);
-    else pass.dispatchWorkgroups(1);
+    else pass.dispatchWorkgroups(...step.workgroups);
   }
 
   // Dispatches a cell pass over the whole grid whatever the indirect arguments say, for the test hooks.

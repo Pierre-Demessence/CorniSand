@@ -67,14 +67,14 @@ describe.skipIf(!device)('liquid acceptance (GPU)', () => {
   }, LONG);
 
   // M1.5b: the solver at screen scale, where one pressure wave must cross 480 to 1,200 rows. Both cases fail with 40
-  // sweeps (the measurements are in docs/plans/physics-foundation.md, "M1.5b measurements"); `it.fails` keeps the
-  // thresholds and the rest of the suite green until multigrid (M1.5c lever 3) lands, and then flags itself for removal.
-  it.fails('M1.5b: the huge U-tube (408x480) settles within 16000 steps', async () => {
+  // sweeps (docs/plans/physics-foundation.md, "M1.5b measurements") and pass with the multigrid solve.
+  it('M1.5b: the huge U-tube (408x480) settles within 16000 steps', async () => {
     const model = new GpuLiquidModel();
-    await expectLevelsSettle(model, await load(model, SCENES.uTubeHuge()), 16_000);
+    const result = await expectLevelsSettle(model, await load(model, SCENES.uTubeHuge()), 16_000);
+    console.log(`uTubeHuge: settled at step ${result.settledAt}, residual ${await model.residual()}, particles over 0.3 cells/step ${await model.fractionFasterThan(0.3)}`);
   }, LONG);
 
-  it.fails('M1.5b: the deep pool (512x1200) is flat and mostly calm after 6000 steps', async () => {
+  it('M1.5b: the deep pool (512x1200) is flat and mostly calm after 6000 steps', async () => {
     const model = new GpuLiquidModel();
     const scene = await load(model, SCENES.deepPool());
     await model.step(6000);

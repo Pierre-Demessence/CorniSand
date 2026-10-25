@@ -8,8 +8,9 @@ export interface Grid {
   scale: number;
 }
 
-// The widest per-cell fluid buffer (face weights, a vec4f) must fit one binding as well.
-const WIDEST_FLUID_CELL_BYTES = 16;
+// The widest per-cell fluid buffer must fit one binding as well: the face weights (a vec4f) of every multigrid level,
+// which together are about 4/3 of the fine level's.
+const WIDEST_FLUID_CELL_BYTES = 22;
 
 // Largest cell count the cell buffers and the per-cell fluid buffers can hold on this device, and the rasterization
 // keys can index.

@@ -52,6 +52,8 @@ Phases run in order on the block's four cells (BL, BR, TL, TR), each phase seein
 
 Liquids move in the fluid step that precedes each superstep's two CA dispatches (`src/fluid.ts`): particles carry the water and oil, a pressure solve moves them, and the last pass writes them into the cell grid as water and oil cells. The CA reads those cells as obstacles, sand sinks into them and smoke rises through them, but it never moves them sideways or down.
 
+The pressure solve of that step is conjugate gradients, each iteration preconditioned by one multigrid V-cycle (`FLUID.solver`; reasons in `docs/decisions.md`). The levels live in level-concatenated buffers (`FluidGridBuffers.weights`, `diagDiv`, offsets from `multigridLevels`). The step builds the coarse operators from the fine weights, runs two iterations from last step's pressure, and levels with both sides at most `FLUID.tailSize` are cycled by one workgroup in one dispatch. A cell without liquid has diagonal 0 and is skipped by every kernel.
+
 ## Brush
 
 Painting writes the selected type into empty cells within the brush radius of the segment from the previous frame's pointer position to the current one (or into any non-wall cell when Shift is held); erasing empties every cell in range. The pass runs once per frame before the CA steps, so no block ever sees a half-painted state. The radius is in cells, whatever the grid scale. The painted variant comes from the cell coordinates and a per-frame seed.

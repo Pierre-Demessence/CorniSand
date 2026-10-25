@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PARTICLE_TYPES as T } from '../src/particles';
-import { Simulation } from '../src/simulation';
+import { Simulation, type SimulationOptions } from '../src/simulation';
 import { cell, createDevice, idleInput } from './gpu';
 import type { FluidStage } from '../src/fluid';
 import { mulberry32 } from '../src/random';
@@ -54,16 +54,16 @@ describe.skipIf(!device)('bench', () => {
       console.log('WARNING: the adapter is not the NVIDIA RTX 4080; these numbers do not count.');
     }
 
-    // `iterations` is the number of pressure sweep pairs per step: the full-solver run minus the `iterations: 0` run is
-    // the solver's cost, and the half run shows whether that cost scales with the sweep count.
-    const variants = [
-      { name: 'full solver', iterations: undefined },
-      { name: 'iterations 20', iterations: 20 },
-      { name: 'iterations 0', iterations: 0 },
+    // Solver cost per frame before and after M1.5c.3, in one run: the default multigrid solve against the plain 40 sweep
+    // pairs it replaces, and against no solve at all (the difference to either row is that solver's cost).
+    const variants: { name: string; options: Pick<SimulationOptions, 'iterations' | 'solver'> }[] = [
+      { name: 'multigrid', options: {} },
+      { name: 'sor 40 pairs', options: { solver: 'sor' } },
+      { name: 'no solver', options: { solver: 'sor', iterations: 0 } },
     ];
     const rows: { variant: string; supersteps: number; msPerFrame: number; msPerSuperstep: number }[] = [];
-    for (const { name, iterations } of variants) {
-      const sim = new Simulation(dev, WIDTH, HEIGHT, { seedSource: mulberry32(1), iterations });
+    for (const { name, options } of variants) {
+      const sim = new Simulation(dev, WIDTH, HEIGHT, { seedSource: mulberry32(1), ...options });
       sim.load(benchScene());
 
       const frame = async (supersteps: number): Promise<number> => {
@@ -100,17 +100,20 @@ describe.skipIf(!device)('bench', () => {
     const dev = device!;
     const steps = 4;
     const sims = {
-      full: new Simulation(dev, WIDTH, HEIGHT, { seedSource: mulberry32(1) }),
-      noSweeps: new Simulation(dev, WIDTH, HEIGHT, { seedSource: mulberry32(1), iterations: 0 }),
+      multigrid: new Simulation(dev, WIDTH, HEIGHT, { seedSource: mulberry32(1) }),
+      sor: new Simulation(dev, WIDTH, HEIGHT, { seedSource: mulberry32(1), solver: 'sor' }),
+      noSolver: new Simulation(dev, WIDTH, HEIGHT, { seedSource: mulberry32(1), solver: 'sor', iterations: 0 }),
     };
     for (const sim of Object.values(sims)) sim.load(benchScene());
 
     const rowsToMeasure: { name: string; sim: Simulation; steps: number; stage: FluidStage }[] = [
-      { name: 'frame start only', sim: sims.noSweeps, steps: 0, stage: 'grid' },
-      { name: 'grid passes 1-13, no sweeps', sim: sims.noSweeps, steps, stage: 'grid' },
-      { name: 'grid passes 1-13, 40 sweep pairs', sim: sims.full, steps, stage: 'grid' },
-      { name: 'passes 1-19, no sweeps', sim: sims.noSweeps, steps, stage: 'full' },
-      { name: 'passes 1-19, 40 sweep pairs', sim: sims.full, steps, stage: 'full' },
+      { name: 'frame start only', sim: sims.noSolver, steps: 0, stage: 'grid' },
+      { name: 'grid passes, no solver', sim: sims.noSolver, steps, stage: 'grid' },
+      { name: 'grid passes, 40 sweep pairs', sim: sims.sor, steps, stage: 'grid' },
+      { name: 'grid passes, multigrid', sim: sims.multigrid, steps, stage: 'grid' },
+      { name: 'all passes, no solver', sim: sims.noSolver, steps, stage: 'full' },
+      { name: 'all passes, 40 sweep pairs', sim: sims.sor, steps, stage: 'full' },
+      { name: 'all passes, multigrid', sim: sims.multigrid, steps, stage: 'full' },
     ];
     const measureRow = async (row: (typeof rowsToMeasure)[number]): Promise<number> => {
       const frame = async (): Promise<number> => {
@@ -131,7 +134,7 @@ describe.skipIf(!device)('bench', () => {
     };
 
     // The heaviest row first, so the GPU is at full clock when the lighter rows are timed.
-    await measureRow(rowsToMeasure[4]);
+    await measureRow(rowsToMeasure[5]);
     const rows: { passes: string; msPerFrame: number }[] = [];
     for (const row of rowsToMeasure) rows.push({ passes: row.name, msPerFrame: await measureRow(row) });
     console.table(rows);
@@ -150,7 +153,7 @@ describe.skipIf(!device)('bench', () => {
     const sim = new Simulation(dev, WIDTH, HEIGHT, { seedSource: mulberry32(1) });
     sim.load(benchScene());
 
-    const maxPasses = 1024;
+    const maxPasses = 2048;
     const querySet = dev.createQuerySet({ type: 'timestamp', count: 2 * maxPasses });
     const resolved = dev.createBuffer({ size: 2 * maxPasses * 8, usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC });
     const staging = dev.createBuffer({ size: 2 * maxPasses * 8, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
@@ -202,6 +205,13 @@ describe.skipIf(!device)('bench', () => {
       msPerFrame: Number(median(samples.map((sample) => sample.get(key) ?? 0)).toFixed(2)),
     }));
     const total = rows.reduce((sum, row) => sum + row.msPerFrame, 0);
+    // The same samples by pass group (the solver's levels and kernels collapse into a few rows).
+    const groupOf = (key: string): string => key.slice(0, key.indexOf('/') < 0 ? undefined : key.indexOf('/'));
+    const groups = [...new Set([...samples[0].keys()].map(groupOf))];
+    console.table(groups.map((group) => ({
+      group,
+      msPerFrame: Number(median(samples.map((sample) => [...sample].reduce((sum, [key, ms]) => sum + (groupOf(key) === group ? ms : 0), 0))).toFixed(2)),
+    })));
     console.table([
       ...rows,
       { pass: 'TOTAL (sum of medians)', msPerFrame: Number(total.toFixed(2)) },

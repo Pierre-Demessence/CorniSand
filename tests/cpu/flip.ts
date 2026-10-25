@@ -20,6 +20,7 @@ import {
   applyGravity,
   DEFAULT_SOLVER,
   extrapolate,
+  type MultigridLevel,
   MultigridSolver,
   PressureSolver,
   sampleU,
@@ -206,6 +207,11 @@ export class FlipModel implements LiquidModel {
       u: grid.u, v: grid.v, p: grid.p, flags: grid.flags, density: grid.density,
       uWeight: uw, vWeight: vw,
     };
+  }
+
+  /** The multigrid levels of the last projection (weights, diagonals); empty with the plain solver. */
+  debugLevels(): MultigridLevel[] {
+    return this.solver instanceof MultigridSolver ? this.solver.levels : [];
   }
 
   step(n: number): void {
