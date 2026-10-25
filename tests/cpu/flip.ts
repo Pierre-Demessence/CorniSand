@@ -20,6 +20,7 @@ import {
   applyGravity,
   DEFAULT_SOLVER,
   extrapolate,
+  MultigridSolver,
   PressureSolver,
   sampleU,
   sampleV,
@@ -31,6 +32,8 @@ export interface FlipOptions {
   /** Grid cells per fluid cell: the pressure solve runs on the coarser grid, particles keep their own resolution. */
   k: 1 | 2;
   solver: SolverParams;
+  /** Which pressure solver projects: the plain red-black sweeps or multigrid. */
+  method: 'sor' | 'multigrid';
   /** Share of the grid's velocity change that is added to the particle's own velocity (1 = pure FLIP, 0 = pure PIC). */
   flipRatio: number;
   /** Fraction of velocity removed each step. */
@@ -46,6 +49,7 @@ export interface FlipOptions {
 export const DEFAULT_FLIP: FlipOptions = {
   k: FLUID.k,
   solver: DEFAULT_SOLVER,
+  method: FLUID.solver,
   flipRatio: FLUID.flipRatio,
   damping: FLUID.damping,
   stiffness: FLUID.stiffness,
@@ -137,7 +141,7 @@ export class FlipModel implements LiquidModel {
     const { k } = this.options;
     this.grid = new FluidGrid(width, height, k);
     this.prev = new FluidGrid(width, height, k);
-    this.solver = new PressureSolver(this.grid);
+    this.solver = this.options.method === 'multigrid' ? new MultigridSolver(this.grid) : new PressureSolver(this.grid);
     this.usum = new Float32Array(this.grid.u.length);
     this.uw = new Float32Array(this.grid.u.length);
     this.vsum = new Float32Array(this.grid.v.length);

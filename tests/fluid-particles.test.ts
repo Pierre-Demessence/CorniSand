@@ -108,7 +108,7 @@ describe.skipIf(!device)('GPU particle store', () => {
     loadScene(sim, scene.cells);
     await sim.fluid.seedVelocities(5);
 
-    const cpu = new FlipModel();
+    const cpu = new FlipModel({ method: 'sor' });
     cpu.load(scene);
     cpu.seedVelocities(5);
     const expected = cpu.debugState();

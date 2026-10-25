@@ -8,7 +8,12 @@ export const FLUID = {
   k: 1,
   /** Downward acceleration in cells per step squared. */
   gravity: 0.05,
-  /** Red-black sweeps per pressure projection. */
+  /**
+   * Pressure solver of the CPU reference (`tests/cpu/flip.ts`): 'multigrid' or the plain red-black 'sor' below.
+   * The WGSL passes still run the sweeps until M1.5c.3c, so the GPU parity tests pin the reference to 'sor'.
+   */
+  solver: 'multigrid',
+  /** Red-black sweeps per pressure projection of the plain solver. */
   iterations: 40,
   omega: 1.85,
   /**
