@@ -41,9 +41,9 @@ export const FLUID = {
   /** Fraction of velocity removed each step. */
   damping: 0.005,
   /** Outflow per step demanded of a cell for each full particle density it holds above rest. */
-  stiffness: 0.5,
+  stiffness: 0.1,
   /** Same for a cell below rest density that is surrounded by liquid, which pulls the gap closed. */
-  pull: 0.5,
+  pull: 0.1,
   /** Layers one cell deep that rest on a solid do not flow sideways (wetting). */
   film: true,
   /** Particles per liquid cell, on a regular 2 x 2 lattice. */
