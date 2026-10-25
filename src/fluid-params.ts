@@ -11,6 +11,24 @@ export const FLUID = {
   /** Red-black sweeps per pressure projection. */
   iterations: 40,
   omega: 1.85,
+  /**
+   * Multigrid pressure solve (docs/decisions.md): conjugate gradients, each iteration preconditioned by one V-cycle
+   * over 2 x 2 aggregates. Conjugate-gradient iterations (one V-cycle each) per projection, warm-started from the previous projection's pressure.
+   */
+  cycles: 2,
+  /** Red-black smoothing pairs on each level before restricting (pre) and after prolonging (post, in reverse order). */
+  preSweeps: 2,
+  postSweeps: 2,
+  /** Relaxation of the multigrid smoother; `omega` is the plain solver's and makes a poor smoother. */
+  smootherOmega: 1,
+  /** Scale of the coarse correction: piecewise-constant transfer halves it on a 2D grid, so 2 restores it. */
+  correctionScale: 2,
+  /** Coarsening stops at the first level whose sides are both at most this. */
+  coarsestSize: 8,
+  /** Red-black pairs on the coarsest level, run forward then again in reverse so the cycle stays symmetric. */
+  coarsestSweeps: 10,
+  /** Use the V-cycle as the conjugate-gradient preconditioner; false runs bare V-cycles, which can diverge. */
+  preconditioned: true,
   /** Where the surface sits between a liquid cell center (0) and the air cell center (1). */
   theta: 0.5,
   /** Share of the grid's velocity change added to a particle's own velocity (1 = pure FLIP, 0 = pure PIC). */

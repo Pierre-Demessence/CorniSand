@@ -38,6 +38,16 @@ Rejected:
 - A cell is liquid whenever a particle sits in it: the volume shown then varies with particle spacing; the ranking keeps it exact.
 - `k = 2` (one fluid cell per 2×2 grid cells, a 4× cheaper solve): fails AC2, AC5, AC6 and AC11 on the CPU reference. It stays a cost lever (backlog D15).
 
+## The pressure solve is multigrid-preconditioned conjugate gradients
+
+Red-black SOR passes pressure about one cell per half-sweep, so at screen height (408×480, 512×1200) 40 pairs per step leave the solve unconverged, deep water compresses and its surface sits a fifth too low. The pressure is solved by conjugate gradients, each iteration preconditioned by one geometric multigrid V(2,2) cycle (2×2 aggregates, Galerkin coarse operators, coarse correction scaled by 2), warm-started from the previous step. On the first projection of the screen-size scenes it cuts the largest residual 3–4× per iteration; three or four iterations from zero reach what 1,000 SOR pairs reach. The parameters are in `FLUID`, the CPU reference is `MultigridSolver` (`tests/cpu/solver.ts`), and `SCREEN=1 npx vitest run solver-screen` reruns the measurements.
+
+Rejected:
+
+- Bare V-cycles of the same multigrid: piecewise-constant transfer under-corrects, and the over-correction that compensates makes them stall at 0.5–0.8 per cycle on the U-tubes and diverge on the 512×1200 pool. Conjugate gradients choose the step size themselves, so they cannot diverge this way.
+- A W-cycle: 0.2 to 0.8 per cycle depending on the correction scale and the coarsest size, with no setting that works on every scene.
+- Bilinear prolongation: needs 9-point coarse operators, which red-black smoothing cannot update in two colors; not needed once conjugate gradients met the bar.
+
 ## One cell per CSS pixel, grid fixed at load
 
 The grid matches the canvas size in CSS pixels when the page loads and ignores `devicePixelRatio`: the falling-sand look is one visible pixel per cell, and a HiDPI grid would multiply memory and GPU cost by up to 4× or more. Resizing reconfigures the swap chain and stretches the existing grid instead of reallocating it, so the world is never lost on resize.
