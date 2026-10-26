@@ -1,0 +1,250 @@
+# M4 Element engine
+
+Status: plan written, waiting for approval. Next: M4.1.
+
+## Goal
+
+Every material is a row in one element table, and cells move by a velocity, so that the rest of The Powder Toy (TPT) can be added element by element. Liquids flow by local rules as in TPT instead of the FLIP simulation, which is removed, and the whole screen full of particles runs well inside the frame budget.
+
+## Scope
+
+In: the movement-model prototype (research doc Q3, options A and C), removal of the FLIP liquids, liquids as CA rules, per-cell fields in separate buffers, the element table driving the CA, the brush, the display and the toolbar, movement by velocity with the chosen model, the bench at full screen.
+
+Not in M4, each arrives with the first rule that reads it: heat and pressure properties and transitions (M5, M6), `ctype` and `tmp` fields (first element that needs them), a blast or wind tool (M6 brings pressure and wind; M4 uses scenes), sleeping regions for the CA (only if M4.6 misses the budget), B10 (variant shading).
+
+Deviation from the roadmap text: M4's table holds only the properties M4's rules read (movement, density, flammability, lifetime, color). The roadmap lists heat and pressure properties too; they arrive with M5 and M6, so no column exists that nothing reads (AGENTS.md "Never tune a constant without confirming the value reaches a rule"). M4.4 updates the roadmap wording.
+
+## Terms
+
+- **Dispatch**: one Margolus CA pass over the 2×2 blocks. **Superstep**: two dispatches (offset 0 then 1). The 1x speed is 4 supersteps per frame.
+- **Velocity** is in cells per dispatch. y = 0 is the bottom row; gravity points to −y.
+- **Flyer** (option C only): a cell that left the grid and moves as a free particle with a float position until it lands.
+
+## Acceptance criteria
+
+Prototype (M4.1)
+
+- AC1 WHEN the prototype measurement runs (`npm run bench`), THE SYSTEM SHALL report, for the baseline rules, model A and model C: GPU time per 1x frame at 2560×1340 for scenes T1–T4, the pile angle of P1, the 99th-percentile debris distance of P2, the wind drift of P3, the jammed-flyer count (C), and whether two runs with the same seed are bit-identical.
+- AC2 WHEN any prototype scene runs under any model, THE SYSTEM SHALL keep the number of grains exactly constant (grid plus flyers in flight).
+- AC3 WHEN the measurements are in, THE SYSTEM SHALL pick the model by the decision rule of M4.1, recorded in `docs/decisions.md`, and the user approves it at the M4.1 gate.
+
+Liquids and FLIP removal (M4.2)
+
+- AC4 WHEN M4.2 is done, THE SYSTEM SHALL contain no FLIP code, CPU fluid reference, liquid acceptance suite or FLIP-only doc, backlog or decision entry (`git grep -i "flip\|fluid\|particleBuffer"` over `src`, `tests`, `docs`, `AGENTS.md` finds only the I11 idea and the new liquids decision).
+- AC5 WHEN the `damBreak` scene runs, THE SYSTEM SHALL keep the water count unchanged and reach a surface where every column's water height is within 1 cell of every other (`flatness` ≤ 1) within 2,000 supersteps.
+- AC6 WHEN the `oilOnWater` scene runs, THE SYSTEM SHALL have no oil cell below a water cell in any column after 1,000 supersteps, and keep both counts unchanged.
+- AC7 WHEN sand is dropped into water or oil, THE SYSTEM SHALL sink it to the floor; WHEN smoke starts under water or oil, THE SYSTEM SHALL bring it above the surface; the fire tests (oil burns, water puts fire out, burning never raises the oil count) pass without particles.
+
+Cell fields (M4.3)
+
+- AC8 THE SYSTEM SHALL declare the per-cell fields once (`src/cell-fields.ts`), one storage buffer each, and generate every shader's accessors from that list; adding a field is one entry there plus the rules that use it.
+- AC9 WHEN a cell moves, THE SYSTEM SHALL move all its fields with it: a sand grain loaded with a non-zero `life` still has that `life` where it lands.
+- AC10 THE SYSTEM SHALL update the cells in place (one buffer per field, no ping-pong); two runs with the same seed are bit-identical, and every behavior test of M4.2 still passes.
+
+Element table (M4.4)
+
+- AC11 THE SYSTEM SHALL describe every current material (empty, sand, wall, water, smoke, oil, fire) as a row of `src/elements.ts`; no shader, HTML or TS file outside the table names an element ID except through the generated constants, and the toolbar is built from the table with the current order and labels.
+- AC12 WHEN a test passes the simulation a table with one extra powder row (density between water and sand) and no other change, THE SYSTEM SHALL make it fall, pile, sink through water and stay on top of sand.
+- AC13 WHEN a test passes a table with one extra element that has an optional rule, THE SYSTEM SHALL run that rule for cells of that element only.
+
+Movement (M4.5)
+
+- AC14 WHEN a powder or liquid cell falls from rest through empty space, THE SYSTEM SHALL accelerate it by its element's gravity: its height after n dispatches matches the discrete free-fall formula within 1 cell until it reaches its top speed.
+- AC15 WHEN a cell moves faster than one cell per dispatch, THE SYSTEM SHALL never let it pass through a wall one cell thick.
+- AC16 WHEN a pile has settled, THE SYSTEM SHALL hold every velocity in it at exactly 0.
+- AC17 WHEN the `blast` scene runs, THE SYSTEM SHALL throw debris at least as far as the prototype's chosen model did on P2 (within 10%), conserve every element's count, and rerun bit-identically.
+- AC18 (model C only) WHEN more cells launch than the flyer cap, THE SYSTEM SHALL keep the rest moving in the CA and lose nothing.
+
+Budget and docs (M4.6)
+
+- AC19 WHEN `npm run bench` runs on the RTX 4080, THE SYSTEM SHALL spend at most 4 ms of GPU time per 1x frame at 2560×1340 on each of `mix75`, `full100` and `blast` (M4's share of the 12 ms simulation budget, leaving 8 ms for heat, air, electricity, gravity and light).
+- AC20 WHEN M4 is done, THE SYSTEM SHALL have `docs/simulation.md`, `AGENTS.md`, `docs/decisions.md`, `docs/backlog.md`, the TPT topic doc and the roadmap describing the element engine, with the M4 roadmap entry and this plan deleted.
+
+## Design
+
+### M4.1 Movement prototype
+
+A standalone harness, not wired into the game, so FLIP's ~300 idle dispatches per frame do not pollute the timing and the game keeps working. Sand, wall and empty only. It reuses `cell.wgsl.ts` (cell word, `pcg`, `hash2`) and nothing else.
+
+- `src/proto/movement.ts`: `MovementProto(device, width, height, { model: 'baseline' | 'a' | 'c', seed })` with `load(cells, velocities?)`, `simulate(encoder, supersteps)`, `blast(x, y, radius, speed)`, `setWind(ax, ay)`, read-back helpers and a `render` with its own small display shader (flyers drawn on top).
+- `src/proto/shaders.ts`: the WGSL of the three models.
+- State: the cell word as today, plus `motion: vec4f` per cell (vx, vy, remainder x, remainder y). Both live in single buffers updated in place: a Margolus thread reads and writes only its own block, so blocks never race (this also tries out M4.3's in-place layout).
+- **baseline**: today's sand rules (fall, slide), velocity ignored. The cost and pile reference.
+- **A, velocity-driven Margolus**: per dispatch, in each block: velocity += gravity (and wind on exposed grains, P3), remainder += velocity; a cell whose remainder reaches ±1 on an axis tries the neighbor in that direction if it is inside the block (the alternating offset gives each direction a chance every superstep), moves when the target is empty, and subtracts the step from the remainder. A blocked axis zeroes that velocity component and clamps the remainder; a grain blocked below falls back to the diagonal slide rule. Speed is clamped to 1 cell per dispatch.
+- **C, hybrid**: A, plus: a cell whose speed exceeds `launchSpeed` (above A's clamp) launches. Once per superstep:
+  1. *Launch*: a prefix sum over the cells with speed > `launchSpeed`, in cell order, gives each one a flyer slot after the live flyers; the cell becomes empty and the flyer carries the cell word, position (cell center + remainder) and velocity. Past the cap (`MAX_FLYERS`, 2^18) the cell stays in the CA with its speed clamped.
+  2. *Flight*: each flyer adds gravity and drag for two dispatches, then walks the cells from its position to the new one (a DDA over the grid, read-only). It stops in the last empty cell before a non-empty one.
+  3. *Landing*: a flyer that hit something, or whose speed dropped below `launchSpeed`, claims its stop cell with `atomicMin(claim[cell], slot)`. A second pass writes the winners into the grid with their remaining velocity, clamped to A's maximum, and clears the claims. Losers stay airborne and retry the next superstep; a retry counter per flyer feeds the jam metric.
+  4. *Compaction*: a stable prefix-sum compaction drops the landed flyers, keeping the order.
+  Every slot comes from a prefix sum in a fixed order and every conflict is resolved by the slot index, so nothing depends on thread scheduling and reruns are bit-identical. Flyers do not collide with each other in flight.
+- Constants: gravity, drag, `launchSpeed` and the cap live in `src/proto/params.ts`, chosen before the first measurement and frozen. Suggested start: gravity 1/32 cell/dispatch² (a grain reaches A's top speed after falling 16 cells), flyer drag 1/64 per dispatch, `launchSpeed` 1.5.
+
+Scenes (physics metrics on a 1024×512 tank with 2-cell walls; timing at 2560×1340):
+
+- **P1 pour**: sand poured from a 4-cell-wide source at the top center for 2,000 supersteps, then 500 to settle. Pile angle: least-squares slope of the column heights on each flank between 10% and 90% of the peak, in degrees, both flanks averaged.
+- **P2 blast**: a 100-deep sand layer; at the center of its surface, every grain within radius 32 gets an outward speed of 8 cells/dispatch at the center, falling linearly to 0 at the radius (A clamps it to 1). Metric: the 99th-percentile distance from the blast center of the grains that started inside the radius, after 120 supersteps. A grain is followed by a marker bit in its variant byte.
+- **P3 wind**: a 10-deep sand layer; grains with an empty cell above get an acceleration of (+1/64, +1/256) per dispatch. Metric: shift of the grains' horizontal center of mass after 400 supersteps.
+- **Timing** (median of 60 frames at 1x after a warm-up, on the RTX 4080): T1 full screen of sand at rest; T2 the top half sand over an empty bottom half, from load; T3 (C) blasts that keep about 100k flyers in the air, and one at the cap; T4 A at 2x and 4x speed on T1 and T2, the "more steps per frame" alternative for fast debris (also its P2 distance at 4x).
+- **Determinism**: P2 twice from the same seed; the cell, motion and flyer buffers compared word for word.
+
+Decision rule, fixed before measuring. C if all of:
+
+- c1: AC2 and determinism hold for A and C.
+- c2: C's P2 debris distance is at least 3× A's at 1x.
+- c3: C costs at most 0.5 ms more than A on T1 and T2.
+- c4: C with 100k flyers (T3) costs at most 2 ms more than A on T1.
+- c5: the P1 pile angles of A and C are within 5° of each other.
+- c6: at most 1% of the flyers launched in P2 retry their landing for 8 supersteps or more.
+
+Otherwise A. If only c3, c4 or c6 fail, by less than half their margin, the gate shows both and recommends one; the user decides.
+
+The user sees it on a dev-only page: `proto.html` at the repo root (Vite serves it with `npm run dev`; `vite build` builds `index.html` only, so it never ships). It runs A and C side by side on the same scene and seed, with a scene picker (pour, blast, wind) and a reset; a click blasts both halves at the same spot.
+
+Measurements: `tests/proto-movement.bench.gpu.ts`, added to `vitest.bench.config.ts`'s `include`, prints the tables. Correctness on small grids (AC2, determinism, a fast grain against a 1-cell wall): `tests/proto-movement.test.ts`, GPU-skipping like the other suites. The results go in this plan, section "M4.1 results".
+
+When the model is approved: a `docs/decisions.md` entry "Cells move by velocity", named after the chosen model (the decision, the numbers that settled it, the other model as the rejected alternative). Option B is rejected there without a prototype: its cost grows with every moving particle, dense piles make most claims conflict, and density swaps and reactions would need a second mechanism.
+
+### M4.2 FLIP removal and liquids as CA rules
+
+Removed: `src/fluid.ts`, `src/fluid-params.ts`, `src/shaders/fluid-*.wgsl.ts`, the particle spawning in `brush.wgsl.ts`, `Simulation.create` and the capacity probe, the fluid options of `SimulationOptions`; `tests/cpu/`, `tests/fluid-*.test.ts`, `tests/liquid*.ts`, `tests/liquids-*.test.ts`, `tests/gpu-liquid-model.ts`, the fluid helpers of `tests/gpu.ts`, the FLIP-specific scenes (`deepPool`, `uTubeLarge`, `uTubeHuge`, `uTubeUnequal`, `uTubeOil`, `sealedChamber`, `droplet`, `film`) and the `Scene` fields and metrics no remaining test reads. `basin`, `damBreak`, `sandIntoPool`, `oilOnWater` and `uTube` stay as `?scene=` scenes (`uTube` now shows the documented limit: the arms do not level).
+
+Liquid rules in the CA shader (renamed `solid-ca.wgsl.ts` → `ca.wgsl.ts`), in the spirit of TPT's liquids:
+
+- fall into the cell below when it is empty, gas, or a lighter liquid (water through oil);
+- blocked below, slide to the opposite bottom corner like sand;
+- otherwise move sideways into an empty cell of the same row, direction from the block's random word, only if the cell did not already move in this dispatch (as smoke does);
+- a heavier liquid above a lighter one swaps down; side by side, different liquids never swap, so a layered body stays layered.
+
+Sand sinks through liquids and smoke rises through them as today. Burning oil no longer removes particles. The invariants about liquid particles and "the CA never moves liquid" go.
+
+Docs: `docs/decisions.md` replaces the four liquid entries (velocity field and global pressure solve, FLIP particles, multigrid solve, weak density correction) with one, "Liquids move by CA rules, as in TPT": local rules cannot level connected vessels, TPT has the same limit, FLIP cost 49 ms a frame at full screen, the rejected alternative of keeping FLIP as an option and why (research doc, "The realistic water"), and where the measurements are (`git log --all -- docs/plans/physics-foundation.md`, `git log --all -- src/fluid.ts`). `docs/backlog.md` deletes B12, D13–D15, D18–D22, I8 and I9, rewrites I10 to its scenes part, and updates the pointers of D11 and D17. `docs/simulation.md` loses the Liquids section and documents the liquid rules. `AGENTS.md` loses the fluid commands, layout entries and invariants. The research doc has no open question left once M4.1 and this item are done: it becomes the topic doc `docs/powder-toy.md` (what TPT simulates, how each part maps to the GPU, the frame budget, beyond TPT; the Q3 and realistic-water sections go, their decisions now in `docs/decisions.md`), and the roadmap and the AGENTS.md docs map point to it.
+
+Bench (`tests/bench.gpu.ts`) is rewritten for the CA alone: ms per frame at 2560×1340 at 1x to 8x for `tank` (the current bench scene) and `mix75` (75% of the cells a random mix of sand, water, oil and smoke, the rest empty, so everything keeps moving), plus the creation timing (D17). Its numbers are M4's baseline.
+
+### M4.3 Cell fields in separate buffers, updated in place
+
+- `src/cell-fields.ts`: `CELL_FIELDS`, an ordered list of `{ name, wgslType }` (each field one 32-bit word per cell: `u32`, `i32`, or `f32`, or a packed pair read with `unpack2x16float`). M4.3 has `kind` (bits 0–7 element, 8–15 variant, 16–31 reserved) and `life` (`u32`). M4.5 adds the motion field(s); M5 adds temperature the same way.
+- `src/cell-buffer.ts` becomes `CellFields`: one `STORAGE | COPY_SRC | COPY_DST` buffer per field, `load(fields)`, `clear()`, `read(name)` for tests.
+- Generated WGSL (`src/shaders/cell.wgsl.ts`): `struct Cell { kind: u32, life: u32 }`, the bindings of every field in one bind group (`@group(1)`, binding = field index, `read_write` or `read` per pass), `loadCell(i) -> Cell`, `storeCell(i, Cell)`, and the existing accessors on `kind`.
+- In place: the CA reads its block, runs the rules and writes back only the fields of the cells that changed. Blocks are disjoint, so this is race-free; the invariant becomes "a CA rule reads and writes only the cells of its own block". The brush, the counter and the display bind the same buffers; nothing swaps.
+- `CELL_BYTES` (used to size buffers against the device limits in `grid.ts`) becomes the sum over the fields.
+- Scenes produce `Record<fieldName, Uint32Array>` (missing fields are zero); `packCell` keeps packing the `kind` word.
+- `docs/decisions.md`: "Cell state in storage buffers, one packed u32 per cell" becomes "Per-cell fields in separate buffers, updated in place" (a pass binds and reads only the fields it uses; in place halves the memory and skips writes for blocks that did not change; rejected: ping-pong pairs, one struct per cell).
+
+### M4.4 Element table
+
+- `src/elements.ts` replaces `src/particles.ts`:
+
+  ```ts
+  interface ElementDef {
+    key: string;            // 'SAND'; generates ELEMENT.SAND and the WGSL constant EL_SAND
+    id: number;             // stable, never reused
+    label: string;          // toolbar text
+    color: [number, number, number];
+    state: 'empty' | 'solid' | 'powder' | 'liquid' | 'gas';
+    density: number;        // kg/m³ from physical data or our own tuning; a movable cell displaces a lighter one
+    flammable?: boolean;    // becomes fire when a fire cell is in its block
+    life?: { start: number; decay: number; becomes: string };  // fire: 200, 4, 'SMOKE'
+    rule?: string;          // optional WGSL rule, src/shaders/rules/<rule>.wgsl.ts
+    graphics?: string;      // optional color function in the display shader
+    toolbar?: number;       // position in the toolbar; absent = not paintable
+  }
+  ```
+
+  M4.5 adds the movement properties (gravity, drag). Densities: smoke below air (it rises), oil 900, water 1000, sand about 1600.
+- GPU: the table is packed into a uniform buffer `array<ElementProps, MAX_ELEMENTS>` (MAX_ELEMENTS 256, one 32-byte struct each, 8 KiB), with the WGSL struct and the TS packer generated from one field list. A uniform buffer rather than generated `const` arrays: indexed by a runtime type, it is one cached read, where a `const` array may be copied into every thread's private memory.
+- The CA becomes generic: movement by `state` and `density` (powders fall and slide, liquids also spread sideways, gases rise and spread, a movable cell displaces any lighter movable cell), then lifetimes (`decay`, `becomes`), then flammability, then the optional rules through a generated `switch` on the element. Fire's rule is "next to water becomes smoke"; burning, ignition and burnout are table rows. The phase order keeps the M4.2 tests passing.
+- `Simulation` and the shader generators take the table as an option (default `ELEMENTS`), which is how AC12 and AC13 add rows in a test without touching the game.
+- The brush takes the life start from the table; the display takes the color from it and calls `graphics` where set (fire's life-based color). `main.ts` builds the toolbar buttons from the table, so `index.html` no longer repeats the IDs and the help hint's key range follows the button count. Out-of-bounds reads stay `ELEMENT.WALL`; the counter still counts every cell that is not empty or wall.
+- `AGENTS.md` "Adding a particle type" becomes "Adding an element": a row, optionally a rule and a graphics function, a scene test; the `data-type` invariant goes. The roadmap's M4 wording drops the heat and pressure columns (see Scope).
+
+### M4.5 Movement by velocity
+
+Ports the approved model from `src/proto/` into the engine, then deletes `src/proto/`, `proto.html` and the prototype tests.
+
+- Motion state as `CELL_FIELDS` entries, at most 8 bytes per cell: velocity as two `f16` in one word (`pack2x16float`), and the sub-cell remainder in a second word unless M4.5's measurements show a cheaper encoding with the same test results.
+- Element properties `gravity` (cells/dispatch², 0 for walls, negative for gases if smoke's tests still pass that way) and `drag`.
+- The generic movement phase of M4.4 is driven by velocity as in the prototype; liquids keep their sideways spread and gases their random spread on top of it.
+- If C: the flyer passes (launch, flight, landing, compaction) run once per superstep between the CA dispatches, in the frame's one compute pass. The flyer struct is generated from `CELL_FIELDS`, so a flyer carries every field (temperature included, in M5) without extra code. The display draws flyers from a per-frame overlay buffer (a scatter of the flyers' cells). The brush's erase and replace remove flyers inside the stroke; Clear empties the flyer list; the particle counter adds the live flyers.
+- Scenes `pile` and `blast` (a sand layer with P2's initial velocities, loaded through the velocity field), shown with `?scene=`. No blast or wind tool before M6.
+- The D5 test "a sand grain falls two cells per superstep" becomes AC14: grains now accelerate. Visible change: falling things speed up instead of falling at one constant speed.
+
+### M4.6 Budget and docs
+
+- Bench scenes `mix75`, `full100` (every cell a random mix of sand, water, oil and smoke inside the wall frame: constant density swaps) and `blast` (with flyers, under C), at 1x to 8x, with per-pass timestamps.
+- If a scene misses AC19: measure where the time goes, and apply the levers that do not change the look (fewer bound fields per pass, skipping blocks that are uniformly empty or solid); if that is not enough, stop at a gate with the numbers and the remaining options (sleeping tiles for the CA, a lower default field size).
+- Docs: `docs/simulation.md` (element table, fields, movement, flyers), `AGENTS.md` (layout, invariants, adding an element), `docs/powder-toy.md` frame budget rewritten with the measured M4 numbers, the M4 roadmap entry deleted, backlog entries for anything deferred, this plan deleted in the last commit.
+
+### Edge cases and failure modes
+
+- Determinism: every random choice comes from `pcg`/`hash2` on block or cell coordinates and the dispatch seed; every list slot from a prefix sum in a fixed order; every conflict from the slot index. A GPU test reruns each model and scene from one seed and compares buffers.
+- In-place updates break silently if a rule reads outside its block: the M4.3 invariant states it, and the determinism test catches most violations (a race shows up as a mismatch between reruns).
+- A flyer landing where the brush just painted: the brush runs at frame start, flyers land after it; a claimed cell must be empty at landing, else the flyer retries.
+- Flyer cap reached: the extra cells stay in the CA, clamped (AC18).
+- `f16` velocity: the smallest gravity step must stay representable at top speed (1/32 next to 8 is fine in `f16`: about 3 decimal digits).
+- Grid sizing: `computeGrid` divides the buffer limit by the bytes of the largest field buffer, not the sum, since each field is its own buffer.
+
+## Checklist
+
+### M4.1 Movement prototype (options A and C) (tasks)
+
+- [ ] M4.1a `src/proto/params.ts`, `src/proto/shaders.ts`, `src/proto/movement.ts`: baseline, A and C as specified in Design; small-grid tests in `tests/proto-movement.test.ts` (grain conservation for every model and scene, bit-identical reruns, a grain at 8 cells/dispatch against a 1-cell wall under C, a launch past the cap). Verify: `npm test`, `npm run lint`, `npm run typecheck`.
+- [ ] M4.1b `proto.html` and `src/proto/main.ts`: A and C side by side, scene picker, reset, click to blast both. Verify in a browser on the user's running dev server (or one started for the check) that both halves run, a click blasts both, and the console shows no WebGPU error.
+- [ ] M4.1c `tests/proto-movement.bench.gpu.ts` in `vitest.bench.config.ts`: the metrics of P1–P3 and the timings T1–T4, as tables. Run `npm run bench` on the RTX 4080 (the test prints the adapter), record the tables and the decision rule's verdict in "M4.1 results" below.
+- [ ] M4.1d Gate: report the results to the user in plain words, with the `proto.html` steps to see the difference; on approval, add the movement decision to `docs/decisions.md`.
+
+Visible after: nothing in the game. A dev-only page, `proto.html` under `npm run dev`, shows the two movement models side by side.
+Needs you: the gate. Open `proto.html`, blast the sand in both halves, compare how far and how naturally debris flies, and approve the model.
+
+### M4.2 FLIP removal and CA liquids (tasks)
+
+- [ ] M4.2a Liquid rules in `ca.wgsl.ts`, with GPU tests AC5–AC7 in `tests/simulation.test.ts`. They land with M4.2b in one commit: the CA must move liquids from the moment FLIP stops writing them.
+- [ ] M4.2b Delete the FLIP code, tests, scenes and helpers listed in Design; `main.ts` uses `new Simulation`; `index.html` unchanged. Verify: `npm run lint`, `npm run typecheck`, `npm test`, `npm run build`; AC4's `git grep`.
+- [ ] M4.2c Rewrite `tests/bench.gpu.ts` for the CA (`tank`, `mix75`, creation timing); run it, record the numbers below as M4's baseline.
+- [ ] M4.2d Docs: the decisions, backlog, `simulation.md`, `AGENTS.md` changes listed in Design; research doc → `docs/powder-toy.md`; roadmap and docs map links.
+
+Visible after: water and oil flow by themselves in the TPT way: they fall, spread sideways, settle flat in a basin, oil stays on top of water. Connected vessels no longer level (the U-tube's arms stay uneven, as in TPT). Pouring a lot of liquid no longer slows the game down.
+Needs you: a quick browser check (steps in the item's report): pour water and oil into a wall basin, drop sand into them, set the oil on fire.
+
+### M4.3 Cell fields (tasks)
+
+- [ ] M4.3a `src/cell-fields.ts`, `CellFields`, generated accessors; CA, brush, counter and display on the field buffers, in place; scenes and `tests/gpu.ts` read and write fields by name. AC9 test (a `life` marker on a falling grain) and a determinism test (same seed, two runs, every field compared). Verify: lint, typecheck, `npm test`, build, `npm run bench` (record `tank` and `mix75` next to the M4.2 baseline).
+- [ ] M4.3b Docs: decisions entry, `simulation.md` cell format, `AGENTS.md` invariants (cell layout, in-place CA, block-only reads).
+
+Visible after: nothing: the cells' data is reorganized, the game behaves the same.
+Needs you: nothing.
+
+### M4.4 Element table (tasks)
+
+- [ ] M4.4a `src/elements.ts` with the seven current elements, generated constants, the uniform table and its packer; `particles.ts` removed and every user moved to `ELEMENT`. Verify: lint, typecheck, `npm test`.
+- [ ] M4.4b Generic CA phases driven by the table, fire's optional rule, generated rule `switch`; the `elements` option of `Simulation`. AC12 and AC13 tests; every M4.2 behavior test unchanged. Verify: `npm test`, bench (record).
+- [ ] M4.4c Brush, display (color, `graphics`) and toolbar from the table; unit test of the toolbar builder (labels, order, data attributes) on a table. Verify: lint, typecheck, `npm test`, build; a browser look that the toolbar and colors are unchanged.
+- [ ] M4.4d Docs: `AGENTS.md` "Adding an element", `simulation.md` (table, generic phases, density order), roadmap M4 wording.
+
+Visible after: nothing: the toolbar, colors and behaviors are the same, now driven by the table.
+Needs you: nothing.
+
+### M4.5 Movement by velocity (tasks)
+
+- [ ] M4.5a Motion fields, `gravity` and `drag` in the table, velocity-driven movement phase; AC14–AC16 tests; the D5 falling test replaced. Verify: `npm test`, bench.
+- [ ] M4.5b (C only) Flyer passes, overlay drawing, brush and Clear handling, counter; AC17–AC18 tests. Verify: `npm test`, bench, determinism test with flyers.
+- [ ] M4.5c Scenes `pile` and `blast`; delete `src/proto/`, `proto.html` and the prototype tests and bench file. Verify: lint, typecheck, `npm test`, build.
+
+Visible after: falling sand and water speed up as they fall; `?scene=blast` throws sand far across the field and it lands back into piles.
+Needs you: a browser look at `?scene=blast` and at pouring sand from high up, compared with the approved prototype.
+
+### M4.6 Budget and docs (tasks)
+
+- [ ] M4.6a Bench `mix75`, `full100`, `blast` with per-pass timing; AC19 on the RTX 4080, levers or gate as in Design.
+- [ ] M4.6b Docs per AC20; `docs/decisions.md` gets only what passes its test; deferred items to `docs/backlog.md`; this plan deleted in the final commit.
+
+Visible after: nothing new; the frame rate with a full screen of mixed materials is measured and within budget.
+Needs you: nothing, unless the budget is missed (then a decision at the gate).
+
+## M4.1 results
+
+Not measured yet.
+
+## Baseline (M4.2)
+
+Not measured yet.
