@@ -1,7 +1,7 @@
-import { MAX_ELEMENTS, STATES, elementByKey, validateElements, type ElementDef } from './elements';
+import { MAX_ELEMENTS, STATES, elementByKey, elementDrag, elementGravity, validateElements, type ElementDef } from './elements';
 
 // What the GPU reads of a row, in struct order: the WGSL `ElementProps` and `packElements` are both generated from this
-// list, so they cannot disagree. Eight 32-bit words, 32 bytes, which is a legal stride for a uniform array.
+// list, so they cannot disagree. Twelve 32-bit words, 48 bytes, which is a legal stride for a uniform array.
 interface PropField {
   name: string;
   wgslType: 'u32' | 'f32';
@@ -18,6 +18,11 @@ export const PROP_FIELDS: readonly PropField[] = [
   { name: 'lifeStart', wgslType: 'u32', value: (e) => e.life?.start ?? 0 },
   // The decay in bits 0-7, the ID of the element a cell becomes when its life runs out in bits 8-15.
   { name: 'lifeRule', wgslType: 'u32', value: (e, all) => (e.life ? e.life.decay | (elementByKey(all, e.life.becomes).id << 8) : 0) },
+  { name: 'gravity', wgslType: 'f32', value: (e) => elementGravity(e) },
+  { name: 'drag', wgslType: 'f32', value: (e) => elementDrag(e) },
+  // A uniform array's stride is a multiple of 16 bytes: two spare words complete the 48.
+  { name: 'spare0', wgslType: 'u32', value: () => 0 },
+  { name: 'spare1', wgslType: 'u32', value: () => 0 },
 ];
 
 const ROW_WORDS = PROP_FIELDS.length;

@@ -42,11 +42,12 @@ describe.skipIf(!device)('element table in the simulation', () => {
     cells[29 * width + 4] = cell(MUD);
     loadScene(sim, cells);
 
-    await runMany(sim, 8);
+    await runMany(sim, 12);
 
     const at = (await readCells(sim)).indexOf(cell(MUD));
     expect(at, 'the grain is still in the grid').toBeGreaterThanOrEqual(0);
-    expect(Math.floor(at / width), 'its row after 8 supersteps').toBeLessThan(29 - 8);
+    // It starts from rest and speeds up: about 8 cells in 12 supersteps.
+    expect(Math.floor(at / width), 'its row after 12 supersteps').toBeLessThan(29 - 5);
   });
 
   it('AC12: a powder row added to the table piles up instead of staying a column', async () => {

@@ -1,6 +1,6 @@
 # M4 Element engine
 
-Status: M4.1 to M4.4 done (the user's browser check of the liquids from M4.2 is open). Next: M4.5.
+Status: M4.1 to M4.5 done (the user's browser check of the liquids from M4.2 is open; AC19 is not met after M4.5, see M4.5 results). Next: M4.6.
 
 ## Goal
 
@@ -226,9 +226,9 @@ Needs you: nothing.
 
 ### M4.5 Movement by velocity (tasks)
 
-- [ ] M4.5a Motion fields, `gravity` and `drag` in the table, velocity-driven movement phase; AC14–AC16 tests; the D5 falling test replaced. Verify: `npm test`, bench.
-- [ ] M4.5b (C only) Flyer passes, overlay drawing, brush and Clear handling, counter; AC17–AC18 tests. Verify: `npm test`, bench, determinism test with flyers.
-- [ ] M4.5c Scenes `pile` and `blast`; delete `src/proto/`, `proto.html` and the prototype tests and bench file. Verify: lint, typecheck, `npm test`, build.
+- [x] M4.5a Motion fields, `gravity` and `drag` in the table, velocity-driven movement phase; AC14–AC16 tests; the D5 falling test replaced. Verify: `npm test`, bench.
+- [x] M4.5b (C only) Flyer passes, overlay drawing, brush and Clear handling, counter; AC17–AC18 tests. Verify: `npm test`, bench, determinism test with flyers.
+- [x] M4.5c Scenes `pile` and `blast`; delete `src/proto/`, `proto.html` and the prototype tests and bench file. Verify: lint, typecheck, `npm test`, build.
 
 Visible after: falling sand and water speed up as they fall; `?scene=blast` throws sand far across the field and it lands back into piles.
 Needs you: a browser look at `?scene=blast` and at pouring sand from high up, compared with the approved prototype.
@@ -356,3 +356,25 @@ Deviations from Design:
 7. Added tests: `tests/display.test.ts` renders one cell of each element and compares its pixel with the table's color (and fire at three life values); `tests/elements.test.ts` covers the table's validation and packing.
 8. Browser check (Playwright on a dev server, `?scene=sandIntoPool`): the six buttons in the old order and labels with Sand selected, the sand, water and smoke colors as before, no WebGPU error in the console. Fire's colors are covered by `tests/display.test.ts`, not by eye.
 9. `src/proto/` keeps working: its shaders take the element constants from `elementConstantsWGSL`, and its tests the `ELEMENT` map.
+
+## M4.5 results
+
+Tests: lint, typecheck, build and `npm test` (87 tests, GPU suites included) pass. AC14 to AC18 are tests in `tests/simulation.test.ts`: a grain falls as the discrete formula says within 1 cell for 23 supersteps (sand and water), a fast grain lands with all its fields, sand falling at a one-cell wall and a grain thrown sideways at 8 cells per step never get through, a settled pile ends with velocity and remainder exactly 0, the blast's debris p99 is at least 90% of the prototype's 237.1, a rerun is bit-identical in every field and every flyer, and launches past a cap of 64 flyers stay in the grid with no grain lost.
+
+The blast reproduces the prototype: p99 237.1 cells after 120 supersteps, 102,000 sand cells conserved, about 2,108 launched, 0 jammed, at most 5 retries.
+
+Browser check (Playwright on a dev server, `?scene=blast`, `?scene=pile`): the blast throws sand across the field and it lands into piles, the pile settles, no WebGPU error in the console.
+
+`npm run bench` (RTX 4080, 2560×1340, same method as M4.4), ms per frame at 1x: `tank` 6.4 (M4.4: 1.4), `mix75` 8.1 (M4.4: 1.5). **AC19 (4 ms at 1x) is not met.** The velocity CA costs about 1.1 ms per superstep against 0.14 to 0.36 before, and the flyer passes add about 0.3 ms per superstep with no flyer in the air. The M4.1 prototype measured 1.18 ms for the CA on T1 (a full grid at rest) and 1.31 ms with flyers, so the cost was expected to be this high at 1x; the 1x frame is four supersteps. Backlog D26 holds the levers for M4.6a: fewer bound fields per pass, skipping blocks that are uniformly empty or solid, avoiding runtime-indexed private arrays, fewer small dispatches per superstep.
+
+Deviations from Design:
+
+1. AC14 is checked with the sub-cell remainder included (`start − cell row − remainder`, tolerance 0.05 cells): the cell row alone lags the formula by up to 1.06 cells because the grain only changes cell when its remainder reaches 1.
+2. A table row is 12 words (48 bytes), not 8: gravity and drag are two more words and a uniform array's stride is a multiple of 16.
+3. Gases are not velocity-driven; they keep their constant-speed rules. Only powders and liquids gain gravity.
+4. The display reads the flyers through an overlay buffer at `@group(3)`, filled by `Simulation.recordOverlay` after `simulate`; the CA's launch counts use `@group(3)` too.
+5. Rules that rebuild a cell use `retype`, `withLife` and `withMotion` (backlog D25, deleted): every other field is kept.
+6. Binary16 friction never reaches 0, so a sideways speed below `restSpeed` (1/256) snaps to 0; without it a pile never reaches exactly zero (AC16).
+7. Only the brush's erase and replace reach a flyer (`Flyers.recordBrush`, run with the brush before the CA steps); everything else that acts on the grid misses flyers in flight (backlog I13, I14).
+8. The flyer state buffer holds the survivor counts as well, to stay within 8 storage buffers per stage.
+9. The prototype (`src/proto/`, `proto.html`, `tests/proto-*`) is deleted; `vitest.bench.config.ts` includes only `tests/bench.gpu.ts`.

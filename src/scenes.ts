@@ -1,5 +1,6 @@
 import { emptyCellData, type CellData } from './cell-fields';
 import { ELEMENT as T } from './elements';
+import { packHalf2 } from './half';
 
 // Columns [x0, x1) whose liquid is expected to settle at one shared level.
 export interface Chamber {
@@ -154,12 +155,64 @@ export function oilOnWater(): Scene {
   };
 }
 
+/** A 120x30 block of sand hanging 50 cells over the floor of a 200x120 tank. It falls, speeds up and piles. */
+export function pile(): Scene {
+  const width = 200;
+  const height = 120;
+  const canvas = tank(width, height);
+  canvas.fill(T.SAND, 40, 160, WALL + 50, WALL + 80);
+  return {
+    name: 'pile',
+    width,
+    height,
+    fields: canvas.fields,
+    floorY: WALL,
+    chambers: [{ name: 'tank', x0: WALL, x1: width - WALL }],
+  };
+}
+
+/** The variant bit `blast` sets on every grain it throws, so a test can follow them. */
+export const BLAST_MARK = 1;
+
+export const BLAST = { width: 1024, height: 512, depth: 100, radius: 32, speed: 8 };
+
+/** The blast's center: half a radius under the middle of the sand surface. */
+export const BLAST_CENTER = { x: BLAST.width / 2, y: WALL + BLAST.depth - BLAST.radius / 2 };
+
+/**
+ * A 100-deep layer of sand in a 1024x512 tank, already hit by a blast: every grain within 32 cells of the center
+ * starts with a velocity pointing away from it, 8 cells per step at the center falling to 0 at the edge. The grains
+ * above the center fly up and out, then land back in piles.
+ */
+export function blast(): Scene {
+  const { width, height, depth, radius, speed } = BLAST;
+  const canvas = tank(width, height);
+  canvas.fill(T.SAND, WALL, width - WALL, WALL, WALL + depth);
+  const { kind, velocity } = canvas.fields;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = y * width + x;
+      if (kind[i] !== packCell(T.SAND)) continue;
+      const dx = x + 0.5 - BLAST_CENTER.x;
+      const dy = y + 0.5 - BLAST_CENTER.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist >= radius) continue;
+      const push = dist > 0 ? (speed * (1 - dist / radius)) / dist : 0;
+      kind[i] = packCell(T.SAND, BLAST_MARK);
+      velocity[i] = packHalf2(dx * push, dist > 0 ? dy * push : speed);
+    }
+  }
+  return { name: 'blast', width, height, fields: canvas.fields, floorY: WALL, chambers: [] };
+}
+
 export const SCENES: Record<string, () => Scene> = {
   uTube,
   basin,
   damBreak,
   sandIntoPool,
   oilOnWater,
+  pile,
+  blast,
 };
 
 /** The scene registered under `name`; own keys only, so `?scene=constructor` does not match. */

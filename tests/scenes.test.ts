@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { CELL_FIELDS } from '../src/cell-fields';
 import { ELEMENT as T } from '../src/elements';
-import { findScene, packCell, SCENES, uTube } from '../src/scenes';
+import { unpackHalf2 } from '../src/half';
+import { BLAST, BLAST_CENTER, BLAST_MARK, findScene, packCell, SCENES, uTube } from '../src/scenes';
 import { cell } from './gpu';
 import { chamberLevel, liquidVolume } from './metrics';
 
@@ -16,7 +17,7 @@ describe('scenes', () => {
     for (const [name, build] of Object.entries(SCENES)) {
       const scene = build();
       for (const field of CELL_FIELDS) expect(scene.fields[field.name], `${name} ${field.name}`).toHaveLength(scene.width * scene.height);
-      for (const c of scene.fields.kind) expect(c >>> 8, name).toBe(0);
+      for (const c of scene.fields.kind) expect(c >>> 16, name).toBe(0);
       for (const c of scene.fields.kind) expect(Object.values(T), name).toContain(c & 0xff);
       for (const life of scene.fields.life) expect(life, name).toBe(0);
     }
@@ -26,6 +27,33 @@ describe('scenes', () => {
     for (const name of Object.keys(SCENES)) expect(findScene(name), name).toBeDefined();
     expect(findScene('damBreak')?.name).toBe('damBreak');
     for (const name of ['', 'nope', 'constructor', 'toString', '__proto__']) expect(findScene(name), name).toBeUndefined();
+  });
+
+  it('start the blast scene with outward velocities, fastest at the center, on marked sand only', () => {
+    const { fields: { kind, velocity }, width } = SCENES.blast();
+    let thrown = 0;
+    for (let i = 0; i < kind.length; i++) {
+      const [vx, vy] = unpackHalf2(velocity[i]);
+      if (velocity[i] === 0) {
+        expect(kind[i], 'a cell at rest is not marked').toBe(packCell(kind[i] & 0xff));
+        continue;
+      }
+      thrown++;
+      expect(kind[i], 'a thrown cell is marked sand').toBe(packCell(T.SAND, BLAST_MARK));
+      const dx = (i % width) + 0.5 - BLAST_CENTER.x;
+      const dy = Math.floor(i / width) + 0.5 - BLAST_CENTER.y;
+      expect(vx * dx + vy * dy, 'pointing away from the center').toBeGreaterThanOrEqual(0);
+      expect(Math.hypot(vx, vy)).toBeLessThanOrEqual(BLAST.speed * 1.01);
+    }
+    // About the area of the disc, less the part above the sand surface.
+    expect(thrown).toBeGreaterThan(1500);
+    expect(thrown).toBeLessThan(Math.PI * BLAST.radius ** 2);
+  });
+
+  it('start the pile scene at rest', () => {
+    const { fields } = SCENES.pile();
+    expect(fields.velocity.every((w) => w === 0)).toBe(true);
+    expect(fields.remainder.every((w) => w === 0)).toBe(true);
   });
 
   it('size the U-tube as specified', () => {

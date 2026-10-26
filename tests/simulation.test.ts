@@ -1,11 +1,17 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ELEMENT as T, ELEMENTS, elementByKey } from '../src/elements';
+import { CELL_FIELDS } from '../src/cell-fields';
+import { ELEMENT as T, ELEMENTS, elementByKey, elementGravity } from '../src/elements';
 import { Display } from '../src/display';
-import { SCENES } from '../src/scenes';
+import { packHalf2, unpackHalf2 } from '../src/half';
+import { MAX_FLYER_SLOTS, MOVEMENT } from '../src/movement';
+import { BLAST_CENTER, BLAST_MARK, SCENES, type Scene } from '../src/scenes';
+import type { Simulation } from '../src/simulation';
 import { cell, cellType, countTypes, createSim, device, idleInput, loadScene, mulberry32, readCells, run, runMany } from './gpu';
 import { columnsWithAbove, flatness } from './metrics';
 
 const FIRE_MAX_LIFE = elementByKey(ELEMENTS, 'FIRE').life!.start;
+// The 99th-percentile distance of the grains of the M4.1 prototype's P2 (model C): docs/plans/m4-element-engine.md.
+const PROTOTYPE_BLAST_P99 = 237.1;
 
 function emptyGrid(width: number, height: number): Uint32Array<ArrayBuffer> {
   return new Uint32Array(width * height);
@@ -239,21 +245,6 @@ describe.skipIf(!device)('GPU simulation', () => {
     expect(after.get(T.FIRE) ?? 0).toBe(0);
   });
 
-  it('D5: a sand grain over empty space falls two cells per superstep', async () => {
-    const width = 9;
-    const height = 65;
-    const sim = createSim(width, height);
-    const cells = emptyGrid(width, height);
-    cells[61 * width + 4] = cell(T.SAND);
-    loadScene(sim, cells);
-
-    for (let step = 1; step <= 5; step++) {
-      await run(sim, 1);
-      const data = await readCells(sim);
-      expect(data.indexOf(cell(T.SAND)), `after ${step} supersteps`).toBe((61 - 2 * step) * width + 4);
-    }
-  });
-
   it('D5: smoke rises two cells per superstep', async () => {
     const width = 9;
     const height = 65;
@@ -267,6 +258,255 @@ describe.skipIf(!device)('GPU simulation', () => {
       const data = await readCells(sim);
       expect(data.indexOf(cell(T.SMOKE)), `after ${step} supersteps`).toBe((2 + 2 * step) * width + 4);
     }
+  });
+
+  it.each([['sand', T.SAND, 'SAND'], ['water', T.WATER, 'WATER']])('AC14: a %s grain falls from rest with its element gravity', async (_name, type, key) => {
+    const width = 9;
+    const height = 600;
+    const start = 590;
+    const sim = createSim(width, height);
+    const cells = emptyGrid(width, height);
+    cells[start * width + 4] = cell(type);
+    loadScene(sim, cells);
+    const gravity = elementGravity(elementByKey(ELEMENTS, key));
+
+    // The discrete free fall: the grain gains `gravity` of speed on every dispatch but the first (it starts as the
+    // bottom cell of its block, which gravity skips) and moves by its speed, up to one cell per dispatch. It leaves the
+    // grid as a flyer when its speed passes 1.5, 24 supersteps in.
+    const fallen = (dispatches: number): number => {
+      let speed = 0;
+      let distance = 0;
+      for (let d = 1; d < dispatches; d++) {
+        speed += gravity;
+        distance += Math.min(speed, MOVEMENT.maxSpeed);
+      }
+      return distance;
+    };
+    for (let step = 1; step <= 23; step++) {
+      await run(sim, 1);
+      const at = (await readCells(sim)).indexOf(cell(type));
+      expect(at, `the grain is in the grid after ${step} supersteps`).toBeGreaterThanOrEqual(0);
+      // The grain's height is its cell plus the sub-cell remainder it still owes (negative: downward). The cell alone
+      // lags by up to a cell and a bit, as a cell moves only when it is the top cell of its block.
+      const owed = unpackHalf2((await sim.fields.read('remainder'))[at])[1];
+      expect(Math.abs(start - Math.floor(at / width) - owed - fallen(2 * step)), `cells fallen after ${step} supersteps`).toBeLessThanOrEqual(0.05);
+    }
+  });
+
+  it('AC14: a falling grain that passes the launch speed flies, and lands on the floor with all its fields', async () => {
+    const width = 9;
+    const height = 200;
+    const sim = createSim(width, height);
+    const kind = emptyGrid(width, height);
+    const life = emptyGrid(width, height);
+    kind[190 * width + 4] = cell(T.SAND, 77);
+    life[190 * width + 4] = 1234;
+    loadScene(sim, kind, life);
+
+    await runMany(sim, 30);
+    expect((await sim.flyers.readStats()).launched, 'it launched').toBe(1);
+    await runMany(sim, 120);
+
+    const stats = await sim.flyers.readStats();
+    expect(stats.live, 'flyers left').toBe(0);
+    expect(stats.landed).toBe(1);
+    const after = await readCells(sim);
+    expect(after.indexOf(cell(T.SAND, 77)), 'the grain rests on the floor').toBe(4);
+    expect((await sim.fields.read('life'))[4], 'its life word came along').toBe(1234);
+  });
+
+  it('AC15: sand falling fast onto a wall one cell thick never gets through, and everything lands above it', async () => {
+    const width = 9;
+    const height = 300;
+    const wallY = 20;
+    const sim = createSim(width, height, 6);
+    const cells = emptyGrid(width, height);
+    cells.fill(cell(T.WALL), wallY * width, (wallY + 1) * width);
+    for (const x of [1, 3, 4, 7]) cells[280 * width + x] = cell(T.SAND);
+    loadScene(sim, cells);
+
+    for (let k = 0; k < 14; k++) {
+      await runMany(sim, 10);
+      const after = await readCells(sim);
+      for (let i = 0; i < after.length; i++) {
+        if (cellType(after[i]) === T.SAND) expect(Math.floor(i / width), 'a grain in the grid').toBeGreaterThan(wallY);
+      }
+      const flyers = await sim.flyers.read();
+      for (const f of flyers) expect(f.y, 'a grain in flight').toBeGreaterThan(wallY + 1);
+      expect((countTypes(after).get(T.SAND) ?? 0) + flyers.length, 'grains').toBe(4);
+    }
+    const stats = await sim.flyers.readStats();
+    expect(stats.launched, 'they flew').toBe(4);
+    expect(stats.live, 'all landed').toBe(0);
+  });
+
+  it('AC15: a grain thrown sideways at 8 cells per step never gets through a wall one cell thick', async () => {
+    const width = 128;
+    const height = 64;
+    const wallX = 60;
+    const sim = createSim(width, height, 2);
+    const kind = emptyGrid(width, height);
+    for (let y = 0; y < height; y++) kind[y * width + wallX] = cell(T.WALL);
+    kind[40 * width + 20] = cell(T.SAND);
+    const velocity = emptyGrid(width, height);
+    velocity[40 * width + 20] = packHalf2(8, 0.5);
+    sim.load({ kind, velocity });
+
+    for (let k = 0; k < 8; k++) {
+      await runMany(sim, 10);
+      const after = await readCells(sim);
+      const flyers = await sim.flyers.read();
+      expect((countTypes(after).get(T.SAND) ?? 0) + flyers.length, 'grains').toBe(1);
+      for (let i = 0; i < after.length; i++) {
+        if (cellType(after[i]) === T.SAND) expect(i % width, 'the grain in the grid').toBeLessThan(wallX);
+      }
+      for (const f of flyers) expect(f.x, 'the grain in flight').toBeLessThan(wallX);
+    }
+    expect((await sim.flyers.readStats()).launched, 'it flew').toBeGreaterThan(0);
+  });
+
+  it('AC16: a settled pile holds every velocity and remainder at exactly 0', async () => {
+    const scene = SCENES.pile();
+    const sim = createSim(scene.width, scene.height, 4);
+    sim.load(scene.fields);
+    const sand = countTypes(scene.fields.kind).get(T.SAND)!;
+
+    await runMany(sim, 600);
+
+    const kind = await readCells(sim);
+    expect(countTypes(kind).get(T.SAND), 'sand cells').toBe(sand);
+    expect((await sim.flyers.readStats()).live, 'flyers in the air').toBe(0);
+    for (const field of ['velocity', 'remainder'] as const) {
+      const words = await sim.fields.read(field);
+      expect(words.filter((w) => w !== 0).length, `cells with a non-zero ${field}`).toBe(0);
+    }
+  });
+
+  describe('flyers', () => {
+    const initialSand = (scene: Scene): number => countTypes(scene.fields.kind).get(T.SAND)!;
+    const grains = async (sim: Simulation): Promise<number> => countTypes(await readCells(sim)).get(T.SAND)! + (await sim.flyers.readStats()).live;
+
+    it('AC17: the blast throws debris as far as the prototype did, and loses nothing', async () => {
+      const scene = SCENES.blast();
+      const sim = createSim(scene.width, scene.height, 11);
+      sim.load(scene.fields);
+      const before = countTypes(scene.fields.kind);
+
+      await runMany(sim, 120);
+
+      const kind = await readCells(sim);
+      const flyers = await sim.flyers.read();
+      const distances: number[] = [];
+      for (let i = 0; i < kind.length; i++) {
+        if (cellType(kind[i]) === T.SAND && ((kind[i] >> 8) & BLAST_MARK) !== 0) {
+          distances.push(Math.hypot((i % scene.width) + 0.5 - BLAST_CENTER.x, Math.floor(i / scene.width) + 0.5 - BLAST_CENTER.y));
+        }
+      }
+      for (const f of flyers) {
+        if (((f.cell.kind >> 8) & BLAST_MARK) !== 0) distances.push(Math.hypot(f.x - BLAST_CENTER.x, f.y - BLAST_CENTER.y));
+      }
+      distances.sort((a, b) => a - b);
+      const p99 = distances[Math.floor(0.99 * distances.length)];
+      expect(p99, '99th-percentile distance of the thrown grains, in cells').toBeGreaterThanOrEqual(PROTOTYPE_BLAST_P99 * 0.9);
+
+      const after = countTypes(kind);
+      expect(after.get(T.SAND)! + flyers.length, 'sand in the grid and in the air').toBe(before.get(T.SAND));
+      expect(after.get(T.WALL), 'wall cells').toBe(before.get(T.WALL));
+      const stats = await sim.flyers.readStats();
+      expect(stats.launched, 'the blast launched grains').toBeGreaterThan(1000);
+      expect(stats.jammed, 'grains that could not land').toBe(0);
+    });
+
+    it('AC17: a rerun from the same seed is bit-identical in every field and every flyer', async () => {
+      const scene = SCENES.blast();
+      const snapshot = async (): Promise<[Record<string, Uint32Array>, Uint32Array]> => {
+        const sim = createSim(scene.width, scene.height, 5);
+        sim.load(scene.fields);
+        await runMany(sim, 40);
+        const fields: Record<string, Uint32Array> = {};
+        for (const { name } of CELL_FIELDS) fields[name] = await sim.fields.read(name);
+        return [fields, await sim.flyers.snapshot()];
+      };
+      const [fieldsA, flyersA] = await snapshot();
+      const [fieldsB, flyersB] = await snapshot();
+
+      expect(flyersA.length, 'flyers were in the air').toBeGreaterThan(8);
+      expect(flyersB).toEqual(flyersA);
+      for (const name of Object.keys(fieldsA)) expect(fieldsB[name], name).toEqual(fieldsA[name]);
+    });
+
+    it('AC18: launches past the flyer cap stay in the grid, and no grain is lost', async () => {
+      const scene = SCENES.blast();
+      const maxFlyers = 64;
+      const sim = createSim(scene.width, scene.height, 11, { maxFlyers });
+      sim.load(scene.fields);
+      const sand = initialSand(scene);
+
+      await run(sim, 1);
+      const first = await sim.flyers.readStats();
+      expect(first.live, 'flyers in the air').toBeLessThanOrEqual(maxFlyers);
+      expect(first.launched, 'launches accepted').toBe(maxFlyers);
+      expect(first.capped, 'launches refused').toBeGreaterThan(0);
+      expect(await grains(sim)).toBe(sand);
+
+      for (let k = 0; k < 5; k++) {
+        await runMany(sim, 40);
+        expect((await sim.flyers.readStats()).live, 'flyers in the air').toBeLessThanOrEqual(maxFlyers);
+        expect(await grains(sim)).toBe(sand);
+      }
+    });
+
+    it('rejects a flyer cap the claim keys cannot address', () => {
+      expect(() => createSim(8, 8, 1, { maxFlyers: 0 })).toThrow(RangeError);
+      expect(() => createSim(8, 8, 1, { maxFlyers: MAX_FLYER_SLOTS + 1 })).toThrow(RangeError);
+    });
+
+    it('Clear empties the flyer list', async () => {
+      const scene = SCENES.blast();
+      const sim = createSim(scene.width, scene.height, 11);
+      sim.load(scene.fields);
+      await runMany(sim, 10);
+      expect((await sim.flyers.readStats()).live, 'flyers before Clear').toBeGreaterThan(0);
+
+      sim.clear();
+      await run(sim, 2);
+
+      expect((await sim.flyers.readStats()).live, 'flyers after Clear').toBe(0);
+      expect(countTypes(await readCells(sim)).get(T.SAND) ?? 0, 'sand after Clear').toBe(0);
+    });
+
+    it('the erase brush removes the flyers inside the stroke and leaves the others', async () => {
+      const scene = SCENES.blast();
+      const sim = createSim(scene.width, scene.height, 11);
+      sim.load(scene.fields);
+      await runMany(sim, 10);
+      const sand = await grains(sim);
+      expect((await sim.flyers.readStats()).live, 'flyers before the brush').toBeGreaterThan(0);
+
+      // Over empty sky, far from the blast: nothing to remove.
+      const away = { ...idleInput, mouseActive: true, erasing: true, brushSize: 5, mousePos: { x: 20, y: 400 }, prevMousePos: { x: 20, y: 400 } };
+      await run(sim, 1, away);
+      expect(await grains(sim), 'grains after erasing empty sky').toBe(sand);
+
+      // Over the whole field.
+      const everywhere = { ...away, brushSize: 2000, mousePos: { x: 512, y: 256 }, prevMousePos: { x: 512, y: 256 } };
+      await run(sim, 1, everywhere);
+      expect((await sim.flyers.readStats()).live, 'flyers after erasing everything').toBe(0);
+      expect(countTypes(await readCells(sim)).get(T.SAND) ?? 0, 'sand after erasing everything').toBe(0);
+    });
+
+    it('the particle count includes the flyers in the air', async () => {
+      const scene = SCENES.blast();
+      const sim = createSim(scene.width, scene.height, 11);
+      sim.load(scene.fields);
+      await runMany(sim, 10);
+      expect((await sim.flyers.readStats()).live, 'flyers in the air').toBeGreaterThan(0);
+
+      sim.requestParticleCount();
+      const counted = await sim.readParticleCount();
+
+      expect(counted).toBe(initialSand(scene));
+    });
   });
 
   it('AC9: cells carry every field with them: falling sand grains keep their life word', async () => {
@@ -329,7 +569,7 @@ describe.skipIf(!device)('GPU simulation', () => {
     const width = 64;
     const height = 48;
     const sim = createSim(width, height);
-    const display = new Display(dev, 'rgba8unorm', width, height, sim.fields, sim.elements);
+    const display = new Display(dev, 'rgba8unorm', width, height, sim.fields, sim.elements, sim.flyers.overlay);
     const target = dev.createTexture({
       size: [width, height],
       format: 'rgba8unorm',

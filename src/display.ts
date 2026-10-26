@@ -1,6 +1,7 @@
 import { displayWGSL } from './shaders/display.wgsl';
 import { GRAPHICS } from './shaders/graphics.wgsl';
 import type { CellFields } from './cell-field-buffers';
+import type { FlyerOverlay } from './flyers';
 import type { ElementTable } from './element-table';
 import type { Vec2 } from './input';
 
@@ -24,15 +25,25 @@ export class Display {
   private readonly uniformBindGroup: GPUBindGroup;
   private readonly cells: CellFields;
   private readonly elements: ElementTable;
+  private readonly flyers: FlyerOverlay;
   private readonly simWidth: number;
   private readonly simHeight: number;
 
-  constructor(device: GPUDevice, format: GPUTextureFormat, simWidth: number, simHeight: number, cells: CellFields, elements: ElementTable) {
+  constructor(
+    device: GPUDevice,
+    format: GPUTextureFormat,
+    simWidth: number,
+    simHeight: number,
+    cells: CellFields,
+    elements: ElementTable,
+    flyers: FlyerOverlay,
+  ) {
     this.device = device;
     this.simWidth = simWidth;
     this.simHeight = simHeight;
     this.cells = cells;
     this.elements = elements;
+    this.flyers = flyers;
 
     const shaderModule = device.createShaderModule({ code: displayWGSL(elements.elements, GRAPHICS) });
 
@@ -47,7 +58,7 @@ export class Display {
     });
 
     this.pipeline = device.createRenderPipeline({
-      layout: device.createPipelineLayout({ bindGroupLayouts: [uniformLayout, cells.readLayout, elements.layout] }),
+      layout: device.createPipelineLayout({ bindGroupLayouts: [uniformLayout, cells.readLayout, elements.layout, flyers.layout] }),
       vertex: {
         module: shaderModule,
         entryPoint: 'vs_main',
@@ -102,6 +113,7 @@ export class Display {
     pass.setBindGroup(0, this.uniformBindGroup);
     pass.setBindGroup(1, this.cells.readBindGroup);
     pass.setBindGroup(2, this.elements.bindGroup);
+    pass.setBindGroup(3, this.flyers.bindGroup);
     pass.draw(3); // Fullscreen triangle
     pass.end();
   }

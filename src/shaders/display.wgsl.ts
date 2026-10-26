@@ -49,6 +49,8 @@ fn vs_main(@builtin(vertex_index) vertexIndex: u32) -> VertexOutput {
 }
 
 @group(0) @binding(0) var<uniform> u: DisplayUniforms;
+// The kind word of the flyer in each cell, 0 where none flies (src/shaders/flyers.wgsl.ts, overlayWGSL).
+@group(3) @binding(0) var<storage, read> flyerKinds: array<u32>;
 
 fn ditherNoise(pos: vec2f) -> f32 {
   return fract(sin(dot(pos, vec2f(12.9898, 78.233))) * 43758.5453);
@@ -62,7 +64,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {
   let cellX = min(u32(uv.x * u.simResolution.x), w - 1u);
   let cellY = min(u32(uv.y * u.simResolution.y), h - 1u);
   let idx = cellY * w + cellX;
-  let cell = loadCell(idx);
+  var cell = loadCell(idx);
+  // A flyer is drawn in the empty cell it is over; one over a filled cell (it lands there next step) is not.
+  if (cellType(cell) == EL_EMPTY) { cell.kind = flyerKinds[idx]; }
   let pType = cellType(cell);
 
   // Background gradient with dithering

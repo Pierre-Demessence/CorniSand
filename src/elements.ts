@@ -18,6 +18,10 @@ export interface ElementDef {
   state: ElementState;
   /** kg/m³ from physical data or our own tuning. A heavier falling cell displaces a lighter one; a gas rises through a heavier liquid. */
   density: number;
+  /** Downward acceleration in cells per dispatch² of a powder or liquid; default `DEFAULT_GRAVITY` for those states, 0 for the others. Gases rise at a fixed speed and ignore it. */
+  gravity?: number;
+  /** Share of its velocity a flying cell of this element loses per dispatch; default `DEFAULT_DRAG`. */
+  drag?: number;
   /** Becomes fire when a fire cell is in its block. */
   flammable?: boolean;
   /** `life` counts down by `decay` per dispatch from `start` and the cell becomes the element `becomes` (a key) at 0. */
@@ -28,6 +32,20 @@ export interface ElementDef {
   graphics?: string;
   /** Order in the toolbar (lowest first; the n-th button is selected by number key n); absent: not paintable. */
   toolbar?: number;
+}
+
+// A grain reaches the CA's top speed (1 cell per dispatch) after falling 16 cells.
+export const DEFAULT_GRAVITY = 1 / 32;
+export const DEFAULT_DRAG = 1 / 64;
+
+/** The gravity of a row with its default for the state applied. */
+export function elementGravity(e: ElementDef): number {
+  return e.gravity ?? (e.state === 'powder' || e.state === 'liquid' ? DEFAULT_GRAVITY : 0);
+}
+
+/** The drag of a row with its default applied. */
+export function elementDrag(e: ElementDef): number {
+  return e.drag ?? DEFAULT_DRAG;
 }
 
 // The table is a uniform array of this many rows, and the cell stores the ID in 8 bits.
@@ -75,6 +93,8 @@ export function validateElements(elements: readonly ElementDef[]): void {
     ids.add(e.id);
     if (!STATES.includes(e.state)) throw new Error(`element ${e.key}: unknown state "${e.state}"`);
     if (!Number.isFinite(e.density)) throw new Error(`element ${e.key}: density must be a number`);
+    if (!(elementGravity(e) >= 0 && elementGravity(e) < Infinity)) throw new Error(`element ${e.key}: gravity must be a finite number, 0 or more`);
+    if (!(elementDrag(e) >= 0 && elementDrag(e) < 1)) throw new Error(`element ${e.key}: drag must be at least 0 and below 1`);
     // Rule and graphics names become WGSL identifiers (`rule_<name>`).
     for (const name of [e.rule, e.graphics]) {
       if (name !== undefined && !/^[a-z][a-z0-9_]*$/.test(name)) throw new Error(`element ${e.key}: "${name}" must be lower snake case`);

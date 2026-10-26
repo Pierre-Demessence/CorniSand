@@ -6,7 +6,9 @@ import { ElementTable } from './element-table';
 import { ELEMENTS, type ElementDef } from './elements';
 import { CellFields } from './cell-field-buffers';
 import type { CellData } from './cell-fields';
+import { Flyers } from './flyers';
 import type { Vec2 } from './input';
+import { MOVEMENT } from './movement';
 
 export interface SimulationInput {
   mousePos: Vec2;
@@ -25,6 +27,8 @@ export interface SimulationOptions {
   elements?: readonly ElementDef[];
   // WGSL of the element rules by name, added to the built-in ones.
   rules?: Readonly<Record<string, string>>;
+  // The most flyers in the air at once (default `MOVEMENT.maxFlyers`); launches past it stay in the grid.
+  maxFlyers?: number;
 }
 
 // A superstep is two CA dispatches (Margolus offset 0, then 1).
@@ -41,6 +45,7 @@ export class Simulation {
 
   readonly fields: CellFields;
   readonly elements: ElementTable;
+  readonly flyers: Flyers;
 
   // -- Brush pipeline: edits the cell fields in place --
   private readonly brushUniformData = new ArrayBuffer(BRUSH_UNIFORM_WORDS * 4);
@@ -93,6 +98,8 @@ export class Simulation {
       entries: [{ binding: 0, resource: { buffer: this.brushUniformBuffer } }],
     });
 
+    this.flyers = new Flyers(device, width, height, this.fields, this.elements, this.brushUniformBuffer, options.maxFlyers ?? MOVEMENT.maxFlyers);
+
     // -- CA setup --
     this.slotWords = device.limits.minUniformBufferOffsetAlignment / 4;
     this.slotData = new Uint32Array(MAX_DISPATCHES * this.slotWords);
@@ -104,8 +111,11 @@ export class Simulation {
       entries: [{ binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform', hasDynamicOffset: true } }],
     });
     this.caPipeline = device.createComputePipeline({
-      layout: device.createPipelineLayout({ bindGroupLayouts: [caLayout, this.fields.writeLayout, this.elements.layout] }),
-      compute: { module: device.createShaderModule({ code: caWGSL(width, height, table, { ...RULES, ...options.rules }) }), entryPoint: 'main' },
+      layout: device.createPipelineLayout({ bindGroupLayouts: [caLayout, this.fields.writeLayout, this.elements.layout, this.flyers.launchLayout] }),
+      compute: {
+        module: device.createShaderModule({ code: caWGSL(width, height, table, { ...RULES, ...options.rules }, this.flyers.maxFlyers) }),
+        entryPoint: 'main',
+      },
     });
     this.caBindGroup = device.createBindGroup({
       layout: caLayout,
@@ -114,12 +124,13 @@ export class Simulation {
     });
 
     // -- Particle counter setup --
+    // Word 0: the cells in the grid, counted by the shader; word 1: the flyers in the air.
     this.counterBuffer = device.createBuffer({
-      size: 4,
+      size: 8,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
     });
     this.counterStagingBuffer = device.createBuffer({
-      size: 4,
+      size: 8,
       usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
     });
 
@@ -160,10 +171,12 @@ export class Simulation {
   // Replaces the world: each field of `data` (width x height words) goes into its buffer; a missing field is zero.
   load(data: Partial<CellData>): void {
     this.fields.load(data);
+    this.flyers.clear();
   }
 
   clear(): void {
     this.fields.clear();
+    this.flyers.clear();
   }
 
   // Records the brush (while a button is down) and `supersteps` supersteps (two CA dispatches each) into the caller's
@@ -192,9 +205,17 @@ export class Simulation {
       pass.setBindGroup(0, this.caBindGroup, [i * this.slotWords * 4]);
       pass.setBindGroup(1, this.fields.writeBindGroup);
       pass.setBindGroup(2, this.elements.bindGroup);
+      pass.setBindGroup(3, this.flyers.launchBindGroup);
       pass.dispatchWorkgroups(Math.ceil(blocksX / 8), Math.ceil(blocksY / 8));
+      // The offset-1 dispatch counted the cells that launch: they fly, and land, before the next superstep.
+      if (offset === 1) this.flyers.recordSuperstep(pass);
     }
     pass.end();
+  }
+
+  // Draws the flyers into the overlay the display reads; records into the caller's encoder after `simulate`.
+  recordOverlay(encoder: GPUCommandEncoder): void {
+    this.flyers.recordOverlay(encoder);
   }
 
   private recordBrush(pass: GPUComputePassEncoder, input: SimulationInput): void {
@@ -216,13 +237,13 @@ export class Simulation {
     pass.setBindGroup(1, this.fields.writeBindGroup);
     pass.setBindGroup(2, this.elements.bindGroup);
     pass.dispatchWorkgroups(Math.ceil(this.width / 8), Math.ceil(this.height / 8));
+    this.flyers.recordBrush(pass);
   }
 
   requestParticleCount(): void {
     if (this.pendingCount) return;
 
-    const zeros = new Uint32Array([0]);
-    this.device.queue.writeBuffer(this.counterBuffer, 0, zeros);
+    this.device.queue.writeBuffer(this.counterBuffer, 0, new Uint32Array([0]));
 
     const encoder = this.device.createCommandEncoder();
     const pass = encoder.beginComputePass();
@@ -232,7 +253,8 @@ export class Simulation {
     pass.dispatchWorkgroups(Math.ceil(this.width / 8), Math.ceil(this.height / 8));
     pass.end();
 
-    encoder.copyBufferToBuffer(this.counterBuffer, 0, this.counterStagingBuffer, 0, 4);
+    this.flyers.copyLiveCount(encoder, this.counterBuffer, 4);
+    encoder.copyBufferToBuffer(this.counterBuffer, 0, this.counterStagingBuffer, 0, 8);
     this.device.queue.submit([encoder.finish()]);
     this.pendingCount = true;
   }
@@ -244,7 +266,7 @@ export class Simulation {
     try {
       await this.counterStagingBuffer.mapAsync(GPUMapMode.READ);
       const data = new Uint32Array(this.counterStagingBuffer.getMappedRange());
-      this.lastCount = data[0];
+      this.lastCount = data[0] + data[1];
       this.counterStagingBuffer.unmap();
       this.pendingCount = false;
     } finally {

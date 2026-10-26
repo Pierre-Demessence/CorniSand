@@ -25,4 +25,6 @@ fn elFlammable(t: u32) -> bool { return elements[t].flammable != 0u; }
 fn elLifeStart(t: u32) -> u32 { return elements[t].lifeStart; }
 fn elLifeDecay(t: u32) -> u32 { return elements[t].lifeRule & 0xffu; }
 fn elBecomes(t: u32) -> u32 { return (elements[t].lifeRule >> 8u) & 0xffu; }
+fn elGravity(t: u32) -> f32 { return elements[t].gravity; }
+fn elDrag(t: u32) -> f32 { return elements[t].drag; }
 `;

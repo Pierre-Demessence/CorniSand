@@ -10,7 +10,7 @@ async function renderRow(kind: Uint32Array<ArrayBuffer>, life: Uint32Array<Array
   const dev = device!;
   const sim = createSim(WIDTH, 1);
   loadScene(sim, kind, life);
-  const display = new Display(dev, 'rgba8unorm', WIDTH, 1, sim.fields, sim.elements);
+  const display = new Display(dev, 'rgba8unorm', WIDTH, 1, sim.fields, sim.elements, sim.flyers.overlay);
   const target = dev.createTexture({
     size: [WIDTH, 1],
     format: 'rgba8unorm',

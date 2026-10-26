@@ -5,13 +5,9 @@ import { elementsWGSL } from './elements.wgsl';
 // Brush uniform: vec2f prev, vec2f cur, f32 radius, 3 x u32 flags, u32 seed, 3 pad = 48 bytes
 export const BRUSH_UNIFORM_WORDS = 12;
 
-// Paints or erases along the segment prev -> cur, in place. Each thread only
-// touches its own cell, so the pass runs before the CA steps and block rules
-// never see a half-painted block.
-export const brushWGSL = (width: number, height: number, elements: readonly ElementDef[]): string => /* wgsl */`
-${cellWGSL('read_write', elements)}
-${elementsWGSL}
-
+// The brush uniform (group 0, binding 0) and the test of whether a stroke reaches a position: shared by the cell brush
+// and the pass that removes flyers.
+export const BRUSH_COMMON_WGSL = /* wgsl */`
 struct BrushUniforms {
   prev: vec2f,
   cur: vec2f,
@@ -27,9 +23,6 @@ struct BrushUniforms {
 
 @group(0) @binding(0) var<uniform> b: BrushUniforms;
 
-const W: u32 = ${width}u;
-const H: u32 = ${height}u;
-
 // Whether the brush stroke along prev -> cur reaches the cell at integer position pos.
 fn brushReaches(pos: vec2f) -> bool {
   let ab = b.cur - b.prev;
@@ -40,6 +33,19 @@ fn brushReaches(pos: vec2f) -> bool {
   }
   return length(pos - (b.prev + t * ab)) <= b.radius;
 }
+`;
+
+// Paints or erases along the segment prev -> cur, in place. Each thread only
+// touches its own cell, so the pass runs before the CA steps and block rules
+// never see a half-painted block.
+export const brushWGSL = (width: number, height: number, elements: readonly ElementDef[]): string => /* wgsl */`
+${cellWGSL('read_write', elements)}
+${elementsWGSL}
+
+${BRUSH_COMMON_WGSL}
+
+const W: u32 = ${width}u;
+const H: u32 = ${height}u;
 
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) gid: vec3u) {

@@ -11,6 +11,10 @@ export const CELL_FIELDS = [
   { name: 'kind', wgslType: 'u32' },
   // Fire: the remaining lifetime. Liquids: the sideways direction the cell last moved in (0 none, 1 left, 2 right).
   { name: 'life', wgslType: 'u32' },
+  // Motion, 8 bytes per cell: the velocity in cells per dispatch and the sub-cell remainder, each two binary16 values
+  // (x in the low half, y in the high half; `pack2x16float`). Zero for anything that does not fall.
+  { name: 'velocity', wgslType: 'u32' },
+  { name: 'remainder', wgslType: 'u32' },
 ] as const satisfies readonly CellField[];
 
 export type CellFieldName = (typeof CELL_FIELDS)[number]['name'];

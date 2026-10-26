@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PROP_FIELDS, ROW_BYTES, packElements } from '../src/element-table';
-import { ELEMENT, ELEMENTS, MAX_ELEMENTS, STATES, elementByKey, validateElements, type ElementDef } from '../src/elements';
+import { DEFAULT_DRAG, DEFAULT_GRAVITY, ELEMENT, ELEMENTS, MAX_ELEMENTS, STATES, elementByKey, elementDrag, elementGravity, validateElements, type ElementDef } from '../src/elements';
 import { buttonAttributes, toolbarEntries } from '../src/toolbar';
 
 const MUD: ElementDef = { key: 'MUD', id: 7, label: 'Mud', color: [0.4, 0.3, 0.2], state: 'powder', density: 1300, toolbar: 7 };
@@ -19,8 +19,8 @@ describe('element table', () => {
     expect(density('WATER')).toBeLessThan(density('SAND'));
   });
 
-  it('packs one 32-byte row per element ID, at the offset the ID gives', () => {
-    expect(ROW_BYTES).toBe(32);
+  it('packs one 48-byte row per element ID, at the offset the ID gives', () => {
+    expect(ROW_BYTES).toBe(48);
     const buffer = packElements(ELEMENTS);
     const words = new Uint32Array(buffer);
     const floats = new Float32Array(buffer);
@@ -33,10 +33,24 @@ describe('element table', () => {
     expect(words[at(ELEMENT.SAND, 'flammable')]).toBe(0);
     expect(words[at(ELEMENT.FIRE, 'lifeStart')]).toBe(200);
     expect(words[at(ELEMENT.FIRE, 'lifeRule')]).toBe(4 | (ELEMENT.SMOKE << 8));
+    expect(floats[at(ELEMENT.SAND, 'gravity')]).toBe(DEFAULT_GRAVITY);
+    expect(floats[at(ELEMENT.WATER, 'drag')]).toBe(DEFAULT_DRAG);
     expect(words.subarray(at(100, 'colorR'), at(101, 'colorR')).every((w) => w === 0), 'an unused ID').toBe(true);
   });
 
+  it('gives powders and liquids gravity by default, and everything else none', () => {
+    for (const e of ELEMENTS) {
+      const falls = e.state === 'powder' || e.state === 'liquid';
+      expect(elementGravity(e), e.key).toBe(falls ? DEFAULT_GRAVITY : 0);
+      expect(elementDrag(e), e.key).toBe(DEFAULT_DRAG);
+    }
+    expect(elementGravity({ ...MUD, gravity: 0.01 })).toBe(0.01);
+    expect(elementDrag({ ...MUD, drag: 0.5 })).toBe(0.5);
+  });
+
   it.each<[string, ElementDef[], RegExp]>([
+    ['a negative gravity', [...ELEMENTS, { ...MUD, gravity: -1 }], /gravity must be a finite number/],
+    ['a drag of 1', [...ELEMENTS, { ...MUD, drag: 1 }], /drag must be at least 0 and below 1/],
     ['a duplicate ID', [...ELEMENTS, { ...MUD, id: ELEMENT.SAND }], /id 1 is used twice/],
     ['a duplicate key', [...ELEMENTS, { ...MUD, key: 'SAND' }], /SAND appears twice/],
     ['an ID past 8 bits', [...ELEMENTS, { ...MUD, id: 256 }], /not in 0\.\.255/],

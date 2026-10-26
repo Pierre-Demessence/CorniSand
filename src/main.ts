@@ -53,7 +53,7 @@ async function main(): Promise<void> {
       simulation.load(pendingScene.fields);
       pendingScene = undefined;
     }
-    const display = new Display(gpu.device, gpu.format, grid.width, grid.height, simulation.fields, simulation.elements);
+    const display = new Display(gpu.device, gpu.format, grid.width, grid.height, simulation.fields, simulation.elements, simulation.flyers.overlay);
     return { gpu, simulation, display };
   }
 
@@ -232,6 +232,7 @@ async function main(): Promise<void> {
       brushSize: input.brushSize,
       particleType: input.particleType,
     });
+    simulation.recordOverlay(encoder);
     display.render(encoder, context.getCurrentTexture().createView(), canvas.width, canvas.height, {
       mousePos: input.mousePos,
       brushSize: input.brushSize,
