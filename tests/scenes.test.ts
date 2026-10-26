@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { CELL_FIELDS } from '../src/cell-fields';
-import { ELEMENT as T } from '../src/elements';
+import { CELL_FIELDS, tempView } from '../src/cell-fields';
+import { ELEMENT as T, ELEMENTS, elementTemperature } from '../src/elements';
 import { unpackHalf2 } from '../src/half';
 import { BLAST, BLAST_CENTER, BLAST_MARK, findScene, packCell, SCENES, uTube } from '../src/scenes';
 import { cell } from './gpu';
@@ -20,6 +20,19 @@ describe('scenes', () => {
       for (const c of scene.fields.kind) expect(c >>> 16, name).toBe(0);
       for (const c of scene.fields.kind) expect(Object.values(T), name).toContain(c & 0xff);
       for (const life of scene.fields.life) expect(life, name).toBe(0);
+    }
+  });
+
+  it('M5 AC3: start every cell of every scene at its element temperature', () => {
+    const temps = new Map(ELEMENTS.map((e) => [e.id as number, Math.fround(elementTemperature(e))]));
+    for (const [name, build] of Object.entries(SCENES)) {
+      const { fields } = build();
+      const temp = tempView(fields);
+      for (let i = 0; i < temp.length; i++) {
+        if (temp[i] !== temps.get(fields.kind[i] & 0xff)) {
+          expect.fail(`${name}: cell ${i} (element ${fields.kind[i] & 0xff}) at ${temp[i]} °C`);
+        }
+      }
     }
   });
 

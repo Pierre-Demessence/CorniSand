@@ -13,4 +13,10 @@ describe.skipIf(!device)('GPU test harness', () => {
     expect(Array.from(await readBuffer(dev, buffer, data.byteLength))).toEqual(Array.from(data));
     buffer.destroy();
   });
+
+  // The game requests the same limits (`src/gpu.ts`), so every pipeline the GPU tests create fits the default limit of
+  // storage buffers per stage, which some adapters do not exceed.
+  it('M5 AC2: runs at the default limit of 8 storage buffers per shader stage', () => {
+    expect(device!.limits.maxStorageBuffersPerShaderStage).toBe(8);
+  });
 });

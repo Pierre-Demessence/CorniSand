@@ -1,5 +1,7 @@
 # M5 Heat and phase changes
 
+Status: M5.1 and M5.2 done; next is M5.3a.
+
 ## Goal
 
 Everything that is not empty space or wall has a temperature. Heat flows from hot to cold through materials that touch, faster through metal than through stone. Materials change when they get hot or cold enough: ice melts and water boils, steam turns back into water on cold surfaces, lava sets into stone, metal melts, and oil catches fire from hot things. The player heats and cools with two tools, sees temperatures in a heat view, and reads the temperature under the pointer.
@@ -201,7 +203,7 @@ Bench scene `thermal`: every cell inside a wall frame a random mix of metal, sto
 Compared per AC21 against "Baseline (M5.1)". Levers in order if a scene is over:
 
 1. A thermal-quiet skip: a block whose cells are all empty or solid, with no lifetime or rule, is skipped when the temperatures of its heat-holding cells are equal and every one's stored temperature lies inside [below.temp − width, above.temp + width] (otherwise a uniformly heated block, painted by the Heat tool or loaded hot, would never change phase); a test shows a uniform block above its threshold still melting with the lever on.
-2. D31's loads: a cell loads `velocity` and `remainder` only when its state falls, and `temp` only when it holds heat. It needs the skipped words to be zero in memory: true for motion today; for `temp`, every path that writes a cell that holds no heat (swaps, `retype` to such an element, erase, launch, `Simulation.load`) must write 0.
+2. D31's loads: a cell loads `velocity` and `remainder` only when its state falls, and `temp` only when it holds heat. It needs the skipped words to be zero in memory: true for motion today; for `temp`, every path that writes a cell that holds no heat (swaps, `retype` to such an element, erase, launch, `Simulation.load` and `Canvas`, which since M5.2 start empty cells at EMPTY's 20 °C) must write 0.
 3. Otherwise a gate: the numbers and what each further lever would cost.
 
 Results in "M5.6 results"; `docs/powder-toy.md` gets the measured table with heat and heat's share.
@@ -240,17 +242,17 @@ Needs you: nothing, unless the RTX 4080 is busy when the bench runs (then closin
 
 ### M5.2 Temperature field (tasks)
 
-- [ ] M5.2a D27: `launchCounts` and `launchPrefix` merged into `launch`; every flyer test and both determinism tests pass unchanged. Verify: lint, typecheck, `npm test`.
-- [ ] M5.2b The `temp` field, the `temperature` row property and its packing, `src/heat.ts`, `withTemp` and `cellStoredTemp`, `tempView`, the loading default, `Canvas` temperatures, the brush's paint temperature; the M5.1 generator draws temperatures. Tests: AC2 (the limit assertion), AC3 (painted fire at 1,000 °C; a `loadScene` without `temp` and `?scene=damBreak`'s fields both load water at 20 °C), AC4 (a falling grain and a flyer keep a marked `temp`). Verify: lint, typecheck, `npm test`, build, bench into "M5.2 results".
-- [ ] M5.2c Docs: `docs/simulation.md` cell format, the AGENTS.md cell invariant; backlog: D27 deleted, the sixth-field limit added.
+- [x] M5.2a D27: `launchCounts` and `launchPrefix` merged into `launch`; every flyer test and both determinism tests pass unchanged. Verify: lint, typecheck, `npm test`.
+- [x] M5.2b The `temp` field, the `temperature` row property and its packing, `src/heat.ts`, `withTemp` and `cellStoredTemp`, `tempView`, the loading default, `Canvas` temperatures, the brush's paint temperature; the M5.1 generator draws temperatures. Tests: AC2 (the limit assertion), AC3 (painted fire at 1,000 °C; a `loadScene` without `temp` and `?scene=damBreak`'s fields both load water at 20 °C), AC4 (a falling grain and a flyer keep a marked `temp`). Verify: lint, typecheck, `npm test`, build, bench into "M5.2 results".
+- [x] M5.2c Docs: `docs/simulation.md` cell format, the AGENTS.md cell invariant; backlog: D27 deleted, the sixth-field limit added.
 
 Visible after: nothing: cells carry a temperature that nothing reads yet.
 Needs you: nothing.
 
 ### M5.3 Conduction (tasks)
 
-- [ ] M5.3a `conductivity`, `heatCapacity`, `elementHoldsHeat` and the `holdsHeat` word, the inert rule, validation and 64-byte packing; METAL (7) and STONE (8) rows; the test tables of `tests/elements.test.ts` and `tests/element-table.test.ts` moved to IDs from 200, their expectations updated. Verify: lint, typecheck, `npm test`.
-- [ ] M5.3b Phase 7 in `ca.wgsl.ts` with `src/shaders/heat.wgsl.ts`; the `heatBars` scene; AC5–AC8 tests; AC1 still passes. Verify: lint, typecheck, `npm test`, build, bench into "M5.3 results".
+- [ ] M5.3a `conductivity`, `heatCapacity`, `elementHoldsHeat` and the `holdsHeat` word, the inert rule, validation and 64-byte packing; METAL (7) and STONE (8) rows; the test tables of `tests/elements.test.ts` and `tests/element-table.test.ts` moved to IDs from 200, their expectations updated; the M5.1 generator's stand-in `holdsHeat` (every element but EMPTY and WALL) replaced by `elementHoldsHeat`. Verify: lint, typecheck, `npm test`.
+- [ ] M5.3b Phase 7 in `ca.wgsl.ts` with `src/shaders/heat.wgsl.ts`; the `heatBars` scene, with the `Canvas` temperature fill it is the first user of; AC5–AC8 tests (`tests/heat.test.ts` exists from M5.2); AC1 still passes. Verify: lint, typecheck, `npm test`, build, bench into "M5.3 results".
 - [ ] M5.3c Docs: `docs/simulation.md` (columns, phase 7, Heat section), AGENTS.md (the inert rule).
 
 Visible after: Metal and Stone buttons in the toolbar. Heat itself stays invisible until the heat view (M5.5).
@@ -321,7 +323,22 @@ Taken before any M5 change, on the RTX 4080 (`nvidia-smi`: 1–3% utilization, o
 
 ## M5.2 results
 
-To be filled by M5.2b.
+Same machine and conditions as the baseline (`nvidia-smi`: 4% utilization, desktop apps only).
+
+- Lint, typecheck and build: clean. `npm test`: 12 files, 104 tests pass (the 93 of the baseline unchanged, 11 new: AC2 in `tests/gpu.test.ts`; the temperature's default, packing and validation in `tests/elements.test.ts`; every scene's temperatures in `tests/scenes.test.ts`; AC3 and AC4 in the new `tests/heat.test.ts`).
+- Choices made in M5.2b: `cellEq` and `storeChanged` compare an `f32` field by its bits (`bitcast<u32>`), because as floats −0 equals 0 and `storeChanged` skipped a moved −0, which broke AC4's bit-for-bit carry (the AC4 test has a −0 grain over empty cells at +0 and fails without it). Empty cells loaded without `temp`, and the empty cells of `src/scenes.ts`, start at EMPTY's temperature (20 °C), as AC3 reads "every cell"; the brush's eraser, `makeCell` and Clear leave 0. The table validates `temperature` against `ABSOLUTE_ZERO`..`MAX_TEMP` already (AC15 adds the range checks of M5.4).
+- `npm run bench`, GPU ms per frame, median of 60 frames (two runs; the second run's 1x medians were the same within 0.07 ms):
+
+| Scene | 1x | 2x | 4x | 8x | 1x vs baseline |
+| --- | --- | --- | --- | --- | --- |
+| tank | 0.46 | 0.98 | 1.97 | 3.67 | +0.07 |
+| mix75 | 1.31 | 2.49 | 4.06 | 5.51 | +0.26 |
+| full100 | 1.18 | 2.29 | 4.13 | 7.08 | +0.20 (+0.27 in run 2) |
+| blast | 0.33 | 0.59 | 1.18 | 2.29 | 0.00 |
+
+- 1x by pass: the two CA dispatches went from 0.83 to 1.03 ms on `mix75` and from 0.78 to 0.95–1.00 ms on `full100`, the quarter the fifth field was expected to add; the flyer passes stayed within noise (each under 0.13 ms).
+- Simulation creation: 516–524 ms for the first one of a size, 3–9 ms after, as in the baseline (the first run after the change took 870–945 ms while the driver compiled the new shaders).
+- Every scene stays inside AC21's budget (tank ≤ 1.39, mix75 ≤ 2.05, full100 ≤ 1.98, blast ≤ 1.33 ms), with 0.7–1.0 ms left for conduction and phase changes.
 
 ## M5.3 results
 

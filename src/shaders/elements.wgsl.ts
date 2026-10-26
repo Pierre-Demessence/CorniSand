@@ -28,4 +28,5 @@ fn elBecomes(t: u32) -> u32 { return (elements[t].lifeRule >> 8u) & 0xffu; }
 fn elGravity(t: u32) -> f32 { return elements[t].gravity; }
 fn elDrag(t: u32) -> f32 { return elements[t].drag; }
 fn elInert(t: u32) -> bool { return elements[t].inert != 0u; }
+fn elTemperature(t: u32) -> f32 { return elements[t].temperature; }
 `;

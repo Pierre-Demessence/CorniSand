@@ -1,5 +1,5 @@
-import { emptyCellData, type CellData } from './cell-fields';
-import { ELEMENT as T } from './elements';
+import { emptyCellData, tempView, type CellData } from './cell-fields';
+import { ELEMENT as T, ELEMENTS, elementTemperature, type ElementDef } from './elements';
 import { packHalf2 } from './half';
 
 // Columns [x0, x1) whose liquid is expected to settle at one shared level.
@@ -25,20 +25,35 @@ export function packCell(type: number, variant = 0): number {
   return (type | (variant << 8)) >>> 0;
 }
 
+// The temperature a cell of this element of the default table starts at.
+function startTemp(type: number): number {
+  const e = (ELEMENTS as readonly ElementDef[]).find((row) => row.id === type);
+  if (!e) throw new Error(`no element with id ${type}`);
+  return elementTemperature(e);
+}
+
+// Every cell starts at its element's temperature, empty space included.
 class Canvas {
   readonly fields: CellData;
+  private readonly temps: Float32Array;
 
   constructor(
     readonly width: number,
     readonly height: number,
   ) {
     this.fields = emptyCellData(width * height);
+    this.temps = tempView(this.fields);
+    this.temps.fill(startTemp(T.EMPTY));
   }
 
   /** Fills columns [x0, x1) and rows [y0, y1). */
   fill(type: number, x0: number, x1: number, y0: number, y1: number): void {
     const c = packCell(type);
-    for (let y = y0; y < y1; y++) this.fields.kind.fill(c, y * this.width + x0, y * this.width + x1);
+    const temp = startTemp(type);
+    for (let y = y0; y < y1; y++) {
+      this.fields.kind.fill(c, y * this.width + x0, y * this.width + x1);
+      this.temps.fill(temp, y * this.width + x0, y * this.width + x1);
+    }
   }
 }
 

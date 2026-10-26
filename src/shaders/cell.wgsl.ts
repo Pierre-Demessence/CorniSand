@@ -19,6 +19,11 @@ fn hash2(x: u32, y: u32, seed: u32) -> u32 {
 
 const names = CELL_FIELDS.map((f) => f.name);
 
+// A field of `cell` as the word compared to tell two cells apart. An `f32` field compares by its bits: as floats,
+// -0 equals 0, so `storeChanged` would skip a moved cell's -0 and the cell would not keep its word bit for bit.
+const fieldWord = (f: (typeof CELL_FIELDS)[number], cell: string): string =>
+  (f.wgslType === 'f32' ? `bitcast<u32>(${cell}.${f.name})` : `${cell}.${f.name}`);
+
 // How `makeCell(t, variant, life)` fills each field; a field not listed starts at zero.
 const MAKE_CELL_ARGS: Partial<Record<string, string>> = { kind: 't | (variant << 8u)', life: 'life' };
 
@@ -34,7 +39,7 @@ ${CELL_FIELDS.map((f) => `  ${f.name}: ${f.wgslType},`).join('\n')}
 
 // A struct cannot be compared with ==.
 fn cellEq(a: Cell, b: Cell) -> bool {
-  return ${names.map((n) => `a.${n} == b.${n}`).join(' && ')};
+  return ${CELL_FIELDS.map((f) => `${fieldWord(f, 'a')} == ${fieldWord(f, 'b')}`).join(' && ')};
 }
 
 fn cellType(c: Cell) -> u32 { return c.kind & 0xffu; }
@@ -42,6 +47,8 @@ fn cellVariant(c: Cell) -> u32 { return (c.kind >> 8u) & 0xffu; }
 fn cellLife(c: Cell) -> u32 { return c.life; }
 fn cellVelocity(c: Cell) -> vec2f { return unpack2x16float(c.velocity); }
 fn cellRemainder(c: Cell) -> vec2f { return unpack2x16float(c.remainder); }
+// °C; meaningless for a cell that holds no heat.
+fn cellStoredTemp(c: Cell) -> f32 { return c.temp; }
 
 // A new cell: every field but the element, variant and life starts at zero.
 fn makeCell(t: u32, variant: u32, life: u32) -> Cell {
@@ -69,6 +76,12 @@ fn withMotion(c: Cell, velocity: vec2f, remainder: vec2f) -> Cell {
   r.remainder = pack2x16float(remainder);
   return r;
 }
+
+fn withTemp(c: Cell, temp: f32) -> Cell {
+  var r = c;
+  r.temp = temp;
+  return r;
+}
 `;
 
 // The field buffers as bindings (group 1, binding = field index, generated from CELL_FIELDS) with \`loadCell\`; only a
@@ -90,7 +103,7 @@ ${names.map((n) => `  field_${n}[i] = c.${n};`).join('\n')}
 
 // Writes back only the fields of \`c\` that differ from \`before\`, the cell as it was loaded.
 fn storeChanged(i: u32, c: Cell, before: Cell) {
-${names.map((n) => `  if (c.${n} != before.${n}) { field_${n}[i] = c.${n}; }`).join('\n')}
+${CELL_FIELDS.map((f) => `  if (${fieldWord(f, 'c')} != ${fieldWord(f, 'before')}) { field_${f.name}[i] = c.${f.name}; }`).join('\n')}
 }
 ` : ''}
 `;

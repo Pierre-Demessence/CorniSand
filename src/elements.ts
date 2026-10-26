@@ -1,3 +1,5 @@
+import { ABSOLUTE_ZERO, MAX_TEMP, ROOM_TEMP } from './heat';
+
 // The element table: one row per material, the single source of the IDs, colors, movement class, density, lifetimes
 // and toolbar entries that the shaders, the brush, the display and the toolbar are generated from.
 
@@ -24,6 +26,8 @@ export interface ElementDef {
   drag?: number;
   /** Becomes fire when a fire cell is in its block. */
   flammable?: boolean;
+  /** °C a painted cell starts at, and a cell of a scene loaded without temperatures; default `ROOM_TEMP`. */
+  temperature?: number;
   /** `life` counts down by `decay` per dispatch from `start` and the cell becomes the element `becomes` (a key) at 0. */
   life?: { start: number; decay: number; becomes: string };
   /** Optional WGSL rule run for cells of this element: the name of a file in `src/shaders/rules/`. */
@@ -56,6 +60,11 @@ export function elementDrag(e: ElementDef): number {
   return e.drag ?? DEFAULT_DRAG;
 }
 
+/** The temperature of a row with its default applied. */
+export function elementTemperature(e: ElementDef): number {
+  return e.temperature ?? ROOM_TEMP;
+}
+
 // The table is a uniform array of this many rows, and the cell stores the ID in 8 bits.
 export const MAX_ELEMENTS = 256;
 
@@ -74,6 +83,8 @@ export const ELEMENTS = [
     state: 'plasma',
     density: 0.3,
     life: { start: 200, decay: 4, becomes: 'SMOKE' },
+    // About the temperature of an open flame.
+    temperature: 1000,
     rule: 'fire',
     graphics: 'fire',
     toolbar: 4,
@@ -103,6 +114,9 @@ export function validateElements(elements: readonly ElementDef[]): void {
     if (!Number.isFinite(e.density)) throw new Error(`element ${e.key}: density must be a number`);
     if (!(elementGravity(e) >= 0 && elementGravity(e) < Infinity)) throw new Error(`element ${e.key}: gravity must be a finite number, 0 or more`);
     if (!(elementDrag(e) >= 0 && elementDrag(e) < 1)) throw new Error(`element ${e.key}: drag must be at least 0 and below 1`);
+    if (!(elementTemperature(e) >= ABSOLUTE_ZERO && elementTemperature(e) <= MAX_TEMP)) {
+      throw new Error(`element ${e.key}: temperature must be a number in ${ABSOLUTE_ZERO}..${MAX_TEMP}`);
+    }
     // Rule and graphics names become WGSL identifiers (`rule_<name>`).
     for (const name of [e.rule, e.graphics]) {
       if (name !== undefined && !/^[a-z][a-z0-9_]*$/.test(name)) throw new Error(`element ${e.key}: "${name}" must be lower snake case`);

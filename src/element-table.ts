@@ -1,4 +1,4 @@
-import { MAX_ELEMENTS, STATES, elementByKey, elementDrag, elementGravity, elementInert, validateElements, type ElementDef } from './elements';
+import { MAX_ELEMENTS, STATES, elementByKey, elementDrag, elementGravity, elementInert, elementTemperature, validateElements, type ElementDef } from './elements';
 
 // What the GPU reads of a row, in struct order: the WGSL `ElementProps` and `packElements` are both generated from this
 // list, so they cannot disagree. Twelve 32-bit words, 48 bytes, which is a legal stride for a uniform array.
@@ -22,8 +22,7 @@ export const PROP_FIELDS: readonly PropField[] = [
   { name: 'drag', wgslType: 'f32', value: (e) => elementDrag(e) },
   // Derived from the row (`elementInert`), for the CA's skip of blocks that cannot change.
   { name: 'inert', wgslType: 'u32', value: (e) => (elementInert(e) ? 1 : 0) },
-  // A uniform array's stride is a multiple of 16 bytes: a spare word completes the 48.
-  { name: 'spare1', wgslType: 'u32', value: () => 0 },
+  { name: 'temperature', wgslType: 'f32', value: (e) => elementTemperature(e) },
 ];
 
 const ROW_WORDS = PROP_FIELDS.length;

@@ -1,6 +1,6 @@
 # Simulation
 
-How a frame turns into particle movement. Code: `src/simulation.ts`, `src/elements.ts`, `src/element-table.ts`, `src/cell-fields.ts`, `src/cell-field-buffers.ts`, `src/shaders/cell.wgsl.ts`, `src/shaders/elements.wgsl.ts`, `src/shaders/ca.wgsl.ts`, `src/shaders/brush.wgsl.ts`, `src/movement.ts`, `src/flyers.ts`, `src/shaders/flyers.wgsl.ts`, `src/passes.ts`.
+How a frame turns into particle movement. Code: `src/simulation.ts`, `src/elements.ts`, `src/element-table.ts`, `src/cell-fields.ts`, `src/cell-field-buffers.ts`, `src/shaders/cell.wgsl.ts`, `src/shaders/elements.wgsl.ts`, `src/shaders/ca.wgsl.ts`, `src/shaders/brush.wgsl.ts`, `src/movement.ts`, `src/flyers.ts`, `src/shaders/flyers.wgsl.ts`, `src/passes.ts`, `src/heat.ts`.
 
 ## Frame pipeline
 
@@ -23,8 +23,9 @@ A cell is one 32-bit word in each of the field buffers listed in `CELL_FIELDS` (
 
 - `velocity`: the cell's velocity in cells per dispatch, x in the low 16 bits and y in the high 16 bits, each a binary16 float (`pack2x16float`). y = 0 is the bottom row, so a falling cell has a negative y.
 - `remainder`: the part of the cell's movement it has not spent yet, packed the same way. A cell moves one cell inside its block when the remainder on an axis reaches 1, so a speed of 1/4 cell per dispatch is a move every four dispatches. Both words are 0 for anything that does not fall, and for a cell at rest.
+- `temp`: the stored temperature in °C, an `f32` (the TypeScript side reads the words through `tempView`). It means nothing for a cell that holds no heat, empty space and walls: `makeCell`, the eraser and Clear leave it 0. A painted cell starts at its element's `temperature`, and so does every cell of a scene built by `src/scenes.ts` or loaded without a `temp` field (`Simulation.load`). No rule reads or changes it: a cell carries it unchanged wherever it moves or flies.
 
-The shaders see them as a `Cell` struct (`loadCell`, `storeCell`, `storeChanged`, `cellType`, `cellVariant`, `cellLife`, `cellVelocity`, `cellRemainder`, `makeCell`, `withType`, `withLife`, `withMotion`), generated from the field list with the bindings in `@group(1)`, binding = field index. A new field is one entry in `CELL_FIELDS`; `makeCell` starts it at 0, and the `with…` builders copy a cell and change only the named part.
+The shaders see them as a `Cell` struct (`loadCell`, `storeCell`, `storeChanged`, `cellType`, `cellVariant`, `cellLife`, `cellVelocity`, `cellRemainder`, `cellStoredTemp`, `makeCell`, `withType`, `withLife`, `withMotion`, `withTemp`), generated from the field list with the bindings in `@group(1)`, binding = field index. A new field is one entry in `CELL_FIELDS`; `makeCell` starts it at 0, and the `with…` builders copy a cell and change only the named part. `storeChanged` compares an `f32` field by its bits, so a moved cell keeps its exact word (as floats, −0 equals 0).
 
 Cells travel as whole structs: swapping two cells swaps every field.
 
@@ -42,9 +43,9 @@ Every material is a row of `ELEMENTS` (`src/elements.ts`):
 | water | 3 | liquid | 1000 | gravity 1/32 |
 | smoke | 4 | gas | 0.6 | |
 | oil | 5 | liquid | 900 | flammable, gravity 1/32 |
-| fire | 6 | plasma | 0.3 | life 200, loses 4 per dispatch, becomes smoke; rule `fire`; graphics `fire` |
+| fire | 6 | plasma | 0.3 | life 200, loses 4 per dispatch, becomes smoke; rule `fire`; graphics `fire`; 1,000 °C |
 
-The states: *empty* is air; a *solid* never moves and nothing passes through it; *powders* and *liquids* fall, and liquids also spread sideways; *gases* rise; *plasma* (fire) stays where it is, but a gas rises through it. A row also holds a label, a color, an optional `rule`, an optional `graphics` function and an optional toolbar order. A powder or liquid row has a `gravity` (cells per dispatch squared, default 1/32) and a `drag` (the share of its speed a flyer loses per dispatch, default 1/64); other states have no gravity.
+The states: *empty* is air; a *solid* never moves and nothing passes through it; *powders* and *liquids* fall, and liquids also spread sideways; *gases* rise; *plasma* (fire) stays where it is, but a gas rises through it. A row also holds a label, a color, a `temperature` (°C, default 20: what a painted or loaded cell starts at), an optional `rule`, an optional `graphics` function and an optional toolbar order. A powder or liquid row has a `gravity` (cells per dispatch squared, default 1/32) and a `drag` (the share of its speed a flyer loses per dispatch, default 1/64); other states have no gravity.
 
 The CA, the brush and the display read the table as a uniform array of 256 rows of 48 bytes (a uniform array's stride is a multiple of 16) (`@group(2)`; `ElementTable` fills it, `PROP_FIELDS` lists a row's words and generates both the WGSL struct and the packer). A uniform array indexed by the cell's type is one cached read, where a `const` array may be copied into every thread's memory. The element IDs and states are also generated as WGSL constants (`EL_SAND`, `ST_POWDER`), so no shader names a number. A test or a variant of the game gives `Simulation` another table (and extra rule sources) through its options.
 
@@ -107,7 +108,7 @@ Every slot comes from a prefix sum in a fixed order and every conflict from the 
 
 ## Brush
 
-Painting writes the selected element into empty cells within the brush radius of the segment from the previous frame's pointer position to the current one (or into any non-wall cell when Shift is held); erasing empties every cell in range. The pass runs once per frame before the CA steps, so no block ever sees a half-painted state. The radius is in cells, whatever the grid scale. The painted variant comes from the cell coordinates and a per-frame seed, and the painted life from the element's `life.start` (0 without one).
+Painting writes the selected element into empty cells within the brush radius of the segment from the previous frame's pointer position to the current one (or into any non-wall cell when Shift is held); erasing empties every cell in range. The pass runs once per frame before the CA steps, so no block ever sees a half-painted state. The radius is in cells, whatever the grid scale. The painted variant comes from the cell coordinates and a per-frame seed, the painted life from the element's `life.start` (0 without one), and the painted temperature from the element's `temperature`; a replaced cell's temperature goes with the rest of it.
 
 ## Boundaries
 

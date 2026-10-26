@@ -80,7 +80,7 @@ struct StepUniforms {
 };
 
 @group(0) @binding(0) var<uniform> u: StepUniforms;
-// One launch count per workgroup of the offset-1 dispatch, then their total in the last word.
+// One launch count per workgroup of the offset-1 dispatch, then their total (the flyer passes keep the prefix after it).
 @group(3) @binding(0) var<storage, read_write> launchCounts: array<atomic<u32>>;
 var<workgroup> wgLaunches: atomic<u32>;
 

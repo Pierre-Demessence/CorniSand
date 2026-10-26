@@ -3,9 +3,9 @@ import { BRUSH_UNIFORM_WORDS, brushWGSL } from './shaders/brush.wgsl';
 import { caWGSL } from './shaders/ca.wgsl';
 import { RULES } from './shaders/rules';
 import { ElementTable } from './element-table';
-import { ELEMENTS, type ElementDef } from './elements';
+import { ELEMENTS, MAX_ELEMENTS, elementTemperature, type ElementDef } from './elements';
 import { CellFields } from './cell-field-buffers';
-import type { CellData } from './cell-fields';
+import { tempView, type CellData } from './cell-fields';
 import { Flyers } from './flyers';
 import type { Vec2 } from './input';
 import { MOVEMENT } from './movement';
@@ -169,10 +169,21 @@ export class Simulation {
     });
   }
 
-  // Replaces the world: each field of `data` (width x height words) goes into its buffer; a missing field is zero.
+  // Replaces the world: each field of `data` (width x height words) goes into its buffer; a missing field is zero,
+  // except `temp`, which then starts every cell at its element's temperature.
   load(data: Partial<CellData>): void {
-    this.fields.load(data);
+    this.fields.load(data.temp ? data : { ...data, temp: this.startTemps(data.kind) });
     this.flyers.clear();
+  }
+
+  // The `temp` words of cells of these kinds (all empty when absent), each at its element's temperature.
+  private startTemps(kind = new Uint32Array(this.fields.cellCount)): Uint32Array<ArrayBuffer> {
+    const byId = new Float32Array(MAX_ELEMENTS);
+    for (const e of this.elements.elements) byId[e.id] = elementTemperature(e);
+    const data = { temp: new Uint32Array(kind.length) };
+    const temps = tempView(data);
+    for (let i = 0; i < kind.length; i++) temps[i] = byId[kind[i] & 0xff];
+    return data.temp;
   }
 
   clear(): void {

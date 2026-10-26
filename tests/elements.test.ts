@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { PROP_FIELDS, ROW_BYTES, packElements } from '../src/element-table';
-import { DEFAULT_DRAG, DEFAULT_GRAVITY, ELEMENT, ELEMENTS, MAX_ELEMENTS, STATES, elementByKey, elementDrag, elementGravity, elementInert, validateElements, type ElementDef } from '../src/elements';
+import { DEFAULT_DRAG, DEFAULT_GRAVITY, ELEMENT, ELEMENTS, MAX_ELEMENTS, STATES, elementByKey, elementDrag, elementGravity, elementInert, elementTemperature, validateElements, type ElementDef } from '../src/elements';
+import { ABSOLUTE_ZERO, MAX_TEMP, ROOM_TEMP } from '../src/heat';
 import { buttonAttributes, toolbarEntries } from '../src/toolbar';
 
 const MUD: ElementDef = { key: 'MUD', id: 7, label: 'Mud', color: [0.4, 0.3, 0.2], state: 'powder', density: 1300, toolbar: 7 };
@@ -57,6 +58,19 @@ describe('element table', () => {
     }
     expect(elementGravity({ ...MUD, gravity: 0.01 })).toBe(0.01);
     expect(elementDrag({ ...MUD, drag: 0.5 })).toBe(0.5);
+  });
+
+  it('M5: starts fire at its flame temperature and everything else at room temperature, packed for the GPU', () => {
+    for (const e of ELEMENTS) expect(elementTemperature(e), e.key).toBe(e.key === 'FIRE' ? 1000 : ROOM_TEMP);
+    expect(elementTemperature({ ...MUD, temperature: -20 })).toBe(-20);
+    const floats = new Float32Array(packElements(ELEMENTS));
+    const at = (id: number): number => id * PROP_FIELDS.length + PROP_FIELDS.findIndex((f) => f.name === 'temperature');
+    expect(floats[at(ELEMENT.FIRE)]).toBe(1000);
+    expect(floats[at(ELEMENT.WATER)]).toBe(ROOM_TEMP);
+  });
+
+  it.each([['below absolute zero', ABSOLUTE_ZERO - 1], ['above the hottest', MAX_TEMP + 1], ['not a number', NaN]])('M5: rejects a temperature %s', (_name, temperature) => {
+    expect(() => validateElements([...ELEMENTS, { ...MUD, temperature }])).toThrow(/MUD: temperature must be a number in/);
   });
 
   it.each<[string, ElementDef[], RegExp]>([

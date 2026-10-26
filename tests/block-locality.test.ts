@@ -21,6 +21,15 @@ type CellWords = Record<string, number>;
 type FieldGenerator = (e: ElementDef, variant: number, rand: Rand) => number;
 
 const falls = (e: ElementDef): boolean => e.state === 'powder' || e.state === 'liquid';
+// Empty space and walls hold no heat: their `temp` word means nothing.
+const holdsHeat = (e: ElementDef): boolean => e.key !== 'EMPTY' && e.key !== 'WALL';
+
+const floatBits = new Float32Array(1);
+const floatWord = new Uint32Array(floatBits.buffer);
+const f32Word = (x: number): number => {
+  floatBits[0] = x;
+  return floatWord[0];
+};
 
 // One generator per cell field, by field name. Only powders and liquids move (the CA's inert skip relies on zero motion
 // for everything else); a liquid's life is its direction.
@@ -38,6 +47,8 @@ const FIELD_GENERATORS: Partial<Record<string, FieldGenerator>> = {
     return packHalf2(Math.cos(angle) * length, Math.sin(angle) * length);
   },
   remainder: (e, _variant, rand) => (falls(e) ? packHalf2(rand() * 1.998 - 0.999, rand() * 1.998 - 0.999) : 0),
+  // -50 to 1,600 °C: from cold to past the melting point of metal.
+  temp: (e, _variant, rand) => (holdsHeat(e) ? f32Word(-50 + rand() * 1650) : 0),
 };
 
 // A random cell of the table: about a quarter empty, the rest any row.

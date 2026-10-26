@@ -37,7 +37,8 @@ fn brushReaches(pos: vec2f) -> bool {
 
 // Paints or erases along the segment prev -> cur, in place. Each thread only
 // touches its own cell, so the pass runs before the CA steps and block rules
-// never see a half-painted block.
+// never see a half-painted block. A painted cell starts at its element's
+// temperature; replacing a cell discards its temperature with the rest of it.
 export const brushWGSL = (width: number, height: number, elements: readonly ElementDef[]): string => /* wgsl */`
 ${cellWGSL('read_write', elements)}
 ${elementsWGSL}
@@ -64,7 +65,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
   if (cellType(current) == EL_EMPTY || (b.replacing == 1u && cellType(current) != EL_WALL)) {
     let variant = hash2(gid.x, gid.y, b.seed) & 0xffu;
-    storeCell(idx, makeCell(b.particleType, variant, elLifeStart(b.particleType)));
+    let painted = makeCell(b.particleType, variant, elLifeStart(b.particleType));
+    storeCell(idx, withTemp(painted, elTemperature(b.particleType)));
   }
 }
 `;

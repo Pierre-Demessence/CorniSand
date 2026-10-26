@@ -51,7 +51,7 @@ export class Flyers {
   private readonly fields: CellFields;
   private readonly elementTable: ElementTable;
   private readonly launchGroupCount: { x: number; y: number };
-  private readonly launchCounts: GPUBuffer;
+  private readonly launch: GPUBuffer;
   private readonly buffers: [GPUBuffer, GPUBuffer];
   private readonly state: GPUBuffer;
   private readonly overlayBuffer: GPUBuffer;
@@ -87,9 +87,9 @@ export class Flyers {
 
     const storage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST;
     const groupCount = this.launchGroupCount.x * this.launchGroupCount.y;
-    // The last word holds the superstep's launch total.
-    this.launchCounts = device.createBuffer({ label: 'launch counts', size: (groupCount + 1) * 4, usage: storage });
-    const launchPrefix = device.createBuffer({ label: 'launch prefix', size: groupCount * 4, usage: storage });
+    // One buffer, so the launch scatter stays within 8 storage buffers: words [0, G) the launch count of each of the G
+    // workgroups, word G the superstep's total, words [G + 1, 2G + 1) the prefix of the counts.
+    this.launch = device.createBuffer({ label: 'launch', size: (2 * groupCount + 1) * 4, usage: storage });
     const flyerBytes = maxFlyers * FLYER_WORDS * 4;
     this.buffers = [
       device.createBuffer({ label: 'flyers 0', size: flyerBytes, usage: storage }),
@@ -112,7 +112,7 @@ export class Flyers {
     this.launchLayout = layoutOf(['storage']);
     this.launchBindGroup = device.createBindGroup({
       layout: this.launchLayout,
-      entries: [{ binding: 0, resource: { buffer: this.launchCounts } }],
+      entries: [{ binding: 0, resource: { buffer: this.launch } }],
     });
     const overlayLayout = layoutOf(['read-only-storage'], GPUShaderStage.FRAGMENT);
     this.overlay = {
@@ -144,13 +144,13 @@ export class Flyers {
 
     this.launchScan = makePass(
       launchScanWGSL(width, height, maxFlyers),
-      ['storage', 'storage', 'storage', 'storage'],
-      () => [this.launchCounts, launchPrefix, this.state, this.args],
+      ['storage', 'storage', 'storage'],
+      () => [this.launch, this.state, this.args],
     );
     this.launchScatter = makePass(
       launchScatterWGSL(table, width, height, maxFlyers),
-      ['storage', 'read-only-storage', 'read-only-storage', 'read-only-storage'],
-      (live) => [live, this.launchCounts, launchPrefix, this.state],
+      ['storage', 'read-only-storage', 'read-only-storage'],
+      (live) => [live, this.launch, this.state],
       [fields.writeLayout],
     );
     this.flight = makePass(

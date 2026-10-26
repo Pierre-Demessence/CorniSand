@@ -15,11 +15,14 @@ export const CELL_FIELDS = [
   // (x in the low half, y in the high half; `pack2x16float`). Zero for anything that does not fall.
   { name: 'velocity', wgslType: 'u32' },
   { name: 'remainder', wgslType: 'u32' },
+  // The stored temperature in °C (`src/heat.ts`). Meaningless for a cell that holds no heat (empty space, walls).
+  { name: 'temp', wgslType: 'f32' },
 ] as const satisfies readonly CellField[];
 
 export type CellFieldName = (typeof CELL_FIELDS)[number]['name'];
 
-// One array per field, `width * height` words each; row y = 0 is the bottom.
+// One array per field, `width * height` words each; row y = 0 is the bottom. An `f32` field holds the float's bits
+// (`tempView`).
 export type CellData = Record<CellFieldName, Uint32Array<ArrayBuffer>>;
 
 // Every field is one 32-bit word, so every field buffer has this many bytes per cell. The device's buffer limits apply
@@ -28,4 +31,9 @@ export const FIELD_BYTES = 4;
 
 export function emptyCellData(cellCount: number): CellData {
   return Object.fromEntries(CELL_FIELDS.map(({ name }) => [name, new Uint32Array(cellCount)])) as CellData;
+}
+
+/** The `temp` words as the temperatures they hold: writing to the view writes the words. */
+export function tempView<B extends ArrayBufferLike>(data: { temp: Uint32Array<B> }): Float32Array<B> {
+  return new Float32Array(data.temp.buffer, data.temp.byteOffset, data.temp.length);
 }

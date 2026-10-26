@@ -85,8 +85,9 @@ struct State {
 };
 `;
 
-// Exclusive prefix sum of `n` counts by one workgroup of 256 threads; leaves the total in sums[255].
-function workgroupScan(input: string, output: string, n: string): string {
+// Exclusive prefix sum of `n` counts by one workgroup of 256 threads, written from `output[offset]` on; leaves the
+// total in sums[255].
+function workgroupScan(input: string, output: string, n: string, offset = '0u'): string {
   return /* wgsl */`
   let chunk = (${n} + 255u) / 256u;
   let start = min(li * chunk, ${n});
@@ -105,7 +106,7 @@ function workgroupScan(input: string, output: string, n: string): string {
   var running = sums[li] - own;
   for (var k = start; k < end; k++) {
     let c = ${input}[k];
-    ${output}[k] = running;
+    ${output}[${offset} + k] = running;
     running += c;
   }`;
 }
@@ -117,24 +118,26 @@ export const launchScanWGSL = (width: number, height: number, maxFlyers: number)
 ${movementWGSL(maxFlyers)}
 ${stateWGSL(false)}
 
-@group(0) @binding(0) var<storage, read_write> launchCounts: array<u32>;
-@group(0) @binding(1) var<storage, read_write> launchPrefix: array<u32>;
-@group(0) @binding(2) var<storage, read_write> state: State;
-@group(0) @binding(3) var<storage, read_write> args: array<u32, ${ARGS_WORDS}>;
+// The counts, their total, then the prefix this pass writes (\`Flyers\`).
+@group(0) @binding(0) var<storage, read_write> launch: array<u32>;
+@group(0) @binding(1) var<storage, read_write> state: State;
+@group(0) @binding(2) var<storage, read_write> args: array<u32, ${ARGS_WORDS}>;
+
+const GROUPS: u32 = ${groups.x * groups.y}u;
 
 var<workgroup> sums: array<u32, 256>;
 var<workgroup> launchTotal: u32;
 
 @compute @workgroup_size(256)
 fn main(@builtin(local_invocation_index) li: u32) {
-  if (li == 0u) { launchTotal = launchCounts[${groups.x * groups.y}u]; }
+  if (li == 0u) { launchTotal = launch[GROUPS]; }
   let total = workgroupUniformLoad(&launchTotal);
   // Without launches every count is 0 and the scatter pass skips every workgroup, so the prefix is not read.
   if (total > 0u) {
-    ${workgroupScan('launchCounts', 'launchPrefix', `${groups.x * groups.y}u`)}
+    ${workgroupScan('launch', 'launch', 'GROUPS', 'GROUPS + 1u')}
   }
   if (li == 255u) {
-    launchCounts[${groups.x * groups.y}u] = 0u;
+    launch[GROUPS] = 0u;
     let live = state.live;
     let accepted = min(total, MAX_FLYERS - live);
     let count = live + accepted;
@@ -159,9 +162,9 @@ ${cellBindingsWGSL('read_write')}
 ${stateWGSL(false)}
 
 @group(0) @binding(0) var<storage, read_write> flyers: array<Flyer>;
-@group(0) @binding(1) var<storage, read> launchCounts: array<u32>;
-@group(0) @binding(2) var<storage, read> launchPrefix: array<u32>;
-@group(0) @binding(3) var<storage, read> state: State;
+// The counts, their total, then their prefix (\`Flyers\`).
+@group(0) @binding(1) var<storage, read> launch: array<u32>;
+@group(0) @binding(2) var<storage, read> state: State;
 
 var<workgroup> wgCount: u32;
 var<workgroup> ranks: array<u32, 64>;
@@ -173,7 +176,7 @@ fn launches(i: u32) -> bool {
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) gid: vec3u, @builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) li: u32) {
   let group = wid.y * ${groups.x}u + wid.x;
-  if (li == 0u) { wgCount = launchCounts[group]; }
+  if (li == 0u) { wgCount = launch[group]; }
   if (workgroupUniformLoad(&wgCount) == 0u) { return; }
 
   let ox = i32(gid.x) * 2 - 1;
@@ -199,7 +202,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u, @builtin(workgroup_id) wid: v
   }
   workgroupBarrier();
 
-  var slot = state.live + launchPrefix[group] + ranks[li];
+  var slot = state.live + launch[${groups.x * groups.y + 1}u + group] + ranks[li];
   for (var j = 0u; j < 4u; j++) {
     if (!launching[j]) { continue; }
     let x = ox + i32(j & 1u);
