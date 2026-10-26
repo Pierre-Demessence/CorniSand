@@ -1,11 +1,27 @@
 # Roadmap
 
-Direction: a physics foundation shared by all materials. A velocity field and a global pressure solve run beside the cell grid, so liquids get pressure and momentum, and later gases and solids move with the flow. The Margolus CA keeps handling what it handles well: sand, reactions, fire. IDs are stable.
+Direction: everything The Powder Toy simulates, in the browser on the GPU, on a larger playing field, then what only a GPU can afford. The reasoning, the frame budget and the open questions are in `docs/research/powder-toy-parity.md`. Every milestone keeps the frame budget set there, measured by `npm run bench`. IDs are stable.
 
-## M2 Gases on the velocity field
+## M4 Element engine
 
-Smoke and fire are carried by the air's velocity field, with buoyancy from heat, a wind tool, and smoke that dissipates. Done when scene tests show a fire's smoke rising as a plume that flows around obstacles, wind pushing smoke across the grid, and smoke disappearing over time.
+An element property table (density, falling behavior, state, heat and pressure properties, transitions) drives the CA, per-cell state grows beyond the packed `u32` into separate buffers, and liquids move by CA rules, as in The Powder Toy. The realistic FLIP water is removed or kept as an option, per the research doc. Done when the current materials run from the table, a new element is a table row plus an optional rule, and the bench meets the budget with a full screen of particles.
 
-## M3 Momentum for solids
+## M5 Heat and phase changes
 
-Sand and other grains take momentum from the flow: water currents carry sand, impacts and explosions throw it. Done when scene tests show a current eroding a sand pile and a splash throwing grains.
+Every cell has a temperature that spreads by each element's conductivity, and crossing an element's temperature thresholds changes it (ice, water and steam; stone and lava; metal melting; ignition by heat). Done when scene tests show ice beside lava melting then boiling, steam condensing on a cold wall, and heat crossing metal faster than stone, each with a numeric threshold.
+
+## M6 Air
+
+Pressure, wind and ambient heat on an air grid. Particles are pushed by wind and pressure, explosions create pressure, hot air rises, walls block the flow, and pressure thresholds change elements. A wind tool. Done when scene tests show an explosion's pressure front pushing powders outward, the wind tool carrying smoke across the grid, and a heater driving a rising plume.
+
+## M7 Electricity and energy particles
+
+Sparks travel through conductors and power elements (heaters, switches, batteries), and photons, neutrons and electrons share cells with matter. Done when scene tests show a spark crossing a wire at a known speed, a powered heater warming water, and light reflected or absorbed by element.
+
+## M8 Element catalogue
+
+The rest of The Powder Toy's elements, family by family (explosives, nuclear, life, special), including the long-range ones (beams, portals, pistons). Done when every family is present and each element has a scene test of its main behavior.
+
+## M9 Newtonian gravity
+
+A gravity field computed from the mass layout pulls particles toward each other. Done when scene tests show a cloud of particles clumping and a light particle orbiting a heavy body.

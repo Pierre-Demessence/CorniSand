@@ -30,9 +30,5 @@ IDs are stable: B = bug, D = tech debt, I = idea.
 
 - **I10** A smaller playing field: cap the grid at about 1M cells, sometimes 500k (today it is one cell per CSS pixel, 1.7M at 1920×897), to buy frame rate for the liquids; probably a cells-per-pixel scale of 2 or a limit picked by the player. Also bigger scenes for `?scene=`: `uTube` (68×80) and `damBreak` (200×60) are too small to enjoy or to judge whether the physics looks right; they are fine as tests. `src/grid.ts`, `src/scenes.ts`
 
-- **I3** More gas types (steam, toxic gas).
-- **I4** Temperature field driving reactions and phase changes (water ↔ steam, ice).
-- **I5** More material interactions beyond fire/oil, fire/water and sand/liquid.
-- **I7** New materials: metal, lava, acid.
 - **I8** Debug overlay for the fluid fields of M1 (velocity, pressure), once they exist.
 - **I9** Liquid falls at most 1 cell per step (the FLIP velocity clamp), half the speed of falling sand; a swept wall test in the particle move would allow a clamp of 2 without particles crossing thin walls. `tests/cpu/flip.ts` `gridToParticles`

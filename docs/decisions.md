@@ -20,7 +20,7 @@ Rejected: per-cell rules where each cell picks a target (conflicts between threa
 
 ## Liquids move by a velocity field and a global pressure solve
 
-Liquid pressure is not local: when one arm of a U-tube is higher, the whole connected body must react at once. Rules between neighboring cells pass that information one cell per step, so it spreads like heat and a screen-sized body takes minutes to level. Liquids therefore get a staggered velocity grid and a pressure projection every step, beside the cell grid (roadmap M1); the same field is meant to carry gases (M2) and push grains (M3). Sand, fire and reactions stay Margolus CA rules.
+Liquid pressure is not local: when one arm of a U-tube is higher, the whole connected body must react at once. Rules between neighboring cells pass that information one cell per step, so it spreads like heat and a screen-sized body takes minutes to level. Liquids therefore get a staggered velocity grid and a pressure projection every step, beside the cell grid (roadmap M1). Sand, fire and reactions stay Margolus CA rules.
 
 Rejected, with prototype measurements on a 68×80 U-tube:
 

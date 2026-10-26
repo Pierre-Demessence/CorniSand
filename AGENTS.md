@@ -46,7 +46,7 @@ The GPU suites in `tests/` run the real WGSL through Dawn's Node bindings (`webg
 
 - `docs/simulation.md` — how the step pipeline and the CA rules work. Update it when rules, passes or the cell format change.
 - `docs/decisions.md` — architectural decisions and the alternatives they rule out.
-- `docs/roadmap.md` — milestones (M2 gases, M3 solids) and what defines each as done.
+- `docs/roadmap.md` — milestones (M4–M9: The Powder Toy on the GPU) and what defines each as done.
 - `docs/backlog.md` — known bugs, tech debt and ideas, one line each.
 - `docs/research/` — undecided topics with options and open questions.
 - `docs/plans/` — plans in progress only; deleted when the feature ships.
