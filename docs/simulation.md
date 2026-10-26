@@ -1,13 +1,13 @@
 # Simulation
 
-How a frame turns into particle movement. Code: `src/simulation.ts`, `src/elements.ts`, `src/element-table.ts`, `src/cell-fields.ts`, `src/cell-field-buffers.ts`, `src/shaders/cell.wgsl.ts`, `src/shaders/elements.wgsl.ts`, `src/shaders/ca.wgsl.ts`, `src/shaders/brush.wgsl.ts`, `src/movement.ts`, `src/flyers.ts`, `src/shaders/flyers.wgsl.ts`.
+How a frame turns into particle movement. Code: `src/simulation.ts`, `src/elements.ts`, `src/element-table.ts`, `src/cell-fields.ts`, `src/cell-field-buffers.ts`, `src/shaders/cell.wgsl.ts`, `src/shaders/elements.wgsl.ts`, `src/shaders/ca.wgsl.ts`, `src/shaders/brush.wgsl.ts`, `src/movement.ts`, `src/flyers.ts`, `src/shaders/flyers.wgsl.ts`, `src/passes.ts`.
 
 ## Frame pipeline
 
 Each animation frame runs `stepsPerFrame` supersteps (1, 2, 4, 8, 16, 24 or 32; the speed labelled "1x" is 4), then one render pass. All of it is recorded into one command encoder and sent with one `submit()` (`main.ts`). A frame is:
 
 1. **Brush**: while a mouse button is down, the brush pass, one thread per cell (each thread touches only its own cell).
-2. **Supersteps**: `stepsPerFrame` of them, each two CA dispatches with Margolus offset 0, then 1, then the flyer passes (see Flyers). The dispatches update the cell buffers in place.
+2. **Supersteps**: `stepsPerFrame` of them, each two CA dispatches with Margolus offset 0, then 1, then the flyer passes (see Flyers). The dispatches update the cell buffers in place. The brush, every CA dispatch and the flyer passes share one compute pass, handed out by `PassRecorder` (`src/passes.ts`); the bench gives each group of dispatches a timed pass of its own instead.
 3. **Overlay and render**: the flyers are scattered into the overlay buffer, then the cell buffers and the overlay are drawn with the brush ring.
 
 Every CA dispatch needs its own `{ offset, seed }`. They live in 256-byte slots (`minUniformBufferOffsetAlignment`) of one uniform buffer sized for the 64 dispatches of a 32-superstep frame; one `writeBuffer` fills the used slots and each dispatch selects its slot with a dynamic offset. The grid size is a shader constant.
@@ -82,28 +82,28 @@ Phases run in order on the block's four cells (BL, BR, TL, TR), each phase seein
 
 Fire has no movement rule; it only moves when a gas rises through it.
 
+Intuition for the liquids: each cell looks only at its 2×2 block, so a liquid cannot feel the weight of the water above it or push water along a pipe. A pool flattens because surface cells slide off the high spots, and falls into every gap. Example: a 30×40 block of water against the left wall of a 200-wide tank spreads out to a sheet 6 to 7 cells deep in about 1,200 supersteps (`tests/simulation.test.ts`, "dam break"). Connected vessels do not level: in the `uTube` scene the filled arm stays full and the empty arm stays empty, as in The Powder Toy (`docs/decisions.md`).
+
 ## Movement by velocity
 
 Intuition: a grain you drop does not fall at one fixed speed, it speeds up. Each falling cell carries a speed; every dispatch gravity adds a little, and the cell moves one cell whenever its unspent movement adds up to a whole cell. A grain starting from rest moves about 1 cell in the first 5 supersteps and 7 in the first 11, then 1 cell per dispatch, then flies.
 
-Example (`tests/simulation.test.ts`, "AC14"): with gravity 1/32 a grain has fallen `sum over k of min(k/32, 1)` cells after its k-th dispatch (the first dispatch gives no gravity); the test compares that sum with the grain's cell plus its remainder within 0.05 cells for the 23 supersteps it stays in the grid.
+Example (`tests/simulation.test.ts`, "a sand grain falls from rest with its element gravity"): with gravity 1/32 a grain has fallen `sum over k of min(k/32, 1)` cells after its k-th dispatch (the first dispatch gives no gravity); the test compares that sum with the grain's cell plus its remainder within 0.05 cells for the 23 supersteps it stays in the grid.
 
 Why a limit of 1 cell per dispatch inside the grid: a block has room for one move per axis. Faster cells would need to cross blocks, which a thread working on one block cannot do safely, so they leave the grid instead.
 
 ## Flyers
 
-A cell whose speed passes `launchSpeed` (1.5 cells per dispatch) leaves the grid as a flyer: a particle with a float position and velocity that carries the whole cell (every field) and flies under its element's `gravity` and `drag` (speed at most 16). Intuition: debris thrown by a blast is too fast for the grid, so it travels as a free particle and lands back as a cell. Example: the `blast` scene throws sand to a 99th-percentile distance of 237 cells from the blast center, against 37 when every cell stays in the grid (`tests/simulation.test.ts`, "AC17").
+A cell whose speed passes `launchSpeed` (1.5 cells per dispatch) leaves the grid as a flyer: a particle with a float position and velocity that carries the whole cell (every field) and flies under its element's `gravity` and `drag` (speed at most 16). Intuition: debris thrown by a blast is too fast for the grid, so it travels as a free particle and lands back as a cell. Example: the `blast` scene throws sand to a 99th-percentile distance of 237 cells from the blast center, against 37 when every cell stays in the grid (`tests/simulation.test.ts`, "the blast throws debris as far as the prototype did").
 
 The passes run once per superstep, after the offset-1 dispatch (`Flyers.recordSuperstep`):
 
 1. **Launch**: the CA counts, per workgroup, the cells above the launch speed. One workgroup turns the counts into slots after the live flyers (a prefix sum), and each launching cell moves into its slot in the order cell index gives. Past `maxFlyers` the cell stays in the grid, its speed clamped to 1 cell per dispatch, and `capped` counts it.
 2. **Flight**: two dispatches of gravity and drag. A flyer walks the grid cells between its old and new position (4-connected, so it cannot slip between two diagonal cells) and stops in the last free cell before the first occupied one, so a wall one cell thick cannot be crossed. A flyer that stops, or slows below the launch speed, claims the free cell it is in with an atomic minimum on a key made of (cells walked, slot).
-2. **Landing, two rounds**: the lowest key of each cell enters the grid with its speed clamped to 1 cell per dispatch and an empty remainder. A flyer that lost looks for a free cell within 3 cells, picked at random so that flyers which wanted the same cell spread out (one buried in the grid searches around the first free cell above it), and tries again in the second round; one that fails stays in the air and counts a retry (`jammed` counts 8 failures).
-3. **Compaction**: a prefix sum over the survivors moves them to the other flyer buffer in order.
+3. **Landing, two rounds**: the lowest key of each cell enters the grid with its speed clamped to 1 cell per dispatch and an empty remainder. A flyer that lost looks for a free cell within 3 cells, picked at random so that flyers which wanted the same cell spread out (one buried in the grid searches around the first free cell above it), and tries again in the second round; one that fails stays in the air and counts a retry (`jammed` counts 8 failures).
+4. **Compaction**: a prefix sum over the survivors moves them to the other flyer buffer in order.
 
 Every slot comes from a prefix sum in a fixed order and every conflict from the slot index, so two runs with one seed are bit-identical. The brush's erase and replace mark the flyers in the stroke as landed, and the next compaction drops them; Clear empties the list. The display reads an overlay buffer, cleared and filled once a frame with the kind word of each flyer's cell, and draws a flyer where the cell under it is empty.
-
-Intuition for the liquids: each cell looks only at its 2×2 block, so a liquid cannot feel the weight of the water above it or push water along a pipe. A pool flattens because surface cells slide off the high spots, and falls into every gap. Example: a 30×40 block of water against the left wall of a 200-wide tank spreads out to a sheet 6 to 7 cells deep in about 1,200 supersteps (`tests/simulation.test.ts`, "dam break"). Connected vessels do not level: in the `uTube` scene the filled arm stays full and the empty arm stays empty, as in The Powder Toy (`docs/decisions.md`).
 
 ## Brush
 

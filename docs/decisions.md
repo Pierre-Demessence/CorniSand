@@ -8,7 +8,7 @@ Rejected: `THREE.WebGPURenderer` (experimental, and it hides the compute API the
 
 ## Per-cell fields in separate buffers, updated in place
 
-Each per-cell field (`kind` with the element and variant, `life`, and later velocity, temperature…) is one 32-bit word per cell in its own storage buffer, declared once in `src/cell-fields.ts`; the buffers, bind groups and WGSL accessors are generated from that list. A buffer's size limit applies to one field, not to the sum, so the grid size does not shrink as fields are added, and a pass can later bind only the fields it uses (today every pass binds every field). A storage texture limits a cell to one texel format; buffers are read by index in every shader.
+Each per-cell field (`kind` with the element and variant, `life`, `velocity`, `remainder`, and later temperature…) is one 32-bit word per cell in its own storage buffer, declared once in `src/cell-fields.ts`; the buffers, bind groups and WGSL accessors are generated from that list. A buffer's size limit applies to one field, not to the sum, so the grid size does not shrink as fields are added, and a pass can later bind only the fields it uses (today every pass binds every field). A storage texture limits a cell to one texel format; buffers are read by index in every shader.
 
 The CA updates the buffers in place: a Margolus thread reads and writes only the cells of its own 2×2 block, so threads never race, no second copy of the world is needed (half the memory) and a block that did not change writes nothing.
 

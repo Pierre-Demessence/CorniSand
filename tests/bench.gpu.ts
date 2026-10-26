@@ -8,7 +8,8 @@ import { cell, createDevice, idleInput } from './gpu';
 import { mulberry32 } from '../src/random';
 
 // GPU time per frame at 2560x1340, the screen-sized grid, from timestamp queries. Run with `npm run bench`; only
-// numbers from the RTX 4080 count, the machine also has an Intel iGPU. AC19 of M4: at most 4 ms per 1x frame.
+// numbers from the RTX 4080 count, the machine also has an Intel iGPU. The element engine stays under 4 ms per 1x
+// frame (docs/powder-toy.md, "Frame budget").
 // BENCH_SCENES=mix75,blast runs only those scenes; BENCH_SPLIT_ONLY=1 only the 1x breakdown by pass.
 
 const WIDTH = 2560;

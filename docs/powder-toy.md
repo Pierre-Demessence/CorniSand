@@ -8,7 +8,7 @@ Sources: TPT's `src/SimulationConfig.h`, `src/simulation/Particle.h` and `src/si
 
 - **Grid**: 612×384 pixels (235,008 cells, which is also the particle limit, `NPART`). One particle per pixel, except energy particles (photons, neutrons, electrons…), which share pixels with matter through a second map.
 - **Air grid**: 153×96 cells of 4×4 pixels (`CELL = 4`), holding pressure, air velocity and ambient heat.
-- **Particle state**: 14 fields, 56 bytes: `type`, `life`, `ctype` (a second element ID, for example what a clone or a spark sits on), `x`, `y`, `vx`, `vy` (floats: particles move by velocity, several pixels per step), `temp`, `tmp`, `tmp2`, `tmp3`, `tmp4`, `flags`, `dcolour`. Ours is one 32-bit word per field per cell, in separate buffers (`kind` and `life` so far: 8 bytes per cell).
+- **Particle state**: 14 fields, 56 bytes: `type`, `life`, `ctype` (a second element ID, for example what a clone or a spark sits on), `x`, `y`, `vx`, `vy` (floats: particles move by velocity, several pixels per step), `temp`, `tmp`, `tmp2`, `tmp3`, `tmp4`, `flags`, `dcolour`. Ours is one 32-bit word per field per cell, in separate buffers (`kind`, `life`, `velocity` and `remainder` so far: 16 bytes per cell).
 - **Element table**: roughly 190 elements, each a row of properties plus optional callbacks (`Update`, `Graphics`, `Create`, `ChangeType`…). The properties: `Advection`, `AirDrag`, `AirLoss`, `Loss`, `Collision`, `Gravity`, `NewtonianGravity`, `Diffusion`, `HotAir`, `Falldown` (0 solid, 1 powder, 2 liquid), `Flammable`, `Explosive`, `Meltable`, `Hardness`, `Weight` (density ordering), `HeatConduct`, `HeatCapacity`, `PhotonReflectWavelengths`, `Properties` (type and behavior flags), and four transitions: low and high pressure, low and high temperature, each a threshold and a target element. Most elements are mostly this table; the `Update` callback adds the special behavior (sparks, explosions, life).
 - **Settings the player can toggle**: heat simulation (particle temperatures and conduction), ambient heat (air temperature on the air grid), Newtonian gravity (a gravity field computed from the mass layout), water equalisation (liquid in connected vessels levels; its cost grows with the amount of liquid).
 - **Update order**: one CPU thread walks the particles in order, and each update sees the effects of the ones before it. A particle can move many pixels, swap places, create or delete particles anywhere, and a chain can cross the screen in one step. Much of TPT's behavior silently relies on this.
@@ -39,16 +39,29 @@ The GPU updates millions of cells at once, so a rule may only change cells it ow
 
 60 fps leaves 16.7 ms a frame. Keep about 12 ms of GPU time for the simulation; the rest goes to drawing, the browser's compositing and spikes.
 
-**Measured** (RTX 4080, 2560×1340 = 3.4M cells, `npm run bench`; the previous liquids' number is from the M1 plan, found with `git log --all -- docs/plans/physics-foundation.md`):
+The element engine (M4) is held to 4 ms of the 12, which leaves 8 ms for heat, air, electricity, gravity and light.
 
-- The CA with liquids as CA rules (M4.2): about 0.33 ms per 1x frame (8 Margolus dispatches over 4-byte cells) on `tank` and on `mix75` (75% of the cells a random mix of sand, water, oil and smoke), so about 0.04 ms per full-grid pass. Time grows linearly to 4x.
-- The previous liquids, a particle simulation with a global pressure solve: 49 ms of GPU time per 1x frame with a quarter of the tank water. They are why liquids moved to CA rules (`docs/decisions.md`).
+**Measured** (RTX 4080, 2560×1340 = 3.4M cells, `npm run bench`: GPU timestamp queries, frames submitted back to back after a 1 s burn-in, median of 60 frames; the GPU must be otherwise idle, since a game or a live wallpaper made timings 3 to 8 times too high). The scenes: `tank` (a sand block over a quarter-full tank of water), `mix75` (75% of the cells a random mix of sand, water, oil and smoke, so everything keeps moving), `full100` (every cell inside a wall frame holds such a mix, so density swaps never stop) and `blast` (five blasts under a sand layer, 46,000 flyers launched in the first 1x frame). The bench runs the same code as the game, with the cells moving by velocity and the flyer passes.
 
-**Estimated**, from that 0.04 ms per pass, scaled by bytes per cell and passes. Within a factor of 2, to be replaced by bench numbers as each milestone lands:
+| Scene | 1x (4 supersteps) | 2x | 4x | 8x (32 supersteps) |
+| --- | --- | --- | --- | --- |
+| `tank` | 0.39 ms (max 0.66) | 0.92 | 1.90 | 3.47 |
+| `mix75` | 0.98 ms (max 1.77) | 1.97 | 3.47 | 5.11 |
+| `full100` | 0.92 ms (max 1.31) | 1.84 | 3.54 | 6.29 |
+| `blast` | 0.33 ms (max 0.46) | 0.52 | 1.05 | 2.16 |
+
+- Time grows about linearly with the speed. A 1x frame is 8 CA dispatches plus 4 rounds of flyer passes: the CA dispatches take most of it, the flyer launch scan 0.06 to 0.08 ms.
+- The cells weigh 16 bytes (four fields), so a dispatch over a busy screen costs about 0.12 ms, three times the 0.04 ms of the first CA, which had 4-byte cells and no velocity (M4.2: 0.33 ms per 1x frame on `tank` and `mix75`). That 0.04 ms per full-grid pass over 4-byte cells, close to the card's memory bandwidth (inferred), is the anchor of the estimates below for passes that only move data.
+- Two changes made the engine fit, both without changing a single cell: a thread skips a block of four inert cells (empty or solid, no lifetime, no rule) after reading only their `kind` words, which cuts `tank` and `blast` by 40 to 50%; and the CA keeps its block in four variables instead of an array indexed by a run-time slot, which put the array in slow per-thread memory and made `mix75` and `full100` three times slower (`docs/simulation.md`, "Margolus neighborhood").
+- Things that made no difference: reading the table through a `switch` instead of the uniform array, and workgroups of 32×2 or 16×4 instead of 8×8.
+- Compiling the CA's pipelines takes about 0.5 s in Node the first time (backlog D17).
+- The liquids before M4.2, a particle simulation with a global pressure solve, cost 49 ms of GPU time per 1x frame with a quarter of the tank water (found with `git log --all -- docs/plans/physics-foundation.md`). They are why liquids moved to CA rules (`docs/decisions.md`).
+
+**Estimated**, from the measurements above, scaled by bytes per cell and passes. Within a factor of 2, to be replaced by bench numbers as each milestone lands:
 
 | System | 3.4M cells on the RTX 4080 | Notes |
 | --- | --- | --- |
-| TPT-parity base (movement, element updates, transitions, heat) | 4–12 ms | 10–30× the current CA: about 14× the data per cell and far more logic |
+| TPT-parity base (movement, element updates, transitions, heat) | 3–8 ms | The engine above costs about 1 ms at 16 bytes per cell; TPT's cell is 56 bytes, 3.5× the data, with far more logic |
 | Air at TPT's 4×4 resolution | under 0.1 ms | |
 | Air at 2×2 | about 0.2 ms | |
 | Air at full resolution | about 0.6 ms | |
