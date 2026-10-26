@@ -43,6 +43,14 @@ export function elementGravity(e: ElementDef): number {
   return e.gravity ?? (e.state === 'powder' || e.state === 'liquid' ? DEFAULT_GRAVITY : 0);
 }
 
+/**
+ * Whether a cell of this element never changes by itself: empty or solid, with no lifetime and no rule. A block of
+ * only such cells is a fixed point of every CA phase, so the CA skips it.
+ */
+export function elementInert(e: ElementDef): boolean {
+  return (e.state === 'empty' || e.state === 'solid') && !e.life && e.rule === undefined;
+}
+
 /** The drag of a row with its default applied. */
 export function elementDrag(e: ElementDef): number {
   return e.drag ?? DEFAULT_DRAG;

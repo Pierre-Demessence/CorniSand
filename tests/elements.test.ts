@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PROP_FIELDS, ROW_BYTES, packElements } from '../src/element-table';
-import { DEFAULT_DRAG, DEFAULT_GRAVITY, ELEMENT, ELEMENTS, MAX_ELEMENTS, STATES, elementByKey, elementDrag, elementGravity, validateElements, type ElementDef } from '../src/elements';
+import { DEFAULT_DRAG, DEFAULT_GRAVITY, ELEMENT, ELEMENTS, MAX_ELEMENTS, STATES, elementByKey, elementDrag, elementGravity, elementInert, validateElements, type ElementDef } from '../src/elements';
 import { buttonAttributes, toolbarEntries } from '../src/toolbar';
 
 const MUD: ElementDef = { key: 'MUD', id: 7, label: 'Mud', color: [0.4, 0.3, 0.2], state: 'powder', density: 1300, toolbar: 7 };
@@ -35,7 +35,18 @@ describe('element table', () => {
     expect(words[at(ELEMENT.FIRE, 'lifeRule')]).toBe(4 | (ELEMENT.SMOKE << 8));
     expect(floats[at(ELEMENT.SAND, 'gravity')]).toBe(DEFAULT_GRAVITY);
     expect(floats[at(ELEMENT.WATER, 'drag')]).toBe(DEFAULT_DRAG);
+    expect(words[at(ELEMENT.WALL, 'inert')]).toBe(1);
+    expect(words[at(ELEMENT.SAND, 'inert')]).toBe(0);
     expect(words.subarray(at(100, 'colorR'), at(101, 'colorR')).every((w) => w === 0), 'an unused ID').toBe(true);
+  });
+
+  it('counts as inert only what never changes by itself: empty space and solids without a lifetime or a rule', () => {
+    const inert = ELEMENTS.filter((e) => elementInert(e)).map((e) => e.key);
+    expect(inert).toEqual(expect.arrayContaining(['EMPTY', 'WALL']));
+    expect(inert).toHaveLength(2);
+    const wall = elementByKey(ELEMENTS, 'WALL');
+    expect(elementInert({ ...wall, rule: 'fire' })).toBe(false);
+    expect(elementInert({ ...wall, life: { start: 10, decay: 1, becomes: 'EMPTY' } })).toBe(false);
   });
 
   it('gives powders and liquids gravity by default, and everything else none', () => {

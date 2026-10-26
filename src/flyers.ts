@@ -2,6 +2,7 @@ import { CELL_FIELDS } from './cell-fields';
 import type { CellFields } from './cell-field-buffers';
 import type { ElementTable } from './element-table';
 import { MAX_FLYER_SLOTS, launchGroups } from './movement';
+import type { PassRecorder } from './passes';
 import {
   ARGS_DISPATCH, ARGS_WORDS, FLYER_OFFSET, FLYER_STATE, FLYER_STATE_WORDS, FLYER_WORDS,
   compactScanWGSL, compactScatterWGSL, flightWGSL, flyerBrushWGSL, landWGSL, launchScanWGSL, launchScatterWGSL,
@@ -200,38 +201,44 @@ export class Flyers {
   }
 
   /** Removes the flyers inside the stroke whose uniform the brush pass has just been given. */
-  recordBrush(pass: GPUComputePassEncoder): void {
-    this.dispatchOver(pass, this.brush);
+  recordBrush(passes: PassRecorder): void {
+    this.dispatchOver(passes.pass('flyer brush'), this.brush);
   }
 
   /** The passes that follow a superstep's offset-1 CA dispatch. */
-  recordSuperstep(pass: GPUComputePassEncoder): void {
+  recordSuperstep(passes: PassRecorder): void {
     const p = this.parity;
+    let pass = passes.pass('launch scan');
     pass.setPipeline(this.launchScan.pipeline);
     pass.setBindGroup(0, this.launchScan.groups[p]);
     pass.dispatchWorkgroups(1);
 
+    pass = passes.pass('launch scatter');
     pass.setPipeline(this.launchScatter.pipeline);
     pass.setBindGroup(0, this.launchScatter.groups[p]);
     pass.setBindGroup(1, this.fields.writeBindGroup);
     pass.dispatchWorkgroups(this.launchGroupCount.x, this.launchGroupCount.y);
 
+    pass = passes.pass('flight');
     pass.setPipeline(this.flight.pipeline);
     pass.setBindGroup(0, this.flight.groups[p]);
     pass.setBindGroup(1, this.fields.readBindGroup);
     pass.setBindGroup(2, this.elementTable.bindGroup);
     pass.dispatchWorkgroupsIndirect(this.args, ARGS_DISPATCH * 4);
 
-    this.dispatchLand(pass, this.lands[0], p);
+    this.dispatchLand(passes.pass('land 1'), this.lands[0], p);
+    pass = passes.pass('retry');
     pass.setPipeline(this.retry.pipeline);
     pass.setBindGroup(0, this.retry.groups[p]);
     pass.setBindGroup(1, this.fields.readBindGroup);
     pass.dispatchWorkgroupsIndirect(this.args, ARGS_DISPATCH * 4);
-    this.dispatchLand(pass, this.lands[1], p);
+    this.dispatchLand(passes.pass('land 2'), this.lands[1], p);
 
+    pass = passes.pass('compact scan');
     pass.setPipeline(this.compactScan.pipeline);
     pass.setBindGroup(0, this.compactScan.groups[p]);
     pass.dispatchWorkgroups(1);
+    pass = passes.pass('compact scatter');
     pass.setPipeline(this.compactScatter.pipeline);
     pass.setBindGroup(0, this.compactScatter.groups[p]);
     pass.dispatchWorkgroupsIndirect(this.args, ARGS_DISPATCH * 4);

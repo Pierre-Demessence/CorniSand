@@ -80,6 +80,9 @@ fn loadCell(i: u32) -> Cell {
   return Cell(${names.map((n) => `field_${n}[i]`).join(', ')});
 }
 
+// The kind word alone, for a pass that decides from the element whether it needs the other fields.
+fn loadKind(i: u32) -> u32 { return field_kind[i]; }
+
 ${access === 'read_write' ? /* wgsl */`
 fn storeCell(i: u32, c: Cell) {
 ${names.map((n) => `  field_${n}[i] = c.${n};`).join('\n')}

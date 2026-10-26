@@ -31,11 +31,11 @@ export const caWGSL = (
 
   // For each cell of the block, whether it ignites: flammable, with a fire cell in the block (after the lifetimes).
   const ignitionDecisions = SLOTS.map((n) => {
-    const others = SLOTS.filter((o) => o !== n).map((o) => `cellType(blk[${o}]) == EL_FIRE`).join(' || ');
-    return `  let ignite_${n} = elFlammable(cellType(blk[${n}])) && (${others});`;
+    const others = SLOTS.filter((o) => o !== n).map((o) => `cellType(blk${o}) == EL_FIRE`).join(' || ');
+    return `  let ignite_${n} = elFlammable(cellType(blk${n})) && (${others});`;
   }).join('\n');
   const ignitionApplied = SLOTS.map((n) =>
-    `  if (ignite_${n} && elFlammable(cellType(blk[${n}]))) { blk[${n}] = retype(blk[${n}], EL_FIRE, cellVariant(blk[${n}]), elLifeStart(EL_FIRE)); }`,
+    `  if (ignite_${n} && elFlammable(cellType(blk${n}))) { blk${n} = retype(blk${n}, EL_FIRE, cellVariant(blk${n}), elLifeStart(EL_FIRE)); }`,
   ).join('\n');
 
   // A generated switch on the cell's element: only cells of an element with a rule call it.
@@ -43,10 +43,30 @@ export const caWGSL = (
 ${ruled.map((e) => `    case EL_${e.key}: { rule_${e.rule}(${i}u, &block); }`).join('\n')}
     default: {}
   }`).join('\n');
+  // The block lives in one private variable per slot, not in an array: indexed by a runtime slot, an array is kept
+  // in per-thread memory instead of registers, which made the CA three times slower on the RTX 4080. The generated
+  // `blkAt(k)` and `setBlk(k, c)` pick the variable by slot.
+  const slotCase = (n: number): string => (n === 3 ? 'default' : `case ${n}u`);
+  const slotVariables = (name: string, type: string, get: string, set: string): string => `${SLOTS.map((n) => `var<private> ${name}${n}: ${type};`).join('\n')}
+fn ${get}(k: u32) -> ${type} {
+  switch (k) {
+${SLOTS.map((n) => `    ${slotCase(n)}: { return ${name}${n}; }`).join('\n')}
+  }
+}
+fn ${set}(k: u32, v: ${type}) {
+  switch (k) {
+${SLOTS.map((n) => `    ${slotCase(n)}: { ${name}${n} = v; }`).join('\n')}
+  }
+}`;
+  const loadBlock = SLOTS.map((n) => `    blk${n} = readCell(ox + ${n & 1}, oy + ${n >> 1});
+    orig${n} = blk${n};
+    moved${n} = false;`).join('\n');
+  const storeBlock = SLOTS.map((n) => `    writeCell(ox + ${n & 1}, oy + ${n >> 1}, blk${n}, orig${n});`).join('\n');
+
   const ruleSection = ruled.length === 0 ? '' : `
-  var block = array<Cell, 4>(blk[0], blk[1], blk[2], blk[3]);
+  var block = array<Cell, 4>(blk0, blk1, blk2, blk3);
 ${ruleSwitches}
-  blk[0] = block[0]; blk[1] = block[1]; blk[2] = block[2]; blk[3] = block[3];`;
+  blk0 = block[0]; blk1 = block[1]; blk2 = block[2]; blk3 = block[3];`;
 
   return /* wgsl */`
 ${cellWGSL('read_write', elements)}
@@ -67,11 +87,12 @@ var<workgroup> wgLaunches: atomic<u32>;
 const W: u32 = ${width}u;
 const H: u32 = ${height}u;
 
-// The block being processed and the cells as they were loaded. \`moved[k]\` is set when slot k holds another cell than
-// it started the dispatch with, so a cell that just arrived does not also move sideways in the same step.
-var<private> blk: array<Cell, 4>;
-var<private> orig: array<Cell, 4>;
-var<private> moved: array<bool, 4>;
+// The block being processed (\`blk0\` to \`blk3\`) and the cells as they were loaded (\`orig0\` to \`orig3\`, read by
+// slot number only). \`movedAt(k)\` is true when slot k holds another cell than it started the dispatch with, so a
+// cell that just arrived does not also move sideways in the same step.
+${slotVariables('blk', 'Cell', 'blkAt', 'setBlk')}
+${slotVariables('moved', 'bool', 'movedAt', 'setMoved')}
+${SLOTS.map((n) => `var<private> orig${n}: Cell;`).join('\n')}
 
 fn cellState(c: Cell) -> u32 { return elState(cellType(c)); }
 fn cellDensity(c: Cell) -> f32 { return elDensity(cellType(c)); }
@@ -106,15 +127,20 @@ fn readCell(x: i32, y: i32) -> Cell {
   return loadCell(u32(y) * W + u32(x));
 }
 
+// Whether the cell at (x, y) is of an inert element (empty or solid, no lifetime, no rule); out of bounds is a wall.
+fn inertAt(x: i32, y: i32) -> bool {
+  return !inBounds(x, y) || elInert(loadKind(u32(y) * W + u32(x)) & 0xffu);
+}
+
 fn writeCell(x: i32, y: i32, c: Cell, before: Cell) {
   if (inBounds(x, y)) { storeChanged(u32(y) * W + u32(x), c, before); }
 }
 
 // Both cells keep all their fields.
 fn swapSlots(a: u32, b: u32) {
-  let tmp = blk[a]; blk[a] = blk[b]; blk[b] = tmp;
-  moved[a] = true;
-  moved[b] = true;
+  let tmp = blkAt(a); setBlk(a, blkAt(b)); setBlk(b, tmp);
+  setMoved(a, true);
+  setMoved(b, true);
 }
 
 // One bit of a random word, used to pick a direction.
@@ -149,7 +175,7 @@ fn slotAt(col: i32, row: i32) -> i32 {
 // Speed left on one axis after bumping into the cell in slot j: that cell's speed if it moves the same way more
 // slowly, else 0. A cell falling onto a falling cell follows it instead of stopping.
 fn bumped(v: f32, j: u32, axis: u32) -> f32 {
-  let ov = cellVelocity(blk[j])[axis];
+  let ov = cellVelocity(blkAt(j))[axis];
   if (v < 0.0) { return min(0.0, max(v, ov)); }
   return max(0.0, min(v, ov));
 }
@@ -158,8 +184,8 @@ fn bumped(v: f32, j: u32, axis: u32) -> f32 {
 // axis (swapping with a lighter cell in the way), stop an axis that is blocked, lose sideways speed and slide
 // diagonally when it rests on something.
 fn velocityRule(i: u32) {
-  if (moved[i] || !isFalling(blk[i])) { return; }
-  let c = blk[i];
+  if (movedAt(i) || !isFalling(blkAt(i))) { return; }
+  let c = blkAt(i);
   var v = cellVelocity(c);
   var r = cellRemainder(c);
   // Waiting for the launch pass: frozen, an obstacle for the others.
@@ -179,7 +205,7 @@ fn velocityRule(i: u32) {
   var didMove = false;
   if (sx != 0 && sy != 0) {
     let j = slotAt(col + sx, row + sy);
-    if (j >= 0 && canDisplace(c, blk[u32(j)])) {
+    if (j >= 0 && canDisplace(c, blkAt(u32(j)))) {
       swapSlots(i, u32(j)); at = u32(j); didMove = true;
       r -= vec2f(f32(sx), f32(sy));
     }
@@ -187,7 +213,7 @@ fn velocityRule(i: u32) {
   if (!didMove && sy != 0) {
     let j = slotAt(col, row + sy);
     if (j >= 0) {
-      if (canDisplace(c, blk[u32(j)])) {
+      if (canDisplace(c, blkAt(u32(j)))) {
         swapSlots(i, u32(j)); at = u32(j); didMove = true;
         r.y -= f32(sy);
       } else {
@@ -199,7 +225,7 @@ fn velocityRule(i: u32) {
   if (!didMove && sx != 0) {
     let j = slotAt(col + sx, row);
     if (j >= 0) {
-      if (canDisplace(c, blk[u32(j)])) {
+      if (canDisplace(c, blkAt(u32(j)))) {
         swapSlots(i, u32(j)); at = u32(j); didMove = true;
         r.x -= f32(sx);
       } else {
@@ -210,7 +236,7 @@ fn velocityRule(i: u32) {
   }
 
   // Resting on something: stop falling, lose sideways speed, and slide to the opposite bottom corner when it is free.
-  if ((at >> 1u) == 1u && !canDisplace(c, blk[at - 2u])) {
+  if ((at >> 1u) == 1u && !canDisplace(c, blkAt(at - 2u))) {
     if (v.y < 0.0) { v.y = bumped(v.y, at - 2u, 1u); }
     r.y = max(r.y, 0.0);
     v.x *= 1.0 - FRICTION;
@@ -219,7 +245,7 @@ fn velocityRule(i: u32) {
       r.x = 0.0;
     }
     let corner = 1u - (at & 1u);
-    if (!didMove && canDisplace(c, blk[corner])) {
+    if (!didMove && canDisplace(c, blkAt(corner))) {
       swapSlots(at, corner); at = corner;
       v.y = 0.0;
       r.y = 0.0;
@@ -227,7 +253,7 @@ fn velocityRule(i: u32) {
   }
   // A cell whose target lies outside the block waits a dispatch; this bounds what it banks meanwhile.
   r = clamp(r, vec2f(-2.0), vec2f(2.0));
-  blk[at] = withMotion(blk[at], v, r);
+  setBlk(at, withMotion(blkAt(at), v, r));
 }
 
 // -- Liquids --
@@ -241,7 +267,7 @@ const TURN_ONE_IN: u32 = 64u;
 
 // A liquid that is not falling spreads sideways.
 fn spreads(slot: u32) -> bool {
-  return isLiquid(blk[slot]) && !moved[slot] && cellVelocity(blk[slot]).y == 0.0;
+  return isLiquid(blkAt(slot)) && !movedAt(slot) && cellVelocity(blkAt(slot)).y == 0.0;
 }
 
 // A liquid cell that did not move this dispatch spreads along one row of the block, slot l left of slot r. It tries the
@@ -251,24 +277,24 @@ fn spreads(slot: u32) -> bool {
 fn spreadRow(l: u32, r: u32, rnd: u32) {
   let turn = (rnd & (TURN_ONE_IN - 1u)) == 0u;
   if (spreads(l)) {
-    var dir = cellLife(blk[l]);
+    var dir = cellLife(blkAt(l));
     if (dir == 0u) { dir = select(DIR_LEFT, DIR_RIGHT, pickRight(rnd)); }
     if (dir == DIR_RIGHT) {
-      if (turn || !isEmpty(blk[r])) { blk[l] = withLife(blk[l], DIR_LEFT); }
-      else if (isEmpty(blk[r])) {
-        blk[l] = withLife(blk[l], DIR_RIGHT);
+      if (turn || !isEmpty(blkAt(r))) { setBlk(l, withLife(blkAt(l), DIR_LEFT)); }
+      else if (isEmpty(blkAt(r))) {
+        setBlk(l, withLife(blkAt(l), DIR_RIGHT));
         swapSlots(l, r);
         return;
       }
     }
   }
   if (spreads(r)) {
-    var dir = cellLife(blk[r]);
+    var dir = cellLife(blkAt(r));
     if (dir == 0u) { dir = select(DIR_LEFT, DIR_RIGHT, pickRight(rnd)); }
     if (dir == DIR_LEFT) {
-      if (turn || !isEmpty(blk[l])) { blk[r] = withLife(blk[r], DIR_RIGHT); }
-      else if (isEmpty(blk[l])) {
-        blk[r] = withLife(blk[r], DIR_LEFT);
+      if (turn || !isEmpty(blkAt(l))) { setBlk(r, withLife(blkAt(r), DIR_RIGHT)); }
+      else if (isEmpty(blkAt(l))) {
+        setBlk(r, withLife(blkAt(r), DIR_LEFT));
         swapSlots(l, r);
       }
     }
@@ -297,19 +323,18 @@ fn main(
   let inGrid = gid.x < (W + u.offset + 1u) / 2u && gid.y < (H + u.offset + 1u) / 2u;
   let ox = i32(gid.x) * 2 - i32(u.offset);
   let oy = i32(gid.y) * 2 - i32(u.offset);
+  // A block of inert cells only is a fixed point of every phase: skipped without loading its other fields. Most of a
+  // screen is empty space or walls.
+  let awake = inGrid && !(inertAt(ox, oy) && inertAt(ox + 1, oy) && inertAt(ox, oy + 1) && inertAt(ox + 1, oy + 1));
 
-  if (inGrid) {
-    for (var j = 0u; j < 4u; j++) {
-      blk[j] = readCell(ox + i32(j & 1u), oy + i32(j >> 1u));
-      orig[j] = blk[j];
-      moved[j] = false;
-    }
+  if (awake) {
+${loadBlock}
 
     var rnd = hash2(gid.x, gid.y, u.seed);
 
     // Phase 0: Gases rise
-    if (isGas(blk[0]) && canRiseThrough(blk[0], blk[2])) { swapSlots(0u, 2u); }
-    if (isGas(blk[1]) && canRiseThrough(blk[1], blk[3])) { swapSlots(1u, 3u); }
+    if (isGas(blk0) && canRiseThrough(blk0, blk2)) { swapSlots(0u, 2u); }
+    if (isGas(blk1) && canRiseThrough(blk1, blk3)) { swapSlots(1u, 3u); }
 
     // Phase 1: Powders and liquids move by velocity, a heavier one through a lighter one. The bottom row goes first, so
     // a cell moving up finds the cell it leaves free; the column order is random.
@@ -321,17 +346,17 @@ fn main(
 
     // Phase 2: Gas horizontal dispersion, top row
     if (pickRight(rnd)) {
-      if (isGas(blk[2]) && isEmpty(blk[3]) && !moved[2]) { swapSlots(2u, 3u); }
+      if (isGas(blk2) && isEmpty(blk3) && !moved2) { swapSlots(2u, 3u); }
     } else {
-      if (isGas(blk[3]) && isEmpty(blk[2]) && !moved[3]) { swapSlots(3u, 2u); }
+      if (isGas(blk3) && isEmpty(blk2) && !moved3) { swapSlots(3u, 2u); }
     }
 
     // Bottom row: gases disperse sideways when they cannot rise
     rnd = pcg(rnd);
     if (pickRight(rnd)) {
-      if (isGas(blk[0]) && isEmpty(blk[1]) && !canRiseThrough(blk[0], blk[2]) && !moved[0]) { swapSlots(0u, 1u); }
+      if (isGas(blk0) && isEmpty(blk1) && !canRiseThrough(blk0, blk2) && !moved0) { swapSlots(0u, 1u); }
     } else {
-      if (isGas(blk[1]) && isEmpty(blk[0]) && !canRiseThrough(blk[1], blk[3]) && !moved[1]) { swapSlots(1u, 0u); }
+      if (isGas(blk1) && isEmpty(blk0) && !canRiseThrough(blk1, blk3) && !moved1) { swapSlots(1u, 0u); }
     }
 
     // Phase 3: Liquids spread sideways
@@ -341,7 +366,7 @@ fn main(
     spreadRow(0u, 1u, rnd);
 
     // Phase 4: Lifetimes
-    for (var j = 0u; j < 4u; j++) { blk[j] = ageCell(blk[j]); }
+${SLOTS.map((n) => `    blk${n} = ageCell(blk${n});`).join('\n')}
 ${burns ? ignitionDecisions : ''}
 
     // Phase 5: Element rules
@@ -350,18 +375,14 @@ ${burns ? `
     // Phase 6: Ignition
 ${ignitionApplied}` : ''}
 
-    for (var j = 0u; j < 4u; j++) {
-      writeCell(ox + i32(j & 1u), oy + i32(j >> 1u), blk[j], orig[j]);
-    }
+${storeBlock}
   }
 
   // Offset 1 ends the superstep's CA: count this workgroup's launching cells for the launch pass.
   if (u.offset == 1u) {
-    if (inGrid) {
+    if (awake) {
       var n = 0u;
-      for (var j = 0u; j < 4u; j++) {
-        if (blk[j].velocity != 0u && inBounds(ox + i32(j & 1u), oy + i32(j >> 1u)) && length(cellVelocity(blk[j])) > LAUNCH_SPEED) { n++; }
-      }
+${SLOTS.map((k) => `      if (blk${k}.velocity != 0u && inBounds(ox + ${k & 1}, oy + ${k >> 1}) && length(cellVelocity(blk${k})) > LAUNCH_SPEED) { n++; }`).join('\n')}
       if (n > 0u) { atomicAdd(&wgLaunches, n); }
     }
     workgroupBarrier();

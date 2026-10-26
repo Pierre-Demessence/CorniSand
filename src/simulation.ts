@@ -9,6 +9,7 @@ import type { CellData } from './cell-fields';
 import { Flyers } from './flyers';
 import type { Vec2 } from './input';
 import { MOVEMENT } from './movement';
+import { PassRecorder, type PassTimer } from './passes';
 
 export interface SimulationInput {
   mousePos: Vec2;
@@ -180,8 +181,8 @@ export class Simulation {
   }
 
   // Records the brush (while a button is down) and `supersteps` supersteps (two CA dispatches each) into the caller's
-  // encoder; submitting it is the caller's job.
-  simulate(encoder: GPUCommandEncoder, supersteps: number, input: SimulationInput): void {
+  // encoder; submitting it is the caller's job. `timer` is for the bench.
+  simulate(encoder: GPUCommandEncoder, supersteps: number, input: SimulationInput, timer?: PassTimer): void {
     if (supersteps < 0 || supersteps > MAX_SUPERSTEPS) {
       throw new RangeError(`supersteps must be 0..${MAX_SUPERSTEPS}, got ${supersteps}`);
     }
@@ -193,12 +194,13 @@ export class Simulation {
     }
     this.device.queue.writeBuffer(this.stepUniformBuffer, 0, this.slotData, 0, dispatches * this.slotWords);
 
-    const pass = encoder.beginComputePass();
+    const passes = new PassRecorder(encoder, timer);
 
-    if (input.mouseActive) this.recordBrush(pass, input);
+    if (input.mouseActive) this.recordBrush(passes, input);
 
     for (let i = 0; i < dispatches; i++) {
       const offset = i % 2;
+      const pass = passes.pass(`ca${offset}`);
       pass.setPipeline(this.caPipeline);
       const blocksX = Math.ceil((this.width + offset) / 2);
       const blocksY = Math.ceil((this.height + offset) / 2);
@@ -208,9 +210,9 @@ export class Simulation {
       pass.setBindGroup(3, this.flyers.launchBindGroup);
       pass.dispatchWorkgroups(Math.ceil(blocksX / 8), Math.ceil(blocksY / 8));
       // The offset-1 dispatch counted the cells that launch: they fly, and land, before the next superstep.
-      if (offset === 1) this.flyers.recordSuperstep(pass);
+      if (offset === 1) this.flyers.recordSuperstep(passes);
     }
-    pass.end();
+    passes.end();
   }
 
   // Draws the flyers into the overlay the display reads; records into the caller's encoder after `simulate`.
@@ -218,7 +220,7 @@ export class Simulation {
     this.flyers.recordOverlay(encoder);
   }
 
-  private recordBrush(pass: GPUComputePassEncoder, input: SimulationInput): void {
+  private recordBrush(passes: PassRecorder, input: SimulationInput): void {
     const f = this.brushFloats;
     const w = this.brushWords;
     f[0] = input.prevMousePos.x;
@@ -232,12 +234,13 @@ export class Simulation {
     w[8] = this.seedSource();
     this.device.queue.writeBuffer(this.brushUniformBuffer, 0, this.brushUniformData);
 
+    const pass = passes.pass('brush');
     pass.setPipeline(this.brushPipeline);
     pass.setBindGroup(0, this.brushBindGroup);
     pass.setBindGroup(1, this.fields.writeBindGroup);
     pass.setBindGroup(2, this.elements.bindGroup);
     pass.dispatchWorkgroups(Math.ceil(this.width / 8), Math.ceil(this.height / 8));
-    this.flyers.recordBrush(pass);
+    this.flyers.recordBrush(passes);
   }
 
   requestParticleCount(): void {

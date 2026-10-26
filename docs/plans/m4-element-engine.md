@@ -1,6 +1,6 @@
 # M4 Element engine
 
-Status: M4.1 to M4.5 done (the user's browser check of the liquids from M4.2 is open; AC19 is not met after M4.5, see M4.5 results). Next: M4.6.
+Status: M4.1 to M4.6a done (the user's browser check of the liquids from M4.2 is open); AC19 is met, see M4.6a results. Next: M4.6b.
 
 ## Goal
 
@@ -235,7 +235,7 @@ Needs you: a browser look at `?scene=blast` and at pouring sand from high up, co
 
 ### M4.6 Budget and docs (tasks)
 
-- [ ] M4.6a Bench `mix75`, `full100`, `blast` with per-pass timing; AC19 on the RTX 4080, levers or gate as in Design.
+- [x] M4.6a Bench `mix75`, `full100`, `blast` with per-pass timing; AC19 on the RTX 4080, levers or gate as in Design.
 - [ ] M4.6b Docs per AC20; `docs/decisions.md` gets only what passes its test; deferred items to `docs/backlog.md`; this plan deleted in the final commit.
 
 Visible after: nothing new; the frame rate with a full screen of mixed materials is measured and within budget.
@@ -378,3 +378,43 @@ Deviations from Design:
 7. Only the brush's erase and replace reach a flyer (`Flyers.recordBrush`, run with the brush before the CA steps); everything else that acts on the grid misses flyers in flight (backlog I13, I14).
 8. The flyer state buffer holds the survivor counts as well, to stay within 8 storage buffers per stage.
 9. The prototype (`src/proto/`, `proto.html`, `tests/proto-*`) is deleted; `vitest.bench.config.ts` includes only `tests/bench.gpu.ts`.
+
+## M4.6a results
+
+Method: `npm run bench` now times the GPU with timestamp queries and submits the frames back to back, after a 1 s burn-in so the GPU clocks are up. It prints the median and the max of 60 frames per scene and speed (median of the frame's one compute pass, as the game records it), and at 1x a per-pass breakdown in which every group of dispatches gets a timed compute pass of its own (`src/passes.ts`; `BENCH_SPLIT_ONLY=1` prints only that, `BENCH_SCENES` filters the scenes).
+
+The M4.5 numbers (6.4 and 8.1 ms) were measured with a game and a live wallpaper running on the RTX 4080, which inflated every timing 3 to 8 times; the M4.3 and M4.4 session-to-session jumps and the 8x jump (backlog D23, deleted) were most likely the same. On an idle GPU the committed M4.5 code already met AC19 with thin margins (1x median / max, ms): `tank` 1.90, `mix75` 3.41, `full100` 3.74 (max 4.78), `blast` 1.77. The CA dispatches took about 90% of it (`mix75`: 1.56 ms for the four offset-0 dispatches, 1.63 for the offset-1 ones); the eight flyer passes took 0.25 to 0.3 ms per frame, most of it the launch scan.
+
+Levers tried (1x median, ms):
+
+| Lever | Effect | Kept |
+| --- | --- | --- |
+| Skip blocks of four inert cells (empty or solid, no life, no rule) after reading only their `kind` words | `tank` 1.94 → 1.15, `blast` 1.67 → 0.88, `mix75` unchanged | Yes |
+| The block in four per-slot variables instead of `var<private>` arrays indexed by a runtime slot (generated `blkAt`/`setBlk` switches) | `mix75` 3.5 → 1.1, `full100` 3.7 → 1.1 | Yes |
+| Table lookups as a `switch` on the type instead of the uniform array | none | No |
+| Workgroups of 32×2 or 16×4 instead of 8×8 | none | No |
+
+Fewer bound fields per pass was not needed: loading and storing all four fields costs about 0.5 ms for four dispatches, and the inert skip already avoids it for most of a sparse screen.
+
+Final bench (RTX 4080 idle, 2560×1340, ms per frame, median, max at 1x):
+
+| Scene | 1x | 2x | 4x | 8x |
+| --- | --- | --- | --- | --- |
+| `tank` | 0.39 (max 0.66) | 0.92 | 1.90 | 3.47 |
+| `mix75` | 0.98 (max 1.77) | 1.97 | 3.47 | 5.11 |
+| `full100` | 0.92 (max 1.31) | 1.84 | 3.54 | 6.29 |
+| `blast` | 0.33 (max 0.46) | 0.52 | 1.05 | 2.16 |
+
+**AC19 is met** with about 4× margin on every scene. The 1x per-pass sums match the one-pass frames (`tank` 0.41, `mix75` 0.97, `full100` 0.95, `blast` 0.34); the launch scan is 0.06 to 0.08 ms per frame. The bench's `blast` launches 45,862 flyers in its first 1x frame. Time now grows linearly up to 8x.
+
+Equivalence: the new CA is bit-identical to M4.5 in every field and in the flyer list, checked against a worktree of 9e88e0a on random mixes with fire, lifetimes and velocities (101×67 for 100 supersteps, 64×48 for 300, 33×129 for 57, 200×60 for 400, 256×256 for 200) and on `blast` for 120 supersteps.
+
+Cost: creating the pipelines the first time takes about 0.5 s in Node instead of about 0.25 s (the per-slot code is longer to compile; backlog D17). Cached creation is unchanged.
+
+Tests: lint, typecheck, build and `npm test` (89 tests, GPU suites included) pass; a new test in `tests/element-table.test.ts` checks that a solid with a lifetime alone in empty space still ages (it fails if `elementInert` ignores the lifetime). Browser check (Playwright on the dev server, `?scene=blast`): 75 FPS, the blast lands, no WebGPU error.
+
+Deviations from Design:
+
+1. The bench defines its scenes itself: `full100` (a random mix of sand, water, oil and smoke in every cell inside a wall frame) and a screen-size `blast` (five blasts of radius 64 under the surface of a sand layer a fifth of the height deep), rather than the 101-wide test scene.
+2. `simulate` takes an optional `PassTimer`; `PassRecorder` (`src/passes.ts`) hands every group of dispatches its compute pass, so the game records one pass and the bench one timed pass per group.
+3. The table's `spare0` word is the `inert` flag; rows stay 48 bytes.

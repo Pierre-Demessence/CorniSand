@@ -41,7 +41,7 @@ The GPU updates millions of cells at once, so a rule may only change cells it ow
 
 **Measured** (RTX 4080, 2560×1340 = 3.4M cells, `npm run bench`; the previous liquids' number is from the M1 plan, found with `git log --all -- docs/plans/physics-foundation.md`):
 
-- The CA with liquids as CA rules (M4.2): about 0.33 ms per 1x frame (8 Margolus dispatches over 4-byte cells) on `tank` and on `mix75` (75% of the cells a random mix of sand, water, oil and smoke), so about 0.04 ms per full-grid pass. Time grows linearly to 4x; the 8x row jumps (backlog D23).
+- The CA with liquids as CA rules (M4.2): about 0.33 ms per 1x frame (8 Margolus dispatches over 4-byte cells) on `tank` and on `mix75` (75% of the cells a random mix of sand, water, oil and smoke), so about 0.04 ms per full-grid pass. Time grows linearly to 4x.
 - The previous liquids, a particle simulation with a global pressure solve: 49 ms of GPU time per 1x frame with a quarter of the tank water. They are why liquids moved to CA rules (`docs/decisions.md`).
 
 **Estimated**, from that 0.04 ms per pass, scaled by bytes per cell and passes. Within a factor of 2, to be replaced by bench numbers as each milestone lands:

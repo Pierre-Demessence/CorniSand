@@ -58,6 +58,8 @@ Example with offset 0, the block whose bottom-left cell is (4, 6) holds (4, 6), 
 
 One thread handles one block: it reads the four cells, runs all rules and writes back the changed fields. Block `b` has its bottom-left cell at `2·b − offset`, and there are `ceil((W + offset) / 2) × ceil((H + offset) / 2)` blocks, so at offset 1 (and at odd sizes) edge blocks stick out of the grid.
 
+A block whose four cells are all inert (empty or solid, with no lifetime and no rule: `elementInert`, the table's `inert` word) cannot change in any phase, so the thread reads only their `kind` words and stops. Most of a screen is empty space or walls, so most threads stop there. A thread keeps its block in four separate variables, not in an array: on the RTX 4080 an array indexed by a slot computed at run time sits in slow per-thread memory instead of registers, which made the CA about three times slower.
+
 y = 0 is the bottom row; gravity points toward lower y.
 
 Smoke rising from a bottom row moves one cell per dispatch, two per superstep. Falling cells start slower and speed up (see phase 1).

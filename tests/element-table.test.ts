@@ -134,6 +134,28 @@ describe.skipIf(!device)('element table in the simulation', () => {
     expect(countTypes(after).get(GLOW)).toBe(2);
   });
 
+  it('ages a solid with a lifetime alone in empty space: the CA skips only blocks that cannot change', async () => {
+    const EMBER = 8;
+    const table: ElementDef[] = [
+      ...ELEMENTS,
+      { key: 'EMBER', id: EMBER, label: 'Ember', color: [1, 0.4, 0], state: 'solid', density: 2000, life: { start: 6, decay: 1, becomes: 'EMPTY' } },
+    ];
+    const width = 12;
+    const height = 12;
+    const sim = createSim(width, height, 5, { elements: table });
+    const kind = new Uint32Array(width * height);
+    const life = new Uint32Array(width * height);
+    kind[5 * width + 5] = cell(EMBER);
+    life[5 * width + 5] = 6;
+    loadScene(sim, kind, life);
+
+    await runMany(sim, 1);
+    expect((await sim.fields.read('life'))[5 * width + 5], 'life after 2 dispatches').toBe(4);
+
+    await runMany(sim, 2);
+    expect(countTypes(await readCells(sim)).get(EMBER), 'embers left after 6 dispatches').toBeUndefined();
+  });
+
   it('rejects an element whose rule does not exist', () => {
     const table: ElementDef[] = [...ELEMENTS, { ...MUD_ROW, rule: 'nope' }];
     expect(() => new Simulation(device!, 8, 8, { elements: table })).toThrow(/unknown rule "nope"/);
