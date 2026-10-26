@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CELL_FIELDS } from '../src/cell-fields';
-import { PARTICLE_TYPES as T } from '../src/particles';
+import { ELEMENT as T } from '../src/elements';
 import { findScene, packCell, SCENES, uTube } from '../src/scenes';
 import { cell } from './gpu';
 import { chamberLevel, liquidVolume } from './metrics';

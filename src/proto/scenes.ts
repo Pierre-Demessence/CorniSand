@@ -1,4 +1,4 @@
-import { PARTICLE_TYPES as T } from '../particles';
+import { ELEMENT as T } from '../elements';
 import { mulberry32 } from '../random';
 import type { SourceRect } from './movement';
 

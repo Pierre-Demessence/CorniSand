@@ -1,4 +1,4 @@
-import { PARTICLE_TYPES as T } from '../src/particles';
+import { ELEMENT as T } from '../src/elements';
 import type { Chamber } from '../src/scenes';
 
 // Measurements on a packed cell grid (row y = 0 at the bottom). Levels are heights above `floorY`.

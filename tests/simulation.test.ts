@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
-import { FIRE_MAX_LIFE, PARTICLE_TYPES as T } from '../src/particles';
+import { ELEMENT as T, ELEMENTS, elementByKey } from '../src/elements';
 import { Display } from '../src/display';
 import { SCENES } from '../src/scenes';
 import { cell, cellType, countTypes, createSim, device, idleInput, loadScene, mulberry32, readCells, run, runMany } from './gpu';
 import { columnsWithAbove, flatness } from './metrics';
+
+const FIRE_MAX_LIFE = elementByKey(ELEMENTS, 'FIRE').life!.start;
 
 function emptyGrid(width: number, height: number): Uint32Array<ArrayBuffer> {
   return new Uint32Array(width * height);
@@ -327,7 +329,7 @@ describe.skipIf(!device)('GPU simulation', () => {
     const width = 64;
     const height = 48;
     const sim = createSim(width, height);
-    const display = new Display(dev, 'rgba8unorm', width, height, sim.fields);
+    const display = new Display(dev, 'rgba8unorm', width, height, sim.fields, sim.elements);
     const target = dev.createTexture({
       size: [width, height],
       format: 'rgba8unorm',

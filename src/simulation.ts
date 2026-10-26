@@ -1,6 +1,9 @@
 import { cellWGSL } from './shaders/cell.wgsl';
 import { BRUSH_UNIFORM_WORDS, brushWGSL } from './shaders/brush.wgsl';
 import { caWGSL } from './shaders/ca.wgsl';
+import { RULES } from './shaders/rules';
+import { ElementTable } from './element-table';
+import { ELEMENTS, type ElementDef } from './elements';
 import { CellFields } from './cell-field-buffers';
 import type { CellData } from './cell-fields';
 import type { Vec2 } from './input';
@@ -18,6 +21,10 @@ export interface SimulationInput {
 export interface SimulationOptions {
   // One u32 per call; injectable so tests can replay a fixed sequence.
   seedSource?: () => number;
+  // The element table the world runs on; the game's own by default. A test passes a table with extra rows.
+  elements?: readonly ElementDef[];
+  // WGSL of the element rules by name, added to the built-in ones.
+  rules?: Readonly<Record<string, string>>;
 }
 
 // A superstep is two CA dispatches (Margolus offset 0, then 1).
@@ -33,6 +40,7 @@ export class Simulation {
   private readonly seedSource: () => number;
 
   readonly fields: CellFields;
+  readonly elements: ElementTable;
 
   // -- Brush pipeline: edits the cell fields in place --
   private readonly brushUniformData = new ArrayBuffer(BRUSH_UNIFORM_WORDS * 4);
@@ -65,6 +73,8 @@ export class Simulation {
     this.seedSource = options.seedSource ?? defaultSeedSource;
 
     this.fields = new CellFields(device, width, height);
+    this.elements = new ElementTable(device, options.elements ?? ELEMENTS);
+    const table = this.elements.elements;
 
     // -- Brush setup --
     this.brushUniformBuffer = device.createBuffer({
@@ -75,8 +85,8 @@ export class Simulation {
       entries: [{ binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } }],
     });
     this.brushPipeline = device.createComputePipeline({
-      layout: device.createPipelineLayout({ bindGroupLayouts: [brushLayout, this.fields.writeLayout] }),
-      compute: { module: device.createShaderModule({ code: brushWGSL(width, height) }), entryPoint: 'main' },
+      layout: device.createPipelineLayout({ bindGroupLayouts: [brushLayout, this.fields.writeLayout, this.elements.layout] }),
+      compute: { module: device.createShaderModule({ code: brushWGSL(width, height, table) }), entryPoint: 'main' },
     });
     this.brushBindGroup = device.createBindGroup({
       layout: brushLayout,
@@ -94,8 +104,8 @@ export class Simulation {
       entries: [{ binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform', hasDynamicOffset: true } }],
     });
     this.caPipeline = device.createComputePipeline({
-      layout: device.createPipelineLayout({ bindGroupLayouts: [caLayout, this.fields.writeLayout] }),
-      compute: { module: device.createShaderModule({ code: caWGSL(width, height) }), entryPoint: 'main' },
+      layout: device.createPipelineLayout({ bindGroupLayouts: [caLayout, this.fields.writeLayout, this.elements.layout] }),
+      compute: { module: device.createShaderModule({ code: caWGSL(width, height, table, { ...RULES, ...options.rules }) }), entryPoint: 'main' },
     });
     this.caBindGroup = device.createBindGroup({
       layout: caLayout,
@@ -115,7 +125,7 @@ export class Simulation {
 
     const countShader = device.createShaderModule({
       code: /* wgsl */`
-        ${cellWGSL('read')}
+        ${cellWGSL('read', table)}
 
         @group(0) @binding(0) var<storage, read_write> counter: atomic<u32>;
 
@@ -126,7 +136,7 @@ export class Simulation {
         fn main(@builtin(global_invocation_id) gid: vec3u) {
           if (gid.x >= W || gid.y >= H) { return; }
           let t = cellType(loadCell(gid.y * W + gid.x));
-          if (t != TYPE_EMPTY && t != TYPE_WALL) {
+          if (t != EL_EMPTY && t != EL_WALL) {
             atomicAdd(&counter, 1u);
           }
         }
@@ -181,6 +191,7 @@ export class Simulation {
       const blocksY = Math.ceil((this.height + offset) / 2);
       pass.setBindGroup(0, this.caBindGroup, [i * this.slotWords * 4]);
       pass.setBindGroup(1, this.fields.writeBindGroup);
+      pass.setBindGroup(2, this.elements.bindGroup);
       pass.dispatchWorkgroups(Math.ceil(blocksX / 8), Math.ceil(blocksY / 8));
     }
     pass.end();
@@ -203,6 +214,7 @@ export class Simulation {
     pass.setPipeline(this.brushPipeline);
     pass.setBindGroup(0, this.brushBindGroup);
     pass.setBindGroup(1, this.fields.writeBindGroup);
+    pass.setBindGroup(2, this.elements.bindGroup);
     pass.dispatchWorkgroups(Math.ceil(this.width / 8), Math.ceil(this.height / 8));
   }
 

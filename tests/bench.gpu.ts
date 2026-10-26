@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PARTICLE_TYPES as T } from '../src/particles';
+import { ELEMENT as T } from '../src/elements';
 import { Simulation } from '../src/simulation';
 import { cell, createDevice, idleInput } from './gpu';
 import { mulberry32 } from '../src/random';

@@ -1,4 +1,4 @@
-import { PARTICLE_TYPES } from '../src/particles';
+import { ELEMENT } from '../src/elements';
 import { MAX_SUPERSTEPS, Simulation, type SimulationInput, type SimulationOptions } from '../src/simulation';
 import { mulberry32 } from '../src/random';
 
@@ -54,7 +54,7 @@ export const idleInput: SimulationInput = {
   erasing: false,
   replacing: false,
   brushSize: 0,
-  particleType: PARTICLE_TYPES.SAND,
+  particleType: ELEMENT.SAND,
 };
 
 // A `kind` word.

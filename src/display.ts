@@ -1,5 +1,7 @@
 import { displayWGSL } from './shaders/display.wgsl';
+import { GRAPHICS } from './shaders/graphics.wgsl';
 import type { CellFields } from './cell-field-buffers';
+import type { ElementTable } from './element-table';
 import type { Vec2 } from './input';
 
 export interface DisplayOptions {
@@ -21,16 +23,18 @@ export class Display {
   private readonly uniformData: Float32Array<ArrayBuffer>;
   private readonly uniformBindGroup: GPUBindGroup;
   private readonly cells: CellFields;
+  private readonly elements: ElementTable;
   private readonly simWidth: number;
   private readonly simHeight: number;
 
-  constructor(device: GPUDevice, format: GPUTextureFormat, simWidth: number, simHeight: number, cells: CellFields) {
+  constructor(device: GPUDevice, format: GPUTextureFormat, simWidth: number, simHeight: number, cells: CellFields, elements: ElementTable) {
     this.device = device;
     this.simWidth = simWidth;
     this.simHeight = simHeight;
     this.cells = cells;
+    this.elements = elements;
 
-    const shaderModule = device.createShaderModule({ code: displayWGSL });
+    const shaderModule = device.createShaderModule({ code: displayWGSL(elements.elements, GRAPHICS) });
 
     this.uniformBuffer = device.createBuffer({
       size: UNIFORM_SIZE,
@@ -43,7 +47,7 @@ export class Display {
     });
 
     this.pipeline = device.createRenderPipeline({
-      layout: device.createPipelineLayout({ bindGroupLayouts: [uniformLayout, cells.readLayout] }),
+      layout: device.createPipelineLayout({ bindGroupLayouts: [uniformLayout, cells.readLayout, elements.layout] }),
       vertex: {
         module: shaderModule,
         entryPoint: 'vs_main',
@@ -97,6 +101,7 @@ export class Display {
     pass.setPipeline(this.pipeline);
     pass.setBindGroup(0, this.uniformBindGroup);
     pass.setBindGroup(1, this.cells.readBindGroup);
+    pass.setBindGroup(2, this.elements.bindGroup);
     pass.draw(3); // Fullscreen triangle
     pass.end();
   }

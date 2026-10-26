@@ -1,4 +1,4 @@
-import { PARTICLE_TYPES as T } from '../src/particles';
+import { ELEMENT as T } from '../src/elements';
 import { packCell } from '../src/scenes';
 
 const KINDS: Record<string, number> = { '.': T.EMPTY, '#': T.WALL, w: T.WATER, o: T.OIL, s: T.SAND };

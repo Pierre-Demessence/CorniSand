@@ -1,19 +1,9 @@
 import { CELL_FIELDS } from '../cell-fields';
-import { FIRE_MAX_LIFE, PARTICLE_TYPES } from '../particles';
+import type { ElementDef } from '../elements';
+import { elementConstantsWGSL } from './elements.wgsl';
 
-// IDs, constants and the hash: what a shader needs even when it does not touch cells.
+// The hash: what a shader needs even when it does not touch cells.
 export const commonWGSL = /* wgsl */`
-
-const TYPE_EMPTY: u32 = ${PARTICLE_TYPES.EMPTY}u;
-const TYPE_SAND: u32  = ${PARTICLE_TYPES.SAND}u;
-const TYPE_WALL: u32  = ${PARTICLE_TYPES.WALL}u;
-const TYPE_WATER: u32 = ${PARTICLE_TYPES.WATER}u;
-const TYPE_SMOKE: u32 = ${PARTICLE_TYPES.SMOKE}u;
-const TYPE_OIL: u32   = ${PARTICLE_TYPES.OIL}u;
-const TYPE_FIRE: u32  = ${PARTICLE_TYPES.FIRE}u;
-
-const FIRE_MAX_LIFE: u32 = ${FIRE_MAX_LIFE}u;
-
 // PCG-RXS-M-XS 32-bit output hash (O'Neill's pcg_hash).
 fn pcg(v: u32) -> u32 {
   let state = v * 747796405u + 2891336453u;
@@ -32,11 +22,12 @@ const names = CELL_FIELDS.map((f) => f.name);
 // How `makeCell(t, variant, life)` fills each field; a field not listed starts at zero.
 const MAKE_CELL_ARGS: Partial<Record<string, string>> = { kind: 't | (variant << 8u)', life: 'life' };
 
-// Shared by every shader that reads cells: `commonWGSL`, plus a `Cell` struct, the field bindings (group 1, binding =
-// field index, generated from CELL_FIELDS) and the accessors. `access` is how the pass binds the fields; only a
-// read_write pass gets the stores.
-export const cellWGSL = (access: 'read' | 'read_write'): string => /* wgsl */`
+// Shared by every shader that reads cells: `commonWGSL`, the element constants, a `Cell` struct, the field bindings
+// (group 1, binding = field index, generated from CELL_FIELDS) and the accessors. `access` is how the pass binds the
+// fields; only a read_write pass gets the stores.
+export const cellWGSL = (access: 'read' | 'read_write', elements: readonly ElementDef[]): string => /* wgsl */`
 ${commonWGSL}
+${elementConstantsWGSL(elements)}
 
 struct Cell {
 ${CELL_FIELDS.map((f) => `  ${f.name}: ${f.wgslType},`).join('\n')}

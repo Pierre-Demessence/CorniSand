@@ -1,4 +1,4 @@
-import { PARTICLE_TYPES as T } from '../src/particles';
+import { ELEMENT as T } from '../src/elements';
 import type { MovementProto, ProtoFlyer } from '../src/proto/movement';
 import { BLAST_MARK } from '../src/proto/params';
 import { WALL_THICKNESS } from '../src/proto/scenes';

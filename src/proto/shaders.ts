@@ -1,4 +1,6 @@
+import { ELEMENTS } from '../elements';
 import { commonWGSL } from '../shaders/cell.wgsl';
+import { elementConstantsWGSL } from '../shaders/elements.wgsl';
 import { BLAST_MARK, PROTO, type MovementModel } from './params';
 
 // WGSL of the M4.1 movement prototype: the CA of the three models (baseline, A, C), the blast and source passes, the
@@ -52,6 +54,7 @@ const f = (x: number): string => {
 // The prototype keeps the engine's former cell word: bits 0-7 type, 8-15 variant, 16-31 life.
 const PACKED_CELL_WGSL = /* wgsl */`
 ${commonWGSL}
+${elementConstantsWGSL(ELEMENTS)}
 
 fn cellType(c: u32) -> u32 { return c & 0xffu; }
 fn cellVariant(c: u32) -> u32 { return (c >> 8u) & 0xffu; }
@@ -136,8 +139,8 @@ var<private> cl: array<u32, 4>;
 var<private> mo: array<vec4f, 4>;
 var<private> done: array<bool, 4>;
 
-fn isSandAt(j: u32) -> bool { return cellType(cl[j]) == TYPE_SAND; }
-fn isEmptyAt(j: u32) -> bool { return cellType(cl[j]) == TYPE_EMPTY; }
+fn isSandAt(j: u32) -> bool { return cellType(cl[j]) == EL_SAND; }
+fn isEmptyAt(j: u32) -> bool { return cellType(cl[j]) == EL_EMPTY; }
 
 fn slotAt(col: i32, row: i32) -> i32 {
   if (col < 0 || col > 1 || row < 0 || row > 1) { return -1; }
@@ -259,11 +262,11 @@ fn main(@builtin(global_invocation_id) gid: vec3u${isC ? ', @builtin(workgroup_i
     for (var j = 0u; j < 4u; j++) {
       let x = ox + i32(j & 1u);
       let y = oy + i32(j >> 1u);
-      var c = makeCell(TYPE_WALL, 0u, 0u);
+      var c = makeCell(EL_WALL, 0u, 0u);
       var m = vec4f(0.0);
       if (inBounds(x, y)) {
         c = cells[cellIndex(x, y)];
-        ${model === 'baseline' ? '' : 'if (cellType(c) == TYPE_SAND) { m = motion[cellIndex(x, y)]; }'}
+        ${model === 'baseline' ? '' : 'if (cellType(c) == EL_SAND) { m = motion[cellIndex(x, y)]; }'}
       }
       cl[j] = c;
       mo[j] = m;
@@ -338,14 +341,14 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   if (!inBounds(x, y)) { return; }
   let i = cellIndex(x, y);
   let c = cells[i];
-  if (cellType(c) != TYPE_SAND) { return; }
+  if (cellType(c) != EL_SAND) { return; }
   let d = vec2f(f32(x) + 0.5, f32(y) + 0.5) - blast.center;
   let dist = length(d);
   if (dist >= blast.radius) { return; }
   var dir = vec2f(0.0, 1.0);
   if (dist > 0.0) { dir = d / dist; }
   motion[i] = vec4f(dir * blast.speed * (1.0 - dist / blast.radius), 0.0, 0.0);
-  cells[i] = makeCell(TYPE_SAND, cellVariant(c) | ${BLAST_MARK}u, cellLife(c));
+  cells[i] = makeCell(EL_SAND, cellVariant(c) | ${BLAST_MARK}u, cellLife(c));
 }
 `;
 }
@@ -370,8 +373,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let y = i32(frame.sourceY);
   if (frame.sourceOn == 0u || u32(x) >= frame.sourceX1 || !inBounds(x, y)) { return; }
   let i = cellIndex(x, y);
-  if (cellType(cells[i]) != TYPE_EMPTY) { return; }
-  cells[i] = makeCell(TYPE_SAND, 0u, 0u);
+  if (cellType(cells[i]) != EL_EMPTY) { return; }
+  cells[i] = makeCell(EL_SAND, 0u, 0u);
   motion[i] = vec4f(0.0);
   atomicAdd(&state.words[${STATE.emitted}], 1u);
 }
@@ -475,7 +478,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u, @builtin(workgroup_id) wid: v
     launching[j] = false;
     if (inGrid && inBounds(x, y)) {
       let i = cellIndex(x, y);
-      if (cellType(cells[i]) == TYPE_SAND && length(motion[i].xy) > LAUNCH_SPEED) {
+      if (cellType(cells[i]) == EL_SAND && length(motion[i].xy) > LAUNCH_SPEED) {
         launching[j] = true;
         n++;
       }
@@ -542,7 +545,7 @@ struct State {
 @group(0) @binding(3) var<storage, read_write> state: State;
 
 fn isFree(x: i32, y: i32) -> bool {
-  return inBounds(x, y) && cellType(cells[cellIndex(x, y)]) == TYPE_EMPTY;
+  return inBounds(x, y) && cellType(cells[cellIndex(x, y)]) == EL_EMPTY;
 }
 
 fn failLanding(fl: ptr<function, Flyer>) {
@@ -840,8 +843,8 @@ fn fsCells(in: VertexOutput) -> @location(0) vec4f {
   let y = min(u32(in.uv.y * f32(H)), H - 1u);
   let t = cellType(cells[y * W + x]);
   var color = vec3f(0.07, 0.07, 0.09);
-  if (t == TYPE_SAND) { color = SAND_COLOR; }
-  if (t == TYPE_WALL) { color = vec3f(0.43, 0.45, 0.47); }
+  if (t == EL_SAND) { color = SAND_COLOR; }
+  if (t == EL_WALL) { color = vec3f(0.43, 0.45, 0.47); }
   return vec4f(color, 1.0);
 }
 `;

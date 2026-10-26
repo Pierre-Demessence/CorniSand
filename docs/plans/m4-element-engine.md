@@ -1,6 +1,6 @@
 # M4 Element engine
 
-Status: M4.1, M4.2 and M4.3 done (the user's browser check of the liquids from M4.2 is open). Next: M4.4.
+Status: M4.1 to M4.4 done (the user's browser check of the liquids from M4.2 is open). Next: M4.5.
 
 ## Goal
 
@@ -216,10 +216,10 @@ Needs you: nothing.
 
 ### M4.4 Element table (tasks)
 
-- [ ] M4.4a `src/elements.ts` with the seven current elements, generated constants, the uniform table and its packer; `particles.ts` removed and every user moved to `ELEMENT`. Verify: lint, typecheck, `npm test`.
-- [ ] M4.4b Generic CA phases driven by the table, fire's optional rule, generated rule `switch`; the `elements` option of `Simulation`. AC12 and AC13 tests; every M4.2 behavior test unchanged. Verify: `npm test`, bench (record).
-- [ ] M4.4c Brush, display (color, `graphics`) and toolbar from the table; unit test of the toolbar builder (labels, order, data attributes) on a table. Verify: lint, typecheck, `npm test`, build; a browser look that the toolbar and colors are unchanged.
-- [ ] M4.4d Docs: `AGENTS.md` "Adding an element", `simulation.md` (table, generic phases, density order), roadmap M4 wording.
+- [x] M4.4a `src/elements.ts` with the seven current elements, generated constants, the uniform table and its packer; `particles.ts` removed and every user moved to `ELEMENT`. Verify: lint, typecheck, `npm test`.
+- [x] M4.4b Generic CA phases driven by the table, fire's optional rule, generated rule `switch`; the `elements` option of `Simulation`. AC12 and AC13 tests; every M4.2 behavior test unchanged. Verify: `npm test`, bench (record).
+- [x] M4.4c Brush, display (color, `graphics`) and toolbar from the table; unit test of the toolbar builder (labels, order, data attributes) on a table. Verify: lint, typecheck, `npm test`, build; a browser look that the toolbar and colors are unchanged.
+- [x] M4.4d Docs: `AGENTS.md` "Adding an element", `simulation.md` (table, generic phases, density order), roadmap M4 wording.
 
 Visible after: nothing: the toolbar, colors and behaviors are the same, now driven by the table.
 Needs you: nothing.
@@ -329,3 +329,30 @@ Deviations from Design:
 5. `Cell` is a WGSL struct, so cells are compared with a generated `cellEq`, and the rules keep their form (`makeCell(type, variant, life)` returns a `Cell`).
 6. Scenes expose `fields: CellData` (every field, zeros where unused); `packCell` and the test helper `cell()` pack the `kind` word only, and tests that need a `life` pass it as a second array to `loadScene`.
 7. Equivalence with M4.2: a read-only reviewer ran the M4.2 ping-pong code and the new code over random mixes of every element (101×67 for 100 supersteps, 64×48 for 300, 33×129 for 57, 200×60 for 400) and the `kind` and `life` hashes matched in all four, so the in-place CA is bit-identical to the old rules. That is a one-off check, not a test: AC10 (two runs of one seed agree) cannot detect an out-of-block read that is deterministic, which the reviewer confirmed by inserting one. A reference check (CPU rules or a pinned hash) would need re-pinning at every rule change from M4.4 on, so it is not added.
+
+## M4.4 results
+
+Bit-identical to M4.3: a one-off run of the M4.3 commit's code and the new code over four random mixes of every element, fire included (101×67 for 100 supersteps, 64×48 for 300, 33×129 for 57, 200×60 for 400), gave the same hash of the `kind` and `life` buffers in all four. Not a test, for the reason in M4.3 deviation 7.
+
+`npm run bench` on the RTX 4080, `tests/bench.gpu.ts`, three runs of the new code and two of the M4.3 commit back to back (the GPU ran slower in this session than in M4.3's, so compare within the rows below only), ms per frame:
+
+| Scene | 1x | 2x | 4x | 8x |
+| --- | --- | --- | --- | --- |
+| `tank` (new) | 1.41–1.46 | 0.72–1.59 | 2.54–2.58 | 4.73–4.87 |
+| `tank` (M4.3, same session) | 1.43–1.46 | 1.55–1.58 | 2.57 | 4.46–4.94 |
+| `mix75` (new) | 1.44–1.50 | 2.22–2.31 | 3.21–3.26 | 5.34–5.56 |
+| `mix75` (M4.3, same session) | 1.45–1.48 | 1.72–2.15 | 2.61–2.65 | 4.92–4.95 |
+
+The table costs nothing measurable on `tank` and at 1x, and `mix75` at 4x is about 0.6 ms (20%) slower: every state and density check is a read of the table where it was a compare of a constant. M4.6 measures where the time goes.
+
+Deviations from Design:
+
+1. Fire's state is `plasma`, a sixth state beside empty, solid, powder, liquid and gas. Smoke rises through fire and nothing else moves it, which no other state says: a solid is not passed through, and a gas would rise by itself.
+2. Densities (kg/m³): air 1.2, smoke 0.6, fire 0.3, oil 900, water 1000, sand 1600, wall 2500. Smoke is below air as planned; the fire value only has to be set.
+3. The phase order is movement, lifetimes, rules, ignition, not lifetimes, ignition, rules: oil that ignites beside water must burn for a step (the M4.2 test), so a rule must not see a cell that ignites in the same dispatch. Which cells ignite is decided right after the lifetimes (a fire about to be put out still lights its neighbors) and applied after the rules.
+4. A row is 8 words: the color as three floats, density, state, flammable, `life.start`, and `life.decay` with the ID of `becomes` in one word.
+5. Rules take `(i, block)`: the index of the cell in its block and a pointer to the block's four cells. A rule is registered by name in `src/shaders/rules/index.ts`; `graphics` functions are in `src/shaders/graphics.wgsl.ts` (one file, not one per function). `Simulation` takes an `elements` option and a `rules` option (extra rule sources by name), and `Display` takes the `ElementTable` of the simulation.
+6. The toolbar builder is `src/toolbar.ts`: `toolbarEntries` (the unit-tested part: order, labels, number keys) and `renderToolbar`. The first button starts selected, and the help hint's key range is set from the button count.
+7. Added tests: `tests/display.test.ts` renders one cell of each element and compares its pixel with the table's color (and fire at three life values); `tests/elements.test.ts` covers the table's validation and packing.
+8. Browser check (Playwright on a dev server, `?scene=sandIntoPool`): the six buttons in the old order and labels with Sand selected, the sand, water and smoke colors as before, no WebGPU error in the console. Fire's colors are covered by `tests/display.test.ts`, not by eye.
+9. `src/proto/` keeps working: its shaders take the element constants from `elementConstantsWGSL`, and its tests the `ELEMENT` map.

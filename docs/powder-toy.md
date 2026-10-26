@@ -19,7 +19,7 @@ The GPU updates millions of cells at once, so a rule may only change cells it ow
 
 | TPT mechanism | GPU approach | Difficulty |
 | --- | --- | --- |
-| Element properties | A table in a storage buffer, generated from the TS source of truth like `particles.ts` today | Easy |
+| Element properties | A table in a uniform buffer, generated from the TS source of truth (`src/elements.ts`) | Easy |
 | Per-cell state (56 B) | Struct-of-arrays buffers (type, ctype, life, tmp…, temperature, velocity), so a pass reads only the fields it uses; `docs/decisions.md` already puts new per-cell data in separate buffers | Easy, but each field read costs bandwidth |
 | Powders and liquids falling, spreading, density swaps | Margolus CA rules driven by `Falldown` and `Weight`, as today (`docs/simulation.md`). Local rules cannot level connected vessels; TPT has the same limit and its water equalisation option works around it | Easy |
 | Movement by velocity (several pixels per step) | A velocity per cell moves a cell inside its block, and a cell faster than one cell per step leaves the grid as a free particle and lands on contact (`docs/decisions.md`, "Cells move by velocity; fast cells fly as particles") | Medium |

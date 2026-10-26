@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PARTICLE_TYPES as T } from '../src/particles';
+import { ELEMENT as T } from '../src/elements';
 import { parseGrid as parse } from './ascii';
 import {
   chamberLevel,

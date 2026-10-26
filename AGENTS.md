@@ -37,11 +37,13 @@ The GPU suites in `tests/` run the real WGSL through Dawn's Node bindings (`webg
 - `src/cell-field-buffers.ts` — `CellFields`: one storage buffer per field, the shared bind groups (`@group(1)`), `load`, `clear`, `read(name)` for tests.
 - `src/display.ts` — render pipeline drawing the cell field buffers plus the brush ring.
 - `src/input.ts` — pointer, wheel and Shift state.
-- `src/particles.ts` — particle type IDs and fire max life, the single source for TS and every shader.
-- `src/shaders/*.wgsl.ts` — WGSL sources exported as template strings (functions of the grid size where needed): `cell` (`commonWGSL`: type constants and the PCG hash; `cellWGSL(access)`: the `Cell` struct, the field bindings, `loadCell`, `storeCell`, `storeChanged` and the accessors, generated from `CELL_FIELDS`), `ca` (all particle rules), `brush`, `display`.
+- `src/elements.ts` — `ELEMENTS`, the element table (one row per material: ID, label, color, state, density, flammable, life, rule, graphics, toolbar position), `ELEMENT` (key → ID), `validateElements`.
+- `src/element-table.ts` — `PROP_FIELDS` (the GPU's view of a row), `packElements`, `ElementTable` (the uniform buffer and its bind group, `@group(2)`).
+- `src/toolbar.ts` — `toolbarEntries` (the paintable elements in toolbar order) and `renderToolbar`; `main.ts` builds the buttons from them.
+- `src/shaders/*.wgsl.ts` — WGSL sources exported as template strings (functions of the grid size and the table where needed): `cell` (`commonWGSL`: the PCG hash; `cellWGSL(access, elements)`: the element constants, the `Cell` struct, the field bindings, `loadCell`, `storeCell`, `storeChanged` and the accessors, generated from `CELL_FIELDS`), `elements` (`EL_*` and `ST_*` constants, the `ElementProps` struct, the table uniform and its accessors), `ca` (the generic CA phases), `brush`, `display`, `graphics` (the display color functions by name), `rules/` (the optional element rules, `rules/index.ts` registers them by name).
 - `src/proto/` and `proto.html` — the M4.1 movement prototype (`docs/plans/m4-element-engine.md`): models A and C side by side at `/proto.html` under `npm run dev`, not built into `dist/`; deleted by M4.5c.
 - `src/scenes.ts` — scene builders (`SCENES`) shared by the tests and the `?scene=<name>` loader in `main.ts` (`findScene`).
-- `tests/` — Vitest: `grid`, `hash`, `metrics` and `scenes` (unit), `simulation` (GPU: the rules, the liquid, sinking and fire behaviors as scenes with numeric thresholds, fields moving with their cell, bit-identical reruns), `gpu.ts` (device, scene upload and readback helpers), `metrics.ts` (column levels, flatness, layer order), `bench.gpu.ts` (`npm run bench`), `proto-*` (the movement prototype).
+- `tests/` — Vitest: `grid`, `hash`, `metrics` and `scenes` (unit), `elements` (unit: the table, its validation and packing, the toolbar), `element-table` (GPU: a test table with an extra powder row, an extra element with a rule), `display` (GPU: the rendered color of each element), `simulation` (GPU: the rules, the liquid, sinking and fire behaviors as scenes with numeric thresholds, fields moving with their cell, bit-identical reruns), `gpu.ts` (device, scene upload and readback helpers), `metrics.ts` (column levels, flatness, layer order), `bench.gpu.ts` (`npm run bench`), `proto-*` (the movement prototype).
 
 ## Docs map
 
@@ -55,7 +57,8 @@ The GPU suites in `tests/` run the real WGSL through Dawn's Node bindings (`webg
 ## Invariants
 
 - A cell is one 32-bit word in each field buffer of `CELL_FIELDS`: `kind` (bits 0–7 type, 8–15 variant, 16–31 reserved) and `life`. The fields are declared once in `src/cell-fields.ts`; every shader gets the `Cell` struct, its bindings (`@group(1)`, binding = field index) and the accessors (`cellType`, `cellVariant`, `cellLife`, `makeCell`) from `cellWGSL` in `src/shaders/cell.wgsl.ts`. Add or change a field there only; never index a field buffer by hand. A pass's own bindings (uniforms) are group 0.
-- Particle type IDs and the fire max life are declared once in `particles.ts` and reach the shaders through `cell.wgsl.ts`. Only the `index.html` `data-type` attributes repeat the IDs: keep them in sync.
+- Elements are rows of `ELEMENTS` in `src/elements.ts`, and no file outside it names an element ID: TypeScript uses `ELEMENT.SAND`, shaders use `EL_SAND` and `ST_POWDER` (generated), and the toolbar is built from the table. IDs fit in 8 bits, are never reused, and `EMPTY` (0) and `WALL` are required: out-of-bounds cells are walls and the brush erases to empty. The table reaches the CA, the brush and the display as a uniform array in `@group(2)` (`ElementTable`); `Simulation` takes another table (and extra rule sources) as options, which is how tests add rows.
+- Movement depends only on `state` and `density`: powders and liquids fall through empty space, gases and lighter things; a gas rises through empty space, plasma (fire) and heavier liquids; solids and plasma never move on their own. Ignition is decided from the cells after the lifetimes but applied after the element rules, so a rule never sees a cell that ignites in the same dispatch.
 - The cells are updated in place, one buffer per field, no ping-pong. A CA rule reads and writes only the cells of its own 2×2 block (that is what makes the threads race-free); `storeChanged` writes back only the fields that differ from what the block loaded. Reading a neighbor outside the block breaks in-place updates silently; no test catches it yet (AC10 only checks that two runs of one seed agree, which a deterministic out-of-block read still passes), so review rule changes for it.
 - One thread handles one 2×2 block. Out-of-bounds reads (`readCell`) return a wall cell, the world boundary; out-of-bounds writes are skipped.
 - The Margolus offset alternates 0 then 1; never run two steps with the same offset in a row.
@@ -64,14 +67,12 @@ The GPU suites in `tests/` run the real WGSL through Dawn's Node bindings (`webg
 - The brush runs once per frame, before the CA steps, along the segment from the previous frame's position.
 - Block randomness comes from `pcg()` chained on `hash2(blockX, blockY, seed)`; never use a float `fract`-based hash for it.
 
-## Adding a particle type
+## Adding an element
 
-1. Add the ID to `PARTICLE_TYPES` in `src/particles.ts`.
-2. Add an `isX()` helper in `src/shaders/ca.wgsl.ts` (`TYPE_X` is generated from step 1); update `isFalling`, `isLiquid`, `fallRank` (the density order of falling cells), `isGas`, `canDisplace`, `canRiseThrough` as needed.
-3. Add movement or reaction rules in the CA phases; if it has a lifetime, declare its start value next to `FIRE_MAX_LIFE` and set it in `src/shaders/brush.wgsl.ts`.
-4. Add its color in `src/shaders/display.wgsl.ts`.
-5. Add a toolbar button in `index.html` (`data-type` = the ID). Number keys select the n-th toolbar button, so the button's position sets its key.
-6. Update the density ordering and phase list in `docs/simulation.md`.
+1. Add a row to `ELEMENTS` in `src/elements.ts`: the next unused ID, a `key` (generates `ELEMENT.<KEY>` and `EL_<KEY>`), label, color, `state` and `density`. That alone makes it fall, pile, sink or rise as its state and density say. `flammable: true` makes it ignite beside fire; `life: { start, decay, becomes }` gives it a lifetime (the brush starts the cell at `start`); `toolbar: n` makes it paintable, placed by n among the other buttons (the n-th button is selected by number key n).
+2. Behavior the table cannot say goes in a rule: `src/shaders/rules/<name>.wgsl.ts` with `fn rule_<name>(i: u32, block: ptr<function, array<Cell, 4>>)`, registered in `src/shaders/rules/index.ts`, and `rule: '<name>'` on the row. It runs for cells of that element and reads and writes only the four cells of its block.
+3. A color that depends on the cell (fire's life) is a function in `src/shaders/graphics.wgsl.ts`, named by `graphics: '<name>'`.
+4. Add a scene test of its main behavior (`tests/element-table.test.ts` shows how to run a table with an extra row), and update the density order and the phase list in `docs/simulation.md`.
 
 ## Working with the user
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PARTICLE_TYPES as T } from '../src/particles';
+import { ELEMENT as T } from '../src/elements';
 import { MovementProto } from '../src/proto/movement';
 import type { MovementModel } from '../src/proto/params';
 import { blastScene, pourScene, windScene, type ProtoScene } from '../src/proto/scenes';

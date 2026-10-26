@@ -4,7 +4,7 @@ Direction: everything The Powder Toy simulates, in the browser on the GPU, on a 
 
 ## M4 Element engine
 
-An element property table (density, falling behavior, state, heat and pressure properties, transitions) drives the CA, per-cell state grows beyond the packed `u32` into separate buffers, cells move by velocity (`docs/decisions.md`), and liquids move by CA rules, as in The Powder Toy. Done when the current materials run from the table, a new element is a table row plus an optional rule, and the bench meets the budget with a full screen of particles.
+An element property table (state, density, flammability, lifetime and color) drives the CA, the brush, the display and the toolbar, per-cell state grows beyond the packed `u32` into separate buffers, cells move by velocity (`docs/decisions.md`), and liquids move by CA rules, as in The Powder Toy. Heat and pressure properties join the table with M5 and M6, each with the first rule that reads it. Done when the current materials run from the table, a new element is a table row plus an optional rule, and the bench meets the budget with a full screen of particles.
 
 ## M5 Heat and phase changes
 

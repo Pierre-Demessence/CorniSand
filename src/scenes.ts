@@ -1,5 +1,5 @@
 import { emptyCellData, type CellData } from './cell-fields';
-import { PARTICLE_TYPES as T } from './particles';
+import { ELEMENT as T } from './elements';
 
 // Columns [x0, x1) whose liquid is expected to settle at one shared level.
 export interface Chamber {

@@ -3,7 +3,9 @@ import { computeGrid, maxCellsForDevice, type Grid } from './grid';
 import { Simulation } from './simulation';
 import { Display } from './display';
 import { InputHandler, type Vec2 } from './input';
+import { ELEMENTS } from './elements';
 import { findScene, type Scene } from './scenes';
+import { renderToolbar, toolbarEntries } from './toolbar';
 
 interface GpuState {
   gpu: GPUContext;
@@ -51,7 +53,7 @@ async function main(): Promise<void> {
       simulation.load(pendingScene.fields);
       pendingScene = undefined;
     }
-    const display = new Display(gpu.device, gpu.format, grid.width, grid.height, simulation.fields);
+    const display = new Display(gpu.device, gpu.format, grid.width, grid.height, simulation.fields, simulation.elements);
     return { gpu, simulation, display };
   }
 
@@ -117,7 +119,9 @@ async function main(): Promise<void> {
 
   setTimeout(() => { helpHint.style.opacity = '0'; }, 4000);
 
-  const toolButtons = document.querySelectorAll<HTMLButtonElement>('.tool-btn[data-type]');
+  const entries = toolbarEntries(ELEMENTS);
+  const toolButtons = renderToolbar(document.getElementById('tool-buttons')!, entries);
+  document.getElementById('tool-keys')!.textContent = `1-${Math.min(entries.length, 9)}`;
   function selectTool(button: HTMLButtonElement): void {
     toolButtons.forEach((b) => b.classList.toggle('active', b === button));
     input.particleType = Number(button.dataset.type);
@@ -127,12 +131,14 @@ async function main(): Promise<void> {
   });
 
   document.addEventListener('keydown', (e) => {
-    // Keys 1-6 pick the n-th toolbar button.
+    // Keys 1-9 pick the n-th toolbar button.
     const button = toolButtons[Number(e.key) - 1] as HTMLButtonElement | undefined;
     if (button) selectTool(button);
     if (e.key === '[') changeSpeed(-1);
     if (e.key === ']') changeSpeed(1);
   });
+
+  if (toolButtons.length > 0) selectTool(toolButtons[0]);
 
   document.getElementById('speed-down')!.addEventListener('click', () => changeSpeed(-1));
   document.getElementById('speed-up')!.addEventListener('click', () => changeSpeed(1));

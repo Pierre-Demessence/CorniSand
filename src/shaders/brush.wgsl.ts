@@ -1,4 +1,6 @@
+import type { ElementDef } from '../elements';
 import { cellWGSL } from './cell.wgsl';
+import { elementsWGSL } from './elements.wgsl';
 
 // Brush uniform: vec2f prev, vec2f cur, f32 radius, 3 x u32 flags, u32 seed, 3 pad = 48 bytes
 export const BRUSH_UNIFORM_WORDS = 12;
@@ -6,8 +8,9 @@ export const BRUSH_UNIFORM_WORDS = 12;
 // Paints or erases along the segment prev -> cur, in place. Each thread only
 // touches its own cell, so the pass runs before the CA steps and block rules
 // never see a half-painted block.
-export const brushWGSL = (width: number, height: number): string => /* wgsl */`
-${cellWGSL('read_write')}
+export const brushWGSL = (width: number, height: number, elements: readonly ElementDef[]): string => /* wgsl */`
+${cellWGSL('read_write', elements)}
+${elementsWGSL}
 
 struct BrushUniforms {
   prev: vec2f,
@@ -49,15 +52,13 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let current = loadCell(idx);
 
   if (b.erasing == 1u) {
-    storeCell(idx, makeCell(TYPE_EMPTY, 0u, 0u));
+    storeCell(idx, makeCell(EL_EMPTY, 0u, 0u));
     return;
   }
 
-  if (cellType(current) == TYPE_EMPTY || (b.replacing == 1u && cellType(current) != TYPE_WALL)) {
+  if (cellType(current) == EL_EMPTY || (b.replacing == 1u && cellType(current) != EL_WALL)) {
     let variant = hash2(gid.x, gid.y, b.seed) & 0xffu;
-    var life: u32 = 0u;
-    if (b.particleType == TYPE_FIRE) { life = FIRE_MAX_LIFE; }
-    storeCell(idx, makeCell(b.particleType, variant, life));
+    storeCell(idx, makeCell(b.particleType, variant, elLifeStart(b.particleType)));
   }
 }
 `;
