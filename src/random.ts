@@ -1,4 +1,4 @@
-// Deterministic 32-bit PRNG so a failing test can be replayed; the fluid's test hook `seedVelocities` draws from it too.
+// Deterministic 32-bit PRNG so a failing test can be replayed.
 export function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
   return () => {

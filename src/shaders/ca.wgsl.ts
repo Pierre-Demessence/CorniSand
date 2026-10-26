@@ -1,11 +1,9 @@
 import { cellWGSL } from './cell.wgsl';
 
-// Margolus CA for sand, smoke and fire. Liquids do not move here: water and oil are written into the grid by the
-// fluid step (fluid-raster.wgsl.ts); the CA only lets sand sink through them. One thread per 2x2 block reads the four
-// cells, runs all rules on them and writes the four results. Out-of-bounds
-// reads are walls and out-of-bounds writes are skipped, so blocks that stick
-// out of the grid (offset 1, odd sizes) behave like blocks at a wall.
-export const solidCaWGSL = (width: number, height: number): string => /* wgsl */`
+// Margolus CA for sand, water, oil, smoke and fire. One thread per 2x2 block reads the four cells, runs all rules on
+// them and writes the four results. Out-of-bounds reads are walls and out-of-bounds writes are skipped, so blocks
+// that stick out of the grid (offset 1, odd sizes) behave like blocks at a wall.
+export const caWGSL = (width: number, height: number): string => /* wgsl */`
 ${cellWGSL}
 
 struct StepUniforms {
@@ -28,13 +26,22 @@ fn isWater(c: u32) -> bool { return cellType(c) == TYPE_WATER; }
 fn isSmoke(c: u32) -> bool { return cellType(c) == TYPE_SMOKE; }
 fn isOil(c: u32) -> bool   { return cellType(c) == TYPE_OIL; }
 fn isFire(c: u32) -> bool  { return cellType(c) == TYPE_FIRE; }
-fn isFalling(c: u32) -> bool { return isSand(c); }
+fn isLiquid(c: u32) -> bool { return isWater(c) || isOil(c); }
+fn isFalling(c: u32) -> bool { return isSand(c) || isLiquid(c); }
 fn isGas(c: u32) -> bool { return cellType(c) == TYPE_SMOKE; }
 
+// Density order of the falling cells: oil floats on water, sand sinks through both. 0 is not a falling cell.
+fn fallRank(c: u32) -> u32 {
+  if (isOil(c)) { return 1u; }
+  if (isWater(c)) { return 2u; }
+  if (isSand(c)) { return 3u; }
+  return 0u;
+}
+
+// A falling cell moves into empty space, a gas, or a lighter falling cell; never into a cell of its own density.
 fn canDisplace(mover: u32, dest: u32) -> bool {
-  if (isEmpty(dest)) { return true; }
-  if (isSand(mover) && (isWater(dest) || isOil(dest) || isSmoke(dest))) { return true; }
-  return false;
+  if (isEmpty(dest) || isGas(dest)) { return true; }
+  return fallRank(dest) > 0u && fallRank(mover) > fallRank(dest);
 }
 
 fn canRiseThrough(dest: u32) -> bool {
@@ -64,6 +71,46 @@ fn pickRight(r: u32) -> bool { return (r >> 31u) == 1u; }
 // A burnt-out or extinguished fire cell becomes smoke.
 fn toSmoke(c: u32) -> u32 { return makeCell(TYPE_SMOKE, cellVariant(c), 0u); }
 
+// A liquid cell remembers the sideways direction it last moved in, in its life field (0: none yet), so a stream
+// keeps flowing instead of diffusing: a screen-wide pool levels in a few hundred dispatches, not tens of thousands.
+const DIR_LEFT: u32 = 1u;
+const DIR_RIGHT: u32 = 2u;
+// A liquid that could move sideways turns around instead one time in this many (a mean free path of 64 cells).
+const TURN_ONE_IN: u32 = 64u;
+
+fn withDir(c: u32, dir: u32) -> u32 { return makeCell(cellType(c), cellVariant(c), dir); }
+
+// A liquid cell that did not move this dispatch spreads along one row of the block, l left of r. It tries the
+// direction it remembers (a fresh random pick when it has none); the other cell's side is outside the block, so
+// that cell gets its turn when the offset alternates. Facing anything but empty space, and one time in TURN_ONE_IN
+// facing it, it turns around instead. Side by side, two liquids never swap, so a layered body stays layered.
+fn spreadRow(l: ptr<function, u32>, r: ptr<function, u32>, l0: u32, r0: u32, rnd: u32) {
+  let turn = (rnd & (TURN_ONE_IN - 1u)) == 0u;
+  if (isLiquid(*l) && *l == l0) {
+    var dir = cellLife(*l);
+    if (dir == 0u) { dir = select(DIR_LEFT, DIR_RIGHT, pickRight(rnd)); }
+    if (dir == DIR_RIGHT) {
+      if (turn || !isEmpty(*r)) { *l = withDir(*l, DIR_LEFT); }
+      else if (isEmpty(*r)) {
+        *l = withDir(*l, DIR_RIGHT);
+        swapCells(l, r);
+        return;
+      }
+    }
+  }
+  if (isLiquid(*r) && *r == r0) {
+    var dir = cellLife(*r);
+    if (dir == 0u) { dir = select(DIR_LEFT, DIR_RIGHT, pickRight(rnd)); }
+    if (dir == DIR_LEFT) {
+      if (turn || !isEmpty(*l)) { *r = withDir(*r, DIR_RIGHT); }
+      else if (isEmpty(*l)) {
+        *r = withDir(*r, DIR_LEFT);
+        swapCells(l, r);
+      }
+    }
+  }
+}
+
 fn burn(c: u32) -> u32 {
   let life = cellLife(c);
   if (life <= FIRE_DECAY) { return toSmoke(c); }
@@ -82,12 +129,12 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   var tl = readCell(ox, oy + 1);
   var tr = readCell(ox + 1, oy + 1);
 
-  // Types before any rule ran: "was gas" keeps a particle that just arrived
-  // in a cell from also moving sideways in the same step.
-  let blWasGas = isGas(bl);
-  let brWasGas = isGas(br);
-  let tlWasGas = isGas(tl);
-  let trWasGas = isGas(tr);
+  // Cells before any rule ran: a cell that differs from its original no longer sits where it started this dispatch,
+  // so a particle that just arrived does not also move sideways in the same step.
+  let bl0 = bl;
+  let br0 = br;
+  let tl0 = tl;
+  let tr0 = tr;
 
   var rnd = hash2(gid.x, gid.y, u.seed);
 
@@ -95,29 +142,34 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   if (isGas(bl) && canRiseThrough(tl)) { swapCells(&bl, &tl); }
   if (isGas(br) && canRiseThrough(tr)) { swapCells(&br, &tr); }
 
-  // Phase 1: Sand falls
+  // Phase 1: Sand and liquids fall, a heavier one through a lighter one
   if (isFalling(tl) && canDisplace(tl, bl)) { swapCells(&tl, &bl); }
   if (isFalling(tr) && canDisplace(tr, br)) { swapCells(&tr, &br); }
 
-  // Phase 2: Sand slides diagonally into the bottom corner opposite its column.
-  // The two slides are mutually exclusive, so their order never matters.
-  if (isSand(tl) && !canDisplace(tl, bl) && canDisplace(tl, br)) { swapCells(&tl, &br); }
-  if (isSand(tr) && !canDisplace(tr, br) && canDisplace(tr, bl)) { swapCells(&tr, &bl); }
+  // Phase 2: Blocked from below, sand and liquids slide diagonally into the bottom corner opposite their column.
+  if (isFalling(tl) && !canDisplace(tl, bl) && canDisplace(tl, br)) { swapCells(&tl, &br); }
+  if (isFalling(tr) && !canDisplace(tr, br) && canDisplace(tr, bl)) { swapCells(&tr, &bl); }
 
   // Phase 3: Smoke horizontal dispersion, top row
   if (pickRight(rnd)) {
-    if (isGas(tl) && isEmpty(tr) && tlWasGas) { swapCells(&tl, &tr); }
+    if (isGas(tl) && isEmpty(tr) && tl == tl0) { swapCells(&tl, &tr); }
   } else {
-    if (isGas(tr) && isEmpty(tl) && trWasGas) { swapCells(&tr, &tl); }
+    if (isGas(tr) && isEmpty(tl) && tr == tr0) { swapCells(&tr, &tl); }
   }
 
   // Bottom row: smoke disperses sideways when it cannot rise
   rnd = pcg(rnd);
   if (pickRight(rnd)) {
-    if (isGas(bl) && isEmpty(br) && !canRiseThrough(tl) && blWasGas) { swapCells(&bl, &br); }
+    if (isGas(bl) && isEmpty(br) && !canRiseThrough(tl) && bl == bl0) { swapCells(&bl, &br); }
   } else {
-    if (isGas(br) && isEmpty(bl) && !canRiseThrough(tr) && brWasGas) { swapCells(&br, &bl); }
+    if (isGas(br) && isEmpty(bl) && !canRiseThrough(tr) && br == br0) { swapCells(&br, &bl); }
   }
+
+  // Phase 3b: Liquids spread sideways
+  rnd = pcg(rnd);
+  spreadRow(&tl, &tr, tl0, tr0, rnd);
+  rnd = pcg(rnd);
+  spreadRow(&bl, &br, bl0, br0, rnd);
 
   // Phase 4: Fire reactions
   if (isFire(bl)) { bl = burn(bl); }
@@ -126,7 +178,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   if (isFire(tr)) { tr = burn(tr); }
 
   // Which cells were fire before oil ignites: only those can be put out by water in this dispatch. Oil that
-  // ignites next to water would otherwise turn to smoke at once, with its particles still inside the cell.
+  // ignites next to water would otherwise turn to smoke at once.
   let blWasFire = isFire(bl);
   let brWasFire = isFire(br);
   let tlWasFire = isFire(tl);

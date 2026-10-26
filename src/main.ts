@@ -45,7 +45,7 @@ async function main(): Promise<void> {
     grid ??= pendingScene
       ? { width: pendingScene.width, height: pendingScene.height, scale: 1 }
       : computeGrid(cssWidth, cssHeight, maxCellsForDevice(gpu.device));
-    const simulation = await Simulation.create(gpu.device, grid.width, grid.height);
+    const simulation = new Simulation(gpu.device, grid.width, grid.height);
     // Only the first device gets the scene; after a device loss the world is cleared, as the banner says.
     if (pendingScene) {
       simulation.load(pendingScene.cells);

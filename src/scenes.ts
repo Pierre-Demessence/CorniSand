@@ -16,11 +16,7 @@ export interface Scene {
   /** First open row above the floor; levels are heights above it. */
   floorY: number;
   chambers: Chamber[];
-  /** Analytic rest height above the floor of the connected chambers, when the scene has one. */
-  expectedLevel?: number;
 }
-
-type Liquid = typeof T.WATER | typeof T.OIL;
 
 // Same packing as `makeCell` in `cell.wgsl.ts`.
 export function packCell(type: number, variant = 0, life = 0): number {
@@ -55,60 +51,44 @@ function tank(width: number, height: number): Canvas {
   return canvas;
 }
 
-export interface UTubeOptions {
-  /** Integer multiplier applied to every length. */
-  scale?: number;
-  /** Arm widths in cells at scale 1. */
-  leftArm?: number;
-  rightArm?: number;
-  liquid?: Liquid;
-  /** Height (exclusive, at scale 1) the left arm is filled to; the passage is always full. */
-  fillTo?: number;
-}
-
 const PARTITION_WIDTH = 32;
 const PASSAGE_HEIGHT = 8;
 const U_TUBE_HEIGHT = 80;
+const ARM_WIDTH = 16;
+const FILL_TO = 70;
 
 /**
- * Two vertical arms joined by a passage under a partition. Both arms open at the top; the left one starts
- * filled above the passage and the right one starts empty. At scale 1 with 16-wide arms the grid is 68x80.
+ * Two vertical arms joined by a passage under a partition, 68x80. Both arms open at the top; the left one starts
+ * filled above the passage and the right one starts empty. Liquid cells move by local rules, which cannot carry a
+ * pressure difference through the passage, so the arms do not level (backlog I10).
  */
-export function uTube({ scale = 1, leftArm = 16, rightArm = 16, liquid = T.WATER, fillTo = 70 }: UTubeOptions = {}): Scene {
-  const s = scale;
-  const floor = 2 * s;
-  const passageTop = floor + PASSAGE_HEIGHT * s;
-  const leftX0 = WALL * s;
-  const leftX1 = leftX0 + leftArm * s;
-  const rightX0 = leftX1 + PARTITION_WIDTH * s;
-  const rightX1 = rightX0 + rightArm * s;
-  const width = rightX1 + WALL * s;
-  const height = U_TUBE_HEIGHT * s;
+export function uTube(): Scene {
+  const floor = 2;
+  const passageTop = floor + PASSAGE_HEIGHT;
+  const leftX0 = WALL;
+  const leftX1 = leftX0 + ARM_WIDTH;
+  const rightX0 = leftX1 + PARTITION_WIDTH;
+  const rightX1 = rightX0 + ARM_WIDTH;
+  const width = rightX1 + WALL;
 
-  const canvas = new Canvas(width, height);
+  const canvas = new Canvas(width, U_TUBE_HEIGHT);
   canvas.fill(T.WALL, 0, width, 0, floor);
-  canvas.fill(T.WALL, 0, leftX0, 0, height);
-  canvas.fill(T.WALL, rightX1, width, 0, height);
-  canvas.fill(T.WALL, leftX1, rightX0, passageTop, height);
-  canvas.fill(liquid, leftX0, rightX1, floor, passageTop);
-  canvas.fill(liquid, leftX0, leftX1, passageTop, fillTo * s);
-
-  const passageVolume = (width - 2 * WALL * s) * (passageTop - floor);
-  const volume = passageVolume + leftArm * s * (fillTo * s - passageTop);
-  const armColumns = (leftArm + rightArm) * s;
-  const partitionVolume = PARTITION_WIDTH * s * (passageTop - floor);
+  canvas.fill(T.WALL, 0, leftX0, 0, U_TUBE_HEIGHT);
+  canvas.fill(T.WALL, rightX1, width, 0, U_TUBE_HEIGHT);
+  canvas.fill(T.WALL, leftX1, rightX0, passageTop, U_TUBE_HEIGHT);
+  canvas.fill(T.WATER, leftX0, rightX1, floor, passageTop);
+  canvas.fill(T.WATER, leftX0, leftX1, passageTop, FILL_TO);
 
   return {
     name: 'uTube',
     width,
-    height,
+    height: U_TUBE_HEIGHT,
     cells: canvas.cells,
     floorY: floor,
     chambers: [
       { name: 'left', x0: leftX0, x1: leftX1 },
       { name: 'right', x0: rightX0, x1: rightX1 },
     ],
-    expectedLevel: (volume - partitionVolume) / armColumns,
   };
 }
 
@@ -118,7 +98,6 @@ const BASIN_HEIGHT = 60;
 function basinScene(name: string, blockWidth: number, blockHeight: number): Scene {
   const canvas = tank(BASIN_WIDTH, BASIN_HEIGHT);
   canvas.fill(T.WATER, WALL, WALL + blockWidth, WALL, WALL + blockHeight);
-  const interior = BASIN_WIDTH - 2 * WALL;
   return {
     name,
     width: BASIN_WIDTH,
@@ -126,7 +105,6 @@ function basinScene(name: string, blockWidth: number, blockHeight: number): Scen
     cells: canvas.cells,
     floorY: WALL,
     chambers: [{ name: 'tank', x0: WALL, x1: BASIN_WIDTH - WALL }],
-    expectedLevel: (blockWidth * blockHeight) / interior,
   };
 }
 
@@ -140,29 +118,6 @@ export function damBreak(): Scene {
   return basinScene('damBreak', 30, 40);
 }
 
-/** A 20x20 chamber completely full of water inside a closed box: there is no free surface. */
-export function sealedChamber(): Scene {
-  const size = 24;
-  const canvas = new Canvas(size, size);
-  canvas.fill(T.WALL, 0, size, 0, size);
-  canvas.fill(T.WATER, WALL, size - WALL, WALL, size - WALL);
-  return { name: 'sealedChamber', width: size, height: size, cells: canvas.cells, floorY: WALL, chambers: [] };
-}
-
-/** One water cell resting on the floor of a 40x20 tank. */
-export function droplet(): Scene {
-  const canvas = tank(40, 20);
-  canvas.fill(T.WATER, 20, 21, WALL, WALL + 1);
-  return { name: 'droplet', width: 40, height: 20, cells: canvas.cells, floorY: WALL, chambers: [] };
-}
-
-/** A one-cell-thick film, 40 wide, on the floor of a 60x20 tank. */
-export function film(): Scene {
-  const canvas = tank(60, 20);
-  canvas.fill(T.WATER, 10, 50, WALL, WALL + 1);
-  return { name: 'film', width: 60, height: 20, cells: canvas.cells, floorY: WALL, chambers: [] };
-}
-
 export const SAND_POOL = { sandSize: 10, sandX: 35, poolDepth: 20 };
 
 /** A 76x20 pool of water in an 80x60 tank with a 10x10 block of sand hanging above it. */
@@ -172,7 +127,6 @@ export function sandIntoPool(): Scene {
   const canvas = tank(width, 60);
   canvas.fill(T.WATER, WALL, width - WALL, WALL, WALL + poolDepth);
   canvas.fill(T.SAND, sandX, sandX + sandSize, 35, 35 + sandSize);
-  const interior = width - 2 * WALL;
   return {
     name: 'sandIntoPool',
     width,
@@ -180,7 +134,6 @@ export function sandIntoPool(): Scene {
     cells: canvas.cells,
     floorY: WALL,
     chambers: [{ name: 'pool', x0: WALL, x1: width - WALL }],
-    expectedLevel: (interior * poolDepth + sandSize * sandSize) / interior,
   };
 }
 
@@ -200,42 +153,10 @@ export function oilOnWater(): Scene {
   };
 }
 
-// The column starts 38 cells above the pool and 10 below the top of the grid, so it falls and splashes.
-const DEEP_POOL = { width: 512, height: 1200, depth: 1000, columnWidth: 100, columnHeight: 150, columnY: 1040 };
-
-/**
- * A 508-wide pool 1,000 deep in a 512x1200 tank, with a 100x150 column of water hanging above the left end.
- * It is the screen-scale case for the pressure solve: the grid is taller than any other scene.
- */
-export function deepPool(): Scene {
-  const { width, height, depth, columnWidth, columnHeight, columnY } = DEEP_POOL;
-  const canvas = tank(width, height);
-  canvas.fill(T.WATER, WALL, width - WALL, WALL, WALL + depth);
-  canvas.fill(T.WATER, WALL, WALL + columnWidth, columnY, columnY + columnHeight);
-  const interior = width - 2 * WALL;
-  return {
-    name: 'deepPool',
-    width,
-    height,
-    cells: canvas.cells,
-    floorY: WALL,
-    chambers: [{ name: 'tank', x0: WALL, x1: width - WALL }],
-    expectedLevel: (interior * depth + columnWidth * columnHeight) / interior,
-  };
-}
-
 export const SCENES: Record<string, () => Scene> = {
   uTube,
-  uTubeLarge: () => uTube({ scale: 3 }),
-  uTubeHuge: () => uTube({ scale: 6 }),
-  deepPool,
-  uTubeUnequal: () => uTube({ leftArm: 8, rightArm: 32 }),
-  uTubeOil: () => uTube({ liquid: T.OIL }),
   basin,
   damBreak,
-  sealedChamber,
-  droplet,
-  film,
   sandIntoPool,
   oilOnWater,
 };

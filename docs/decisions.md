@@ -8,7 +8,7 @@ Rejected: `THREE.WebGPURenderer` (experimental, and it hides the compute API the
 
 ## Cell state in storage buffers, one packed u32 per cell
 
-Cells are an array of `u32` words (type, variant and lifetime in 8, 8 and 16 bits) in two ping-pong storage buffers. A storage texture limits a cell to one texel format; a buffer is read by index in every shader and leaves the word layout under our control. One word is 4 B, so a 4K grid is 33 MB per buffer, inside the default 128 MiB binding limit. Per-cell floats that a future model needs (for example the fluid velocity and pressure grids) go in a separate buffer rather than widening this word, so the CA keeps its small footprint.
+Cells are an array of `u32` words (type, variant and lifetime in 8, 8 and 16 bits) in two ping-pong storage buffers. A storage texture limits a cell to one texel format; a buffer is read by index in every shader and leaves the word layout under our control. One word is 4 B, so a 4K grid is 33 MB per buffer, inside the default 128 MiB binding limit. Per-cell floats that a future model needs (for example a velocity or a temperature) go in a separate buffer rather than widening this word, so the CA keeps its small footprint.
 
 Rejected: `rgba8unorm` storage textures (the first WebGPU version) or wider texture formats such as `rgba32float`; a 32-byte struct with float fields (the pressure and velocity fields it carried never affected movement).
 
@@ -29,41 +29,13 @@ Rejected:
 - A, every cell stays in the grid (velocity clamped to 1 cell per dispatch): debris barely leaves the crater. Four times more CA steps per frame throw it as far as C (247 cells) but cost 5.2 ms at rest against C's 1.3 ms.
 - B, cells claim a target cell anywhere along their path (not prototyped): its cost grows with every moving cell, dense piles make most claims conflict, and density swaps and reactions would need a second mechanism.
 
-## Liquids move by a velocity field and a global pressure solve
+## Liquids move by CA rules, as in TPT
 
-Liquid pressure is not local: when one arm of a U-tube is higher, the whole connected body must react at once. Rules between neighboring cells pass that information one cell per step, so it spreads like heat and a screen-sized body takes minutes to level. Liquids therefore get a staggered velocity grid and a pressure projection every step, beside the cell grid (roadmap M1). Sand, fire and reactions stay Margolus CA rules.
+Water and oil are cells of the Margolus CA. A liquid falls into an empty cell, a gas or a lighter liquid, slides to the opposite bottom corner when blocked, and spreads sideways into an empty cell of its row. Heavier liquids swap down through lighter ones; side by side, different liquids never swap. A liquid cell remembers the direction it last moved in (its `life` field) and keeps going until it faces anything but empty space, or turns around one time in 64: without that memory a dam break takes more than 16,000 supersteps to level (the surface cells only diffuse), with it about 1,200. Local rules cannot carry pressure, so connected vessels do not level (the `uTube` scene shows it); The Powder Toy has the same limit, and its water equalisation option exists to work around it.
 
-Rejected, with prototype measurements on a 68×80 U-tube:
+The liquids before this were FLIP particles with a global pressure solve (a velocity grid, multigrid-preconditioned conjugate gradients, particles ranked back into cells). They levelled connected vessels and splashed, and cost 49 ms of GPU time per 1x frame at 2560×1340 with a quarter of the tank water, three times the whole 16.7 ms frame. The measurements and the code are in `git log --all -- docs/plans/physics-foundation.md` and `git log --all -- src/fluid.ts`.
 
-- Compressible-mass CA (W-Shadow style): pressure stored as extra mass makes deep water look shallower (300 poured cells show as 130 at compression 0.02, 265 at 0.001) and levels slowly (37,600 steps at 0.02). Faster leveling needs more compression, so volume and speed trade against each other.
-- Hidden vacancy and surplus cells routed through the body: correct levels with exact volume (~1,500 steps), but the visible level is wrong while they travel, a GPU-friendly local routing jammed, and water has no momentum.
-- Fill fraction per cell moved by naive fluxes on the velocity grid: levels fast but smears the surface into a foam band about 10 cells deep, and limiting the fluxes stalls the flow. The surface needs its own representation (next entry).
-
-## Liquids are FLIP particles, drawn into the cell grid by ranking
-
-Liquid is a set of particles (4 per cell at rest) with position and velocity. Each step their velocity is spread onto the staggered grid, the pressure solve corrects it, and the change is added back to the particles (FLIP, blended 0.8 with 0.2 PIC). The cell grid only shows the result: each step the N most crowded cells become liquid, N being the particle count / 4, so every liquid's cell count is exact by construction. The CA no longer moves liquids; sand still sinks through them and reactions still apply. The fluid grid has one fluid cell per grid cell (`k = 1`). Measurements: `git log --all -- docs/plans/physics-foundation.md`, section "M1.3 results".
-
-Rejected:
-
-- Velocity CA (liquids stay cells, each moving one cell once the velocity field has pushed it that far): three attempts failed AC1–AC3, AC5–AC7, AC9 and AC11 on the CPU reference. Volume can only cross the body through chains of holes, so the field cannot move water fast enough and the surface never closes.
-- A cell is liquid whenever a particle sits in it: the volume shown then varies with particle spacing; the ranking keeps it exact.
-- `k = 2` (one fluid cell per 2×2 grid cells, a 4× cheaper solve): fails AC2, AC5, AC6 and AC11 on the CPU reference. It stays a cost lever (backlog D15).
-
-## The pressure solve is multigrid-preconditioned conjugate gradients
-
-Red-black SOR passes pressure about one cell per half-sweep, so at screen height (408×480, 512×1200) 40 pairs per step leave the solve unconverged, deep water compresses and its surface sits a fifth too low. The pressure is solved by conjugate gradients, each iteration preconditioned by one geometric multigrid V(2,2) cycle (2×2 aggregates, Galerkin coarse operators, coarse correction scaled by 2), warm-started from the previous step. On the first projection of the screen-size scenes it cuts the largest residual 3–4× per iteration; three or four iterations from zero reach what 1,000 SOR pairs reach. The parameters are in `FLUID`, the CPU reference is `MultigridSolver` (`tests/cpu/solver.ts`), and `SCREEN=1 npx vitest run solver-screen` reruns the measurements.
-
-Rejected:
-
-- Bare V-cycles of the same multigrid: piecewise-constant transfer under-corrects, and the over-correction that compensates makes them stall at 0.5–0.8 per cycle on the U-tubes and diverge on the 512×1200 pool. Conjugate gradients choose the step size themselves, so they cannot diverge this way.
-- A W-cycle: 0.2 to 0.8 per cycle depending on the correction scale and the coarsest size, with no setting that works on every scene.
-- Bilinear prolongation: needs 9-point coarse operators, which red-black smoothing cannot update in two colors; not needed once conjugate gradients met the bar.
-
-## The density correction is weak (`stiffness` and `pull` 0.1)
-
-Particles sit slightly closer or further apart than 4 per cell, and the pressure solve only sees volume through the liquid cells, so the solve adds a source that asks crowded cells to push outward (`stiffness`) and gaps inside the liquid to pull closed (`pull`). The source asks for an outflow proportional to the excess times the depth of the column below it. At 0.5, a 5% excess over 500 cells of depth asks the surface for an upward flow of 12 cells per step against a speed clamp of 1, so deep water boils instead of relaxing. At 0.1 the half-size `deepPool` reaches its expected level with no shortfall; at 0 it ends a few cells low. The price is that a single interior cell with half the particles of its neighbors is not chosen by the rasterization, so a one-cell hole appears now and then in calm deep water (backlog D19). Measurements: `git log --all -- docs/plans/physics-foundation.md`, section "M1.5c measurements".
-
-Rejected: a stronger `pull` with a weak `stiffness`, to close those holes faster (a rarefaction wave is a deficit over many rows, and `pull` then overdrives the same way, leaving particles at the speed clamp).
+Rejected: keeping FLIP as a "realistic liquids" setting, off by default. Every per-cell field of a liquid (temperature, `ctype`, `life`, `tmp`…) would also have to live on its particles and be written back by the rasterization, every reaction that creates, removes or changes a liquid cell would need a reconcile pass, and every liquid behavior would be tested in both modes, for a mode that cannot run at full size. The realistic liquids may continue as a separate project (backlog I11).
 
 ## One cell per CSS pixel, grid fixed at load
 

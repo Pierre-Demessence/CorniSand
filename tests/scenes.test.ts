@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { PARTICLE_TYPES as T } from '../src/particles';
 import { findScene, packCell, SCENES, uTube } from '../src/scenes';
 import { cell } from './gpu';
-import { bubbleCount, chamberLevel, countType, expectedLevel, liquidVolume } from './metrics';
+import { chamberLevel, liquidVolume } from './metrics';
 
 describe('scenes', () => {
   it('pack cells the same way as the shaders and the GPU test helper', () => {
@@ -26,13 +26,11 @@ describe('scenes', () => {
     for (const name of ['', 'nope', 'constructor', 'toString', '__proto__']) expect(findScene(name), name).toBeUndefined();
   });
 
-  it('size the U-tubes as specified', () => {
+  it('size the U-tube as specified', () => {
     expect([uTube().width, uTube().height]).toEqual([68, 80]);
-    expect([uTube({ scale: 3 }).width, uTube({ scale: 3 }).height]).toEqual([204, 240]);
-    expect([uTube({ leftArm: 8, rightArm: 32 }).width, uTube({ leftArm: 8, rightArm: 32 }).height]).toEqual([76, 80]);
   });
 
-  it('lay out the small U-tube: floor, partition from y = 10, passage, left arm filled to y = 70', () => {
+  it('lay out the U-tube: floor, partition from y = 10, passage, left arm filled to y = 70', () => {
     const { cells, width, floorY, chambers } = uTube();
     const at = (x: number, y: number): number => cells[y * width + x] & 0xff;
     expect(floorY).toBe(2);
@@ -49,60 +47,16 @@ describe('scenes', () => {
     expect(liquidVolume(cells)).toBe(1472);
   });
 
-  it('know the analytic rest level of each U-tube', () => {
-    expect(uTube().expectedLevel).toBe(38);
-    expect(uTube({ scale: 3 }).expectedLevel).toBe(114);
-    expect(uTube({ leftArm: 8, rightArm: 32 }).expectedLevel).toBe(20);
-  });
-
-  it('agree with the geometric expected level computed from the cells', () => {
-    for (const build of Object.values(SCENES)) {
-      const { cells, width, height, floorY, expectedLevel: analytic, name } = build();
-      if (analytic === undefined || name === 'sandIntoPool') continue;
-      expect(expectedLevel(cells, width, height, floorY, liquidVolume(cells)), name).toBeCloseTo(analytic, 6);
-    }
-  });
-
   it('start the U-tube left arm above the level and the right arm empty', () => {
     const { cells, width, height, floorY, chambers } = uTube();
     expect(chamberLevel(cells, width, height, chambers[0], floorY)).toBe(68);
     expect(chamberLevel(cells, width, height, chambers[1], floorY)).toBe(8);
   });
 
-  it('fill the oil U-tube with oil only', () => {
-    const { cells } = uTube({ liquid: T.OIL });
-    expect(countType(cells, T.WATER)).toBe(0);
-    expect(countType(cells, T.OIL)).toBe(1472);
-  });
-
-  it('size the basin and the dam break to hold their volume at the documented levels', () => {
+  it('size the basin and the dam break to hold their volume', () => {
     const basin = SCENES.basin();
     expect([basin.width, basin.height]).toEqual([200, 60]);
     expect(liquidVolume(basin.cells)).toBe(40 * 49);
-    expect(basin.expectedLevel).toBeCloseTo(10, 9);
-    expect(SCENES.damBreak().expectedLevel).toBeCloseTo(1200 / 196, 9);
-  });
-
-  it('size the screen-scale scenes and hold the deep pool at its documented level', () => {
-    const huge = SCENES.uTubeHuge();
-    expect([huge.width, huge.height]).toEqual([408, 480]);
-    expect(huge.expectedLevel).toBe(228);
-    const pool = SCENES.deepPool();
-    expect([pool.width, pool.height]).toEqual([512, 1200]);
-    expect(liquidVolume(pool.cells)).toBe(508 * 1000 + 100 * 150);
-    expect(pool.expectedLevel).toBeCloseTo(1000 + 15000 / 508, 9);
-  });
-
-  it('start with no sealed air pocket in any scene', () => {
-    for (const [name, build] of Object.entries(SCENES)) {
-      const { cells, width, height } = build();
-      expect(bubbleCount(cells, width, height), name).toBe(0);
-    }
-  });
-
-  it('fill the sealed chamber completely', () => {
-    const { cells } = SCENES.sealedChamber();
-    expect(countType(cells, T.WATER)).toBe(20 * 20);
-    expect(countType(cells, T.EMPTY)).toBe(0);
+    expect(liquidVolume(SCENES.damBreak().cells)).toBe(30 * 40);
   });
 });

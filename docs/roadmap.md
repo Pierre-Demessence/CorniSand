@@ -1,10 +1,10 @@
 # Roadmap
 
-Direction: everything The Powder Toy simulates, in the browser on the GPU, on a larger playing field, then what only a GPU can afford. The reasoning, the frame budget and the open questions are in `docs/research/powder-toy-parity.md`. Every milestone keeps the frame budget set there on the reference RTX 4080, measured by `npm run bench`, with every size and resolution a setting so M10 can scale it down (`docs/decisions.md`). IDs are stable.
+Direction: everything The Powder Toy simulates, in the browser on the GPU, on a larger playing field, then what only a GPU can afford. The reasoning and the frame budget are in `docs/powder-toy.md`. Every milestone keeps the frame budget set there on the reference RTX 4080, measured by `npm run bench`, with every size and resolution a setting so M10 can scale it down (`docs/decisions.md`). IDs are stable.
 
 ## M4 Element engine
 
-An element property table (density, falling behavior, state, heat and pressure properties, transitions) drives the CA, per-cell state grows beyond the packed `u32` into separate buffers, cells move by velocity with the model the research doc's Q3 prototype picks, and liquids move by CA rules, as in The Powder Toy. The FLIP liquids, their CPU reference and their tests are removed (research doc, "The realistic water"). Done when the current materials run from the table, a new element is a table row plus an optional rule, and the bench meets the budget with a full screen of particles.
+An element property table (density, falling behavior, state, heat and pressure properties, transitions) drives the CA, per-cell state grows beyond the packed `u32` into separate buffers, cells move by velocity (`docs/decisions.md`), and liquids move by CA rules, as in The Powder Toy. Done when the current materials run from the table, a new element is a table row plus an optional rule, and the bench meets the budget with a full screen of particles.
 
 ## M5 Heat and phase changes
 

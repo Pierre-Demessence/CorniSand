@@ -1,20 +1,24 @@
 import { describe, expect, it, vi } from 'vitest';
 import { FIRE_MAX_LIFE, PARTICLE_TYPES as T } from '../src/particles';
 import { Display } from '../src/display';
-import { cell, cellType, countTypes, createSim, device, idleInput, loadScene, mulberry32, readCells, readFluidState, readParticles, run, runMany } from './gpu';
+import { SCENES } from '../src/scenes';
+import { cell, cellType, countTypes, createSim, device, idleInput, loadScene, mulberry32, readCells, run, runMany } from './gpu';
+import { columnsWithAbove, flatness } from './metrics';
 
 function emptyGrid(width: number, height: number): Uint32Array<ArrayBuffer> {
   return new Uint32Array(width * height);
 }
 
 describe.skipIf(!device)('GPU simulation', () => {
-  it('oil beside fire and water ignites, burns for a step, loses its particles and goes out the step after', async () => {
-    // One block at offset 0: oil bottom-left, water bottom-right, fire above the oil. Water only puts out cells that
-    // were fire before the ignition rule ran, so the fire above goes out while the ignited oil burns on.
+  it('oil beside fire and water ignites, burns for a step and goes out the step after', async () => {
+    // A sealed 2x2 chamber (walls all around) so nothing moves: oil bottom-left, water bottom-right, fire above the
+    // oil. Water only puts out cells that were fire before the ignition rule ran, so the fire above goes out while
+    // the ignited oil burns on.
     const width = 8;
     const height = 8;
     const sim = createSim(width, height);
     const cells = emptyGrid(width, height);
+    for (const [x, y] of [[1, 0], [1, 1], [4, 0], [4, 1], [2, 2], [3, 2]]) cells[y * width + x] = cell(T.WALL);
     cells[2] = cell(T.OIL);
     cells[3] = cell(T.WATER);
     cells[width + 2] = cell(T.FIRE, 0, FIRE_MAX_LIFE);
@@ -22,21 +26,15 @@ describe.skipIf(!device)('GPU simulation', () => {
 
     await run(sim, 1);
     expect(cellType((await readCells(sim))[2]), 'the oil cell after one superstep').toBe(T.FIRE);
-    expect((await readFluidState(sim)).oil, 'oil particles are still there until the next resolve').toBe(4);
 
     await run(sim, 1);
     const after = await readCells(sim);
     expect(cellType(after[2]), 'the burning oil cell after two supersteps').toBe(T.SMOKE);
     expect(cellType(after[3])).toBe(T.WATER);
-    const state = await readFluidState(sim);
-    expect(state.oil).toBe(0);
-    expect(state.water).toBe(4);
-    const particles = await readParticles(sim);
-    expect(particles.count).toBe(4);
     expect(countTypes(after).get(T.FIRE) ?? 0).toBe(0);
   });
 
-  it('AC15: fire burns oil: the oil count never rises, at least half is gone after 600 supersteps and smoke appears', async () => {
+  it('fire burns oil: the oil count never rises, at least half is gone after 600 supersteps and smoke appears', async () => {
     // A 20x5 oil block resting in a walled tank, a row of fire on top of it.
     const width = 30;
     const height = 24;
@@ -70,7 +68,7 @@ describe.skipIf(!device)('GPU simulation', () => {
     expect(smoke).toBeGreaterThan(0);
   }, 120_000);
 
-  it('AC15: water puts out fire: a fire cell beside water is smoke two supersteps later, and burns on without it', async () => {
+  it('water puts out fire: a fire cell beside water is smoke two supersteps later, and burns on without it', async () => {
     const width = 8;
     const height = 8;
     const withWater = createSim(width, height);
@@ -93,31 +91,100 @@ describe.skipIf(!device)('GPU simulation', () => {
     expect(control.get(T.SMOKE) ?? 0).toBe(0);
   });
 
-  it('AC15: smoke rises through water: it is above the surface within 40 supersteps and the water count is unchanged', async () => {
+  it.each([['water', T.WATER], ['oil', T.OIL]])('AC7: smoke rises through %s: it is above the surface within 40 supersteps and the liquid count is unchanged', async (_name, liquid) => {
     const width = 12;
     const height = 30;
     const depth = 10;
     const sim = createSim(width, height);
     const cells = emptyGrid(width, height);
     for (let y = 0; y < depth; y++) {
-      for (let x = 0; x < width; x++) cells[y * width + x] = cell(T.WATER);
+      for (let x = 0; x < width; x++) cells[y * width + x] = cell(liquid);
     }
     cells[6] = cell(T.SMOKE);
     loadScene(sim, cells);
-    const water = width * depth - 1;
+    const count = width * depth - 1;
 
     await runMany(sim, 40);
 
     const after = await readCells(sim);
-    expect(countTypes(after).get(T.WATER), 'water cells').toBe(water);
+    expect(countTypes(after).get(liquid), 'liquid cells').toBe(count);
     const smokeAt = after.findIndex((c) => cellType(c) === T.SMOKE);
     expect(countTypes(after).get(T.SMOKE), 'smoke cells').toBe(1);
     let surfaceRow = 0;
     for (let i = 0; i < after.length; i++) {
-      if (cellType(after[i]) === T.WATER) surfaceRow = Math.max(surfaceRow, Math.floor(i / width));
+      if (cellType(after[i]) === liquid) surfaceRow = Math.max(surfaceRow, Math.floor(i / width));
     }
-    expect(Math.floor(smokeAt / width), 'smoke row above the top water row').toBeGreaterThan(surfaceRow);
+    expect(Math.floor(smokeAt / width), 'smoke row above the top liquid row').toBeGreaterThan(surfaceRow);
   });
+
+  it('AC5: a dam break keeps its water and levels out to within 1 cell in 2,000 supersteps', async () => {
+    const scene = SCENES.damBreak();
+    const sim = createSim(scene.width, scene.height);
+    loadScene(sim, scene.cells);
+    const water = countTypes(scene.cells).get(T.WATER);
+
+    await runMany(sim, 2000);
+
+    const after = await readCells(sim);
+    expect(countTypes(after).get(T.WATER), 'water cells').toBe(water);
+    expect(flatness(after, scene.width, scene.height, scene.chambers[0], scene.floorY), 'flatness').toBeLessThanOrEqual(1);
+  }, 120_000);
+
+  it('AC6: oil poured over water ends up on top of it with both counts unchanged after 1,000 supersteps', async () => {
+    const scene = SCENES.oilOnWater();
+    const sim = createSim(scene.width, scene.height);
+    loadScene(sim, scene.cells);
+    const before = countTypes(scene.cells);
+
+    await runMany(sim, 1000);
+
+    const after = await readCells(sim);
+    expect(columnsWithAbove(after, scene.width, scene.height, T.WATER, T.OIL), 'columns with oil below water').toBe(0);
+    expect(countTypes(after).get(T.WATER), 'water cells').toBe(before.get(T.WATER));
+    expect(countTypes(after).get(T.OIL), 'oil cells').toBe(before.get(T.OIL));
+  }, 120_000);
+
+  it('AC6: water released under oil rises above it', async () => {
+    // Oil lying on the floor of a tank with water on top of it: the water has to swap down through it.
+    const width = 30;
+    const height = 30;
+    const sim = createSim(width, height);
+    const cells = emptyGrid(width, height);
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        if (y < 2 || x < 2 || x >= width - 2) cells[y * width + x] = cell(T.WALL);
+      }
+    }
+    for (let y = 2; y < 6; y++) {
+      for (let x = 2; x < width - 2; x++) cells[y * width + x] = cell(T.OIL);
+    }
+    for (let y = 6; y < 10; y++) {
+      for (let x = 2; x < width - 2; x++) cells[y * width + x] = cell(T.WATER);
+    }
+    loadScene(sim, cells);
+
+    await runMany(sim, 400);
+
+    const after = await readCells(sim);
+    expect(columnsWithAbove(after, width, height, T.WATER, T.OIL), 'columns with oil below water').toBe(0);
+    expect(countTypes(after).get(T.OIL), 'oil cells').toBe(4 * 26);
+    expect(countTypes(after).get(T.WATER), 'water cells').toBe(4 * 26);
+  });
+
+  it.each([['water', T.WATER], ['oil', T.OIL]])('AC7: sand dropped into %s sinks to the floor and nothing is lost', async (_name, liquid) => {
+    const scene = SCENES.sandIntoPool();
+    const sim = createSim(scene.width, scene.height);
+    const cells = scene.cells.map((c) => (cellType(c) === T.WATER ? cell(liquid) : c));
+    loadScene(sim, cells);
+    const before = countTypes(cells);
+
+    await runMany(sim, 600);
+
+    const after = await readCells(sim);
+    expect(columnsWithAbove(after, scene.width, scene.height, T.SAND, liquid), 'columns with liquid below sand').toBe(0);
+    expect(countTypes(after).get(T.SAND), 'sand cells').toBe(before.get(T.SAND));
+    expect(countTypes(after).get(liquid), 'liquid cells').toBe(before.get(liquid));
+  }, 120_000);
 
   it('B5: painting next to falling water loses and duplicates nothing', async () => {
     const width = 16;

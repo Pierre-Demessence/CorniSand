@@ -1,7 +1,7 @@
 import { cellWGSL } from './shaders/cell.wgsl';
-import { solidCaWGSL } from './shaders/solid-ca.wgsl';
+import { BRUSH_UNIFORM_WORDS, brushWGSL } from './shaders/brush.wgsl';
+import { caWGSL } from './shaders/ca.wgsl';
 import { CellBuffer } from './cell-buffer';
-import { Fluid, type FluidSolver, fitParticleCapacity, particleCapacityFor } from './fluid';
 import type { Vec2 } from './input';
 
 export interface SimulationInput {
@@ -17,13 +17,6 @@ export interface SimulationInput {
 export interface SimulationOptions {
   // One u32 per call; injectable so tests can replay a fixed sequence.
   seedSource?: () => number;
-  // Overrides the particle store's capacity, for tests; see `Fluid`.
-  particleCapacity?: number;
-  // Overrides the pressure solver and the sweeps of the 'sor' one, for tests and the bench; see `Fluid`.
-  solver?: FluidSolver;
-  iterations?: number;
-  // False runs the fluid passes over the whole grid; see `Fluid`.
-  activeTiles?: boolean;
 }
 
 // A superstep is two CA dispatches (Margolus offset 0, then 1).
@@ -39,8 +32,15 @@ export class Simulation {
   private readonly seedSource: () => number;
 
   private readonly cells: CellBuffer;
-  // The liquid particles, and the brush that edits them together with the cells.
-  readonly fluid: Fluid;
+
+  // -- Brush pipeline: edits the current cell buffer in place --
+  private readonly brushUniformData = new ArrayBuffer(BRUSH_UNIFORM_WORDS * 4);
+  private readonly brushFloats = new Float32Array(this.brushUniformData);
+  private readonly brushWords = new Uint32Array(this.brushUniformData);
+  private readonly brushUniformBuffer: GPUBuffer;
+  private readonly brushPipeline: GPUComputePipeline;
+  private readonly brushBindGroupA: GPUBindGroup;
+  private readonly brushBindGroupB: GPUBindGroup;
 
   // -- CA pipeline: one uniform slot per dispatch, picked with a dynamic offset --
   private readonly slotWords: number;
@@ -67,12 +67,30 @@ export class Simulation {
 
     this.cells = new CellBuffer(device, width, height);
 
-    this.fluid = new Fluid(device, this.cells, this.seedSource, {
-      particleCapacity: options.particleCapacity,
-      solver: options.solver,
-      iterations: options.iterations,
-      activeTiles: options.activeTiles,
+    // -- Brush setup --
+    this.brushUniformBuffer = device.createBuffer({
+      size: this.brushUniformData.byteLength,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
+    const brushLayout = device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+        { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
+      ],
+    });
+    this.brushPipeline = device.createComputePipeline({
+      layout: device.createPipelineLayout({ bindGroupLayouts: [brushLayout] }),
+      compute: { module: device.createShaderModule({ code: brushWGSL(width, height) }), entryPoint: 'main' },
+    });
+    const brushBindGroup = (cells: GPUBuffer): GPUBindGroup => device.createBindGroup({
+      layout: brushLayout,
+      entries: [
+        { binding: 0, resource: { buffer: cells } },
+        { binding: 1, resource: { buffer: this.brushUniformBuffer } },
+      ],
+    });
+    this.brushBindGroupA = brushBindGroup(this.cells.bufferA);
+    this.brushBindGroupB = brushBindGroup(this.cells.bufferB);
 
     // -- CA setup --
     this.slotWords = device.limits.minUniformBufferOffsetAlignment / 4;
@@ -90,7 +108,7 @@ export class Simulation {
     });
     this.caPipeline = device.createComputePipeline({
       layout: device.createPipelineLayout({ bindGroupLayouts: [caLayout] }),
-      compute: { module: device.createShaderModule({ code: solidCaWGSL(width, height) }), entryPoint: 'main' },
+      compute: { module: device.createShaderModule({ code: caWGSL(width, height) }), entryPoint: 'main' },
     });
     const caBindGroup = (input: GPUBuffer, output: GPUBuffer): GPUBindGroup => device.createBindGroup({
       layout: caLayout,
@@ -148,30 +166,20 @@ export class Simulation {
     });
   }
 
-  // Sizes the particle store against what the device can allocate, which only an async probe can tell, then builds.
-  static async create(device: GPUDevice, width: number, height: number, options: SimulationOptions = {}): Promise<Simulation> {
-    const wanted = options.particleCapacity ?? particleCapacityFor(device, width, height);
-    const particleCapacity = options.particleCapacity ?? await fitParticleCapacity(device, wanted);
-    return new Simulation(device, width, height, { ...options, particleCapacity });
-  }
-
-  // Replaces the world: `cells` (width x height packed cells) go into the current buffer and the liquid cells get
-  // their particles.
+  // Replaces the world: `cells` (width x height packed cells) go into the current buffer.
   load(cells: Uint32Array): void {
     if (cells.length !== this.width * this.height) {
       throw new RangeError(`expected ${this.width * this.height} cells, got ${cells.length}`);
     }
-    this.fluid.load(cells);
     this.device.queue.writeBuffer(this.cells.currentBuffer, 0, cells);
   }
 
   clear(): void {
     this.cells.clear();
-    this.fluid.clear();
   }
 
-  // Records the frame start (the brush while a button is down, and the particle compaction) and `supersteps`
-  // supersteps (a fluid update, then the two CA dispatches) into the caller's encoder; submitting it is the caller's job.
+  // Records the brush (while a button is down) and `supersteps` supersteps (two CA dispatches each) into the caller's
+  // encoder; submitting it is the caller's job.
   simulate(encoder: GPUCommandEncoder, supersteps: number, input: SimulationInput): void {
     if (supersteps < 0 || supersteps > MAX_SUPERSTEPS) {
       throw new RangeError(`supersteps must be 0..${MAX_SUPERSTEPS}, got ${supersteps}`);
@@ -186,11 +194,10 @@ export class Simulation {
 
     const pass = encoder.beginComputePass();
 
-    this.fluid.recordFrameStart(pass, input.mouseActive ? input : null);
+    if (input.mouseActive) this.recordBrush(pass, input);
 
     for (let i = 0; i < dispatches; i++) {
       const offset = i % 2;
-      if (offset === 0) this.fluid.recordStep(pass);
       pass.setPipeline(this.caPipeline);
       const blocksX = Math.ceil((this.width + offset) / 2);
       const blocksY = Math.ceil((this.height + offset) / 2);
@@ -200,6 +207,25 @@ export class Simulation {
       this.cells.swap();
     }
     pass.end();
+  }
+
+  private recordBrush(pass: GPUComputePassEncoder, input: SimulationInput): void {
+    const f = this.brushFloats;
+    const w = this.brushWords;
+    f[0] = input.prevMousePos.x;
+    f[1] = input.prevMousePos.y;
+    f[2] = input.mousePos.x;
+    f[3] = input.mousePos.y;
+    f[4] = input.brushSize;
+    w[5] = input.particleType;
+    w[6] = input.erasing ? 1 : 0;
+    w[7] = input.replacing ? 1 : 0;
+    w[8] = this.seedSource();
+    this.device.queue.writeBuffer(this.brushUniformBuffer, 0, this.brushUniformData);
+
+    pass.setPipeline(this.brushPipeline);
+    pass.setBindGroup(0, this.cells.currentBuffer === this.cells.bufferA ? this.brushBindGroupA : this.brushBindGroupB);
+    pass.dispatchWorkgroups(Math.ceil(this.width / 8), Math.ceil(this.height / 8));
   }
 
   get currentBuffer(): GPUBuffer {
