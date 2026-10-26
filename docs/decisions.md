@@ -61,3 +61,21 @@ The grid matches the canvas size in CSS pixels when the page loads and ignores `
 If the grid would exceed the device's storage-buffer limits (`maxStorageBufferBindingSize`, `maxBufferSize`, both requested at the adapter's maximum), the grid uses the smallest integer cells-per-pixel scale that fits, so a huge window still renders, coarser.
 
 Rejected: resizing the grid on window resize (loses or crops the world), rendering at device pixels.
+
+## Tuned on a desktop GPU first, then scaled down
+
+The reference machine is an RTX 4080: each feature is built, and the frame budget held, there first, with generous sizes. Every size and resolution (playing field, cells per pixel, the air, gravity and light grids, CA steps per frame) is a setting, not a constant, so it can be scaled down later. Scaling follows this order: trim what is bigger than it needs to be to stay fun, which sets the default (a field of tens of millions of cells may play no better than 1–2M, already several times TPT's 235k); then measure on weaker hardware, real or the dev machine's integrated GPU; then trade a little quality for a lot of speed where the ratio is worth it, through presets or an in-app benchmark that picks the settings (roadmap M10).
+
+Rejected: designing for laptop integrated GPUs from the start (it caps what gets tried before anyone knows which features are worth their cost).
+
+## The Powder Toy's behavior, not its save format
+
+Elements behave and feel like TPT's, but TPT save files are not loaded, and nothing in the engine follows TPT's element IDs or particle fields. Loading saves would tie the engine to TPT's sequential update order (each particle sees the moves of those before it), which a parallel GPU step does not reproduce.
+
+Rejected: loading TPT saves as a parity test and a source of free content.
+
+## No code or data tables from The Powder Toy
+
+TPT is GPLv3. Translating its source or copying its element tables would make CorniSand a derivative work, which must then be distributed under GPLv3 with its source. Elements are reimplemented from observed behavior, documentation and physics. Reading TPT's source to learn what a mechanism does is fine; translating it is not. Property values come from physical data (melting points, densities) or our own tuning, never copied as a table.
+
+Rejected: porting elements from TPT's source.

@@ -1,10 +1,10 @@
 # Roadmap
 
-Direction: everything The Powder Toy simulates, in the browser on the GPU, on a larger playing field, then what only a GPU can afford. The reasoning, the frame budget and the open questions are in `docs/research/powder-toy-parity.md`. Every milestone keeps the frame budget set there, measured by `npm run bench`. IDs are stable.
+Direction: everything The Powder Toy simulates, in the browser on the GPU, on a larger playing field, then what only a GPU can afford. The reasoning, the frame budget and the open questions are in `docs/research/powder-toy-parity.md`. Every milestone keeps the frame budget set there on the reference RTX 4080, measured by `npm run bench`, with every size and resolution a setting so M10 can scale it down (`docs/decisions.md`). IDs are stable.
 
 ## M4 Element engine
 
-An element property table (density, falling behavior, state, heat and pressure properties, transitions) drives the CA, per-cell state grows beyond the packed `u32` into separate buffers, and liquids move by CA rules, as in The Powder Toy. The FLIP liquids, their CPU reference and their tests are removed (research doc, "The realistic water"). Done when the current materials run from the table, a new element is a table row plus an optional rule, and the bench meets the budget with a full screen of particles.
+An element property table (density, falling behavior, state, heat and pressure properties, transitions) drives the CA, per-cell state grows beyond the packed `u32` into separate buffers, cells move by velocity with the model the research doc's Q3 prototype picks, and liquids move by CA rules, as in The Powder Toy. The FLIP liquids, their CPU reference and their tests are removed (research doc, "The realistic water"). Done when the current materials run from the table, a new element is a table row plus an optional rule, and the bench meets the budget with a full screen of particles.
 
 ## M5 Heat and phase changes
 
@@ -25,3 +25,7 @@ The rest of The Powder Toy's elements, family by family (explosives, nuclear, li
 ## M9 Newtonian gravity
 
 A gravity field computed from the mass layout pulls particles toward each other. Done when scene tests show a cloud of particles clumping and a light particle orbiting a heavy body.
+
+## M10 Scaling down
+
+The settings shrink to a default that is still as fun (no field, grid or step count bigger than it needs to be), then the game is measured on weaker hardware (real, or the dev machine's integrated GPU) and either trimmed further where a large speed gain costs little, or given presets or an in-app benchmark that picks settings. Done when the default holds 60 fps on the RTX 4080 with headroom, and a named low-end setup (at least the integrated GPU) holds 60 fps with its preset or detected settings.

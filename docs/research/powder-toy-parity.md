@@ -57,7 +57,7 @@ The GPU updates millions of cells at once, so a rule may only change cells it ow
 | More CA steps per frame | multiplies the base cost | Only worth it for fast-moving things, ideally only where they are |
 | A world larger than the screen | proportional to the active area | Settled regions must sleep (active tiles, as the liquids already do) |
 
-The same work on an integrated GPU (the dev machine's Intel UHD 770 shares system memory) is roughly 10× slower. So on a good desktop GPU, TPT parity fits at one cell per pixel with room for two or three extras; on a laptop's built-in GPU the field shrinks to about TPT's size to twice it (0.25–0.5M cells). That gap is the reason for open question Q1.
+The same work on an integrated GPU (the dev machine's Intel UHD 770 shares system memory) is roughly 10× slower. So on a good desktop GPU, TPT parity fits at one cell per pixel with room for two or three extras; on a laptop's built-in GPU the field shrinks to about TPT's size to twice it (0.25–0.5M cells). Closing that gap is the last step of the scaling order in `docs/decisions.md` ("Tuned on a desktop GPU first, then scaled down").
 
 Levers that keep features stacking: the coarsest resolution each field still looks right at (air, gravity, light), updating slow fields every few frames, and skipping settled regions. TPT uses the first two; the third is new here.
 
@@ -83,7 +83,10 @@ A GPU-friendly equivalent of water equalisation (correct levels in connected ves
 
 ## Open questions
 
-- **Q1 Target hardware**: which GPU must hold 60 fps, at which field size? Proposal: hold 60 fps at one cell per pixel on a good desktop GPU, and pick the cells-per-pixel scale at load from a short GPU benchmark, so laptops get a coarser field instead of a slow one.
-- **Q3 Movement model**: velocity-driven Margolus CA (A) or claimed free particles (B). Decide with a prototype measuring both on a falling-sand pile and an explosion.
-- **Q4 Faithfulness**: same elements and feel, or behavior close enough to load TPT's save files? Loading community saves would be a strong parity test and a large amount of free content, but it ties the engine to TPT's update-order quirks.
-- **Q5 License**: TPT is GPLv3. Reimplementing behavior from observation and documentation is independent work; translating its source code or copying its element data tables would make this project a derivative work. CorniSand has no license file yet. Decide before porting any element from source.
+Target hardware, faithfulness to TPT and licensing are decided: `docs/decisions.md` ("Tuned on a desktop GPU first, then scaled down", "The Powder Toy's behavior, not its save format", "No code or data tables from The Powder Toy").
+
+- **Q3 Movement model**: how a cell with a velocity moves several pixels per step. Three options:
+  - **A, velocity-driven Margolus CA.** Each cell stores a velocity and moves one cell per CA step once its accumulated displacement reaches one. Conflict-free and deterministic by construction, keeps every rule inside the 2×2 block, and a fast cell cannot tunnel through a thin wall since it moves one cell at a time. Top speed is one cell per CA step, so explosion debris crawls unless the whole grid runs more steps per frame, which multiplies the base cost.
+  - **B, claimed free particles.** Every particle traces its path and claims its target cell with an atomic (lowest particle index wins, in two passes, to stay deterministic); losers stay. Any speed in one pass, closest to TPT. In dense piles most moves conflict, so powders flow in bursts or jam, and every interaction now inside the 2×2 block (density swaps, reactions) needs a second mechanism. Cost scales with every moving particle on the grid.
+  - **C, hybrid (Noita-style).** Cells move by A. A cell pushed above a speed threshold (blast, strong wind, thrown) leaves the grid as a free particle in a capped list, flies by B through empty cells and lands back into the grid on contact. Flyers are few, so conflicts are rare and the cost follows the amount of flying debris, not the field size. Costs: two representations and the hand-over between them (a flyer carries its per-cell fields: temperature, `ctype`, `life`…), and a cap on simultaneous flyers past which the rest stay in the CA, slower.
+  - Recommendation: C. Confirm it at the start of M4 with a prototype of A and C on a falling-sand pile, a pile hit by an explosion and wind over powder, measuring GPU time per frame, the pile's angle, how far debris flies for a given blast, and bit-identical reruns.

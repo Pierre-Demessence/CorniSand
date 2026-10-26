@@ -22,6 +22,7 @@ The GPU suites in `tests/` run the real WGSL through Dawn's Node bindings (`webg
 ## Stack facts not in config
 
 - WebGPU only, no WebGL fallback. Targets Chrome 113+, Edge 113+, Safari 18.2+.
+- The reference machine is an RTX 4080. Every size and resolution (field, cells per pixel, air, gravity and light grids, CA steps per frame) is a setting, not a hard-coded constant, so it can be scaled down later (`docs/decisions.md`).
 - `.github/workflows/deploy-pages.yml` builds and deploys to GitHub Pages on every push to `main`; `vite.config.ts` sets `base: './'` for that.
 - The simulation grid is one cell per CSS pixel of the canvas, or the smallest integer cells-per-pixel scale that fits the device's storage-buffer limits (`src/grid.ts`). It is sized once at load (`src/main.ts`); resizing stretches it (see `docs/decisions.md`).
 - The user's npm `min-release-age` is 7 days: `npm install` picks the newest version at least that old, not `latest`.
@@ -86,5 +87,6 @@ The user is an experienced web developer, not a physics, numerics or GPU special
 
 ## Never
 
+- Never translate The Powder Toy's source code or copy its element tables: it is GPLv3 (`docs/decisions.md`).
 - Never claim a water or physics behavior works from a visual check alone. Water realism failed repeatedly that way; any physics change needs a measurable, repeatable check, such as a scene test with a numeric threshold.
 - Never tune a constant without confirming that the value actually reaches a rule that moves particles.
