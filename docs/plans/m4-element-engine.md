@@ -1,6 +1,6 @@
 # M4 Element engine
 
-Status: plan written, waiting for approval. Next: M4.1.
+Status: M4.1 done, C approved and recorded in `docs/decisions.md`. Next: M4.2.
 
 ## Goal
 
@@ -165,7 +165,7 @@ Ports the approved model from `src/proto/` into the engine, then deletes `src/pr
 - Motion state as `CELL_FIELDS` entries, at most 8 bytes per cell: velocity as two `f16` in one word (`pack2x16float`), and the sub-cell remainder in a second word unless M4.5's measurements show a cheaper encoding with the same test results.
 - Element properties `gravity` (cells/dispatch², 0 for walls, negative for gases if smoke's tests still pass that way) and `drag`.
 - The generic movement phase of M4.4 is driven by velocity as in the prototype; liquids keep their sideways spread and gases their random spread on top of it.
-- If C: the flyer passes (launch, flight, landing, compaction) run once per superstep between the CA dispatches, in the frame's one compute pass. The flyer struct is generated from `CELL_FIELDS`, so a flyer carries every field (temperature included, in M5) without extra code. The display draws flyers from a per-frame overlay buffer (a scatter of the flyers' cells). The brush's erase and replace remove flyers inside the stroke; Clear empties the flyer list; the particle counter adds the live flyers.
+- If C: the flyer passes (launch, flight, landing, compaction) run once per superstep between the CA dispatches, in the frame's one compute pass. The flyer struct is generated from `CELL_FIELDS`, so a flyer carries every field (temperature included, in M5) without extra code. The display draws flyers from a per-frame overlay buffer (a scatter of the flyers' cells). The brush's erase and replace remove flyers inside the stroke; Clear empties the flyer list; the particle counter adds the live flyers. Anything else that acts on cells misses flyers (backlog I13); in M4 that is only the `blast` scene's initial velocities, set before any cell launches.
 - Scenes `pile` and `blast` (a sand layer with P2's initial velocities, loaded through the velocity field), shown with `?scene=`. No blast or wind tool before M6.
 - The D5 test "a sand grain falls two cells per superstep" becomes AC14: grains now accelerate. Visible change: falling things speed up instead of falling at one constant speed.
 
@@ -188,10 +188,10 @@ Ports the approved model from `src/proto/` into the engine, then deletes `src/pr
 
 ### M4.1 Movement prototype (options A and C) (tasks)
 
-- [ ] M4.1a `src/proto/params.ts`, `src/proto/shaders.ts`, `src/proto/movement.ts`: baseline, A and C as specified in Design; small-grid tests in `tests/proto-movement.test.ts` (grain conservation for every model and scene, bit-identical reruns, a grain at 8 cells/dispatch against a 1-cell wall under C, a launch past the cap). Verify: `npm test`, `npm run lint`, `npm run typecheck`.
-- [ ] M4.1b `proto.html` and `src/proto/main.ts`: A and C side by side, scene picker, reset, click to blast both. Verify in a browser on the user's running dev server (or one started for the check) that both halves run, a click blasts both, and the console shows no WebGPU error.
-- [ ] M4.1c `tests/proto-movement.bench.gpu.ts` in `vitest.bench.config.ts`: the metrics of P1–P3 and the timings T1–T4, as tables. Run `npm run bench` on the RTX 4080 (the test prints the adapter), record the tables and the decision rule's verdict in "M4.1 results" below.
-- [ ] M4.1d Gate: report the results to the user in plain words, with the `proto.html` steps to see the difference; on approval, add the movement decision to `docs/decisions.md`.
+- [x] M4.1a `src/proto/params.ts`, `src/proto/shaders.ts`, `src/proto/movement.ts`: baseline, A and C as specified in Design; small-grid tests in `tests/proto-movement.test.ts` (grain conservation for every model and scene, bit-identical reruns, a grain at 8 cells/dispatch against a 1-cell wall under C, a launch past the cap). Verify: `npm test`, `npm run lint`, `npm run typecheck`.
+- [x] M4.1b `proto.html` and `src/proto/main.ts`: A and C side by side, scene picker, reset, click to blast both. Verify in a browser on the user's running dev server (or one started for the check) that both halves run, a click blasts both, and the console shows no WebGPU error.
+- [x] M4.1c `tests/proto-movement.bench.gpu.ts` in `vitest.bench.config.ts`: the metrics of P1–P3 and the timings T1–T4, as tables. Run `npm run bench` on the RTX 4080 (the test prints the adapter), record the tables and the decision rule's verdict in "M4.1 results" below.
+- [x] M4.1d Gate: report the results to the user in plain words, with the `proto.html` steps to see the difference; on approval, add the movement decision to `docs/decisions.md`.
 
 Visible after: nothing in the game. A dev-only page, `proto.html` under `npm run dev`, shows the two movement models side by side.
 Needs you: the gate. Open `proto.html`, blast the sand in both halves, compare how far and how naturally debris flies, and approve the model.
@@ -243,7 +243,52 @@ Needs you: nothing, unless the budget is missed (then a decision at the gate).
 
 ## M4.1 results
 
-Not measured yet.
+Measured with `npx vitest run --config vitest.bench.config.ts proto` on the RTX 4080 (`vendor="nvidia" architecture="lovelace"`, D3D12 driver 32.0.16.2101, through Dawn). GPU timestamps are quantized to 65.5 µs, so times below 0.2 ms are only indicative.
+
+Physics (1024×512 tank, 1x speed unless noted):
+
+| Model | P1 pile angle | P1 grains | P2 debris p99 | P3 wind drift | P2 launched | P2 jammed (≥ 8 retries) | P2 max retries | Grains conserved | Bit-identical rerun |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| baseline | 48.5° | 5016 | 31.9 cells | 0 | 0 | 0 | 0 | yes | yes |
+| A | 43.7° | 1600 | 36.9 cells | 1.00 | 0 | 0 | 0 | yes | yes |
+| C | 43.7° | 1600 | 237.1 cells | 1.00 | 2119 | 0 | 5 | yes | yes |
+| A at 4x steps (T4) | 44.0° | 1780 | 247.1 cells | 1.04 | 0 | 0 | 0 | yes | yes |
+
+P1 pours fewer grains under A and C than under the baseline: a grain now starts at rest and accelerates, so it blocks the source longer. A and C pour the same grains, so their angles compare.
+
+GPU time per frame at 2560×1340 (median of 60 frames after 20 warm-up frames, frames submitted back to back):
+
+| Scene | baseline | A 1x | A 2x | A 4x | C 1x |
+| --- | --- | --- | --- | --- | --- |
+| T1 full, at rest | 0.07 ms | 1.18 ms | 2.36 ms | 5.18 ms | 1.31 ms |
+| T2 top half falling | 0.13 ms | 2.23 ms | 4.98 ms | 6.09 ms | 2.29 ms (229,583 flyers) |
+| T3 blasts, same schedule | | 1.38 ms | | | 1.77 ms (61,133 flyers, median) |
+| T3 one blast past the cap (374,805 launches refused) | | | | | 1.97 ms median, 3.41 ms slowest of 20 frames |
+
+Decision rule:
+
+- c1 pass: A and C conserve every grain in every scene (`tests/proto-movement.test.ts`, P1, P2) and rerun P2 bit-identically.
+- c2 pass: C throws debris 237.1 cells against A's 36.9, 6.4×.
+- c3 pass: C costs 0.13 ms more than A on T1 and 0.06 ms more on T2.
+- c4 pass: T3 under C costs 1.77 ms, 0.59 ms over A on T1, with 61k flyers. The schedule could not hold 100k (deviation 9); T2 holds 229k flyers at 2.29 ms, 1.11 ms over A on T1, inside the 2 ms margin as well.
+- c5 pass: both piles stand at 43.7°.
+- c6 pass: no P2 flyer retried its landing 8 times; the worst retried 5 times.
+
+Verdict: C.
+
+Also measured: A at 4x speed throws debris as far as C (247 cells) but costs 5.18 ms at rest against C's 1.31 ms. The velocity CA costs about 15× the baseline's rules (1.18 ms against 0.07 ms on T1), which takes a large share of AC19's 4 ms. Inferred, not measured pass by pass: most of it is the 16-byte `motion` per cell, which takes the working set out of the GPU's L2 cache; M4.3 and M4.5 should store motion more compactly.
+
+Deviations from Design, each found while making the measurements hold:
+
+1. Friction: a grain resting on another loses 1/4 of its horizontal speed per dispatch (`PROTO.friction`). Without it, a grain that landed sideways slides forever and no pile forms.
+2. P2's blast center is half its radius under the surface, not on it. With the center on the surface, half the disc is pushed down into the sand and nothing is thrown up.
+3. P3's top two rows are half full (seeded). A full flat layer has no grain that can move sideways, so the wind had nothing to push.
+4. A grain blocked by a slower grain moving the same way keeps that grain's speed instead of stopping (`bumped`), so a falling column falls together.
+5. A grain at rest gets gravity only in a dispatch where it is the top cell of the block. Otherwise each level of a resting stack banks one more gravity step than the one below, and the top of a deep layer launches.
+6. Landing: the lowest claim wins by (cells walked, slot) instead of slot alone, so a grain that stops at once keeps its own cell. Two landing rounds per superstep; between them, a loser claims a random free cell within 3 cells, or, buried, around the first free cell above it. Searching the nearest free cell first jammed 10% of the P2 flyers.
+7. A flyer is 40 bytes (position, velocity, cell, stop cell, claim key, retries, status).
+8. Behavior-neutral speedups: a block with no empty cell and no motion skips the rules, and the launch scan skips a superstep without launches.
+9. Bench: frames are submitted back to back after 1 s of GPU load; waiting after each frame let the GPU clock down and inflated the times up to 3×. T3's closed-loop schedule (up to 32 blasts of radius 128 a frame) peaks below 100k flyers because the blasts dig the ground away; c4 is also checked on T2.
 
 ## Baseline (M4.2)
 

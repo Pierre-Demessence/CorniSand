@@ -2,7 +2,7 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
-    include: ['tests/bench.gpu.ts'],
+    include: ['tests/bench.gpu.ts', 'tests/proto-movement.bench.gpu.ts'],
     // The default reporter hides the output of passing tests, and the table is the result.
     reporters: ['verbose'],
     // Three solver variants, each running 80 frames of a 3.4M-cell grid at four speeds.

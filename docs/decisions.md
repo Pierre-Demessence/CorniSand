@@ -18,6 +18,17 @@ All particle types move in one Margolus CA shader. Updating disjoint 2×2 blocks
 
 Rejected: per-cell rules where each cell picks a target (conflicts between threads need extra passes or atomics); separate shaders per material (interactions would span dispatches).
 
+## Cells move by velocity; fast cells fly as particles (model C)
+
+Every cell carries a velocity, integrated inside the Margolus block at up to 1 cell per dispatch. A cell faster than `launchSpeed` (1.5 cells/dispatch) leaves the grid and flies as a free particle (a flyer) that walks the cells it crosses and lands back in the grid when it hits something or slows down. Slots, claims and landing order come from prefix sums and claim keys, so reruns are bit-identical. Measured on the RTX 4080 at 2560×1340 (M4.1, `git log --all -- docs/plans/m4-element-engine.md`): blast debris flies 237 cells against 37 when every cell stays in the grid, for 0.13 ms more per frame at rest and 0.06 ms more with 230k flyers; piles stand at the same 44°; no flyer failed to land.
+
+Consequence: a flyer is outside the grid while it flies, so anything that acts on grid cells (a blast, pressure, heat, reactions) misses it unless it also acts on the flyer list. Wind does; the rest is backlog I13.
+
+Rejected:
+
+- A, every cell stays in the grid (velocity clamped to 1 cell per dispatch): debris barely leaves the crater. Four times more CA steps per frame throw it as far as C (247 cells) but cost 5.2 ms at rest against C's 1.3 ms.
+- B, cells claim a target cell anywhere along their path (not prototyped): its cost grows with every moving cell, dense piles make most claims conflict, and density swaps and reactions would need a second mechanism.
+
 ## Liquids move by a velocity field and a global pressure solve
 
 Liquid pressure is not local: when one arm of a U-tube is higher, the whole connected body must react at once. Rules between neighboring cells pass that information one cell per step, so it spreads like heat and a screen-sized body takes minutes to level. Liquids therefore get a staggered velocity grid and a pressure projection every step, beside the cell grid (roadmap M1). Sand, fire and reactions stay Margolus CA rules.

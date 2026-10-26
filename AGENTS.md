@@ -11,7 +11,7 @@ npm run typecheck # tsc --noEmit (strict; covers src, tests, vite.config.ts)
 npm run lint      # ESLint (typescript-eslint, type-aware)
 npm test          # Vitest
 npm run preview   # Serve dist/
-npm run bench     # GPU timing of a frame and of every fluid pass at 2560×1340 (tests/bench.gpu.ts); needs a GPU adapter
+npm run bench     # GPU timing of a frame and of every fluid pass at 2560×1340 (tests/bench.gpu.ts), and the M4.1 movement prototype's tables (tests/proto-movement.bench.gpu.ts); needs a GPU adapter
 SCREEN=1 npx vitest run solver-screen  # pressure-solver measurements at screen size (skipped otherwise)
 ```
 
@@ -40,6 +40,7 @@ The GPU suites in `tests/` run the real WGSL through Dawn's Node bindings (`webg
 - `src/input.ts` — pointer, wheel and Shift state.
 - `src/particles.ts` — particle type IDs and fire max life, the single source for TS and every shader.
 - `src/shaders/*.wgsl.ts` — WGSL sources exported as template strings (functions of the grid size where needed): `cell` (shared snippet: type constants, cell accessors, PCG hash, `CELL_BYTES`), `solid-ca` (all particle rules), `brush`, `display`. The fluid shaders are `fluid-common`, `fluid-grid` (grid passes and the plain sweeps), `fluid-multigrid` (coarse operators, V-cycle, conjugate-gradient kernels), `fluid-particles` and `fluid-raster`.
+- `src/proto/` and `proto.html` — the M4.1 movement prototype (`docs/plans/m4-element-engine.md`): models A and C side by side at `/proto.html` under `npm run dev`, not built into `dist/`; deleted by M4.5c.
 - `src/scenes.ts` — scene builders (`SCENES`) shared by the tests and the `?scene=<name>` loader in `main.ts` (`findScene`).
 - `tests/` — Vitest: `grid` (unit), `hash`, `simulation` and the `fluid-*` suites (GPU: `fluid-particles`, `fluid-raster`, `fluid-solver`, `fluid-multigrid` and `fluid-parity` compare each fluid pass and the whole step with the CPU reference; `fluid-tiles` runs active tiles against `activeTiles: false` bit for bit), `liquids-gpu` (the liquid acceptance criteria on the GPU through read-back), `bench.gpu.ts` (`npm run bench`), `gpu.ts` (device, scene upload and readback helpers), `scenes`, `metrics`, `cpu/` (test-only CPU reference of the fluid code: grid, solver with SOR and multigrid, particles; `solver-experiments.ts` and `solver-screen.test.ts` measure the solvers) and `liquids-*.test.ts` (liquid acceptance criteria run on that reference through `LiquidModel`).
 
