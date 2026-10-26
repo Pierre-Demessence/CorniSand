@@ -4,7 +4,7 @@ Direction: everything The Powder Toy simulates, in the browser on the GPU, on a 
 
 ## M4 Element engine
 
-An element property table (density, falling behavior, state, heat and pressure properties, transitions) drives the CA, per-cell state grows beyond the packed `u32` into separate buffers, and liquids move by CA rules, as in The Powder Toy. The realistic FLIP water is removed or kept as an option, per the research doc. Done when the current materials run from the table, a new element is a table row plus an optional rule, and the bench meets the budget with a full screen of particles.
+An element property table (density, falling behavior, state, heat and pressure properties, transitions) drives the CA, per-cell state grows beyond the packed `u32` into separate buffers, and liquids move by CA rules, as in The Powder Toy. The FLIP liquids, their CPU reference and their tests are removed (research doc, "The realistic water"). Done when the current materials run from the table, a new element is a table row plus an optional rule, and the bench meets the budget with a full screen of particles.
 
 ## M5 Heat and phase changes
 

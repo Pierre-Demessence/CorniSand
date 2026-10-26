@@ -22,14 +22,14 @@ The GPU updates millions of cells at once, so a rule may only change cells it ow
 | Element properties | A table in a storage buffer, generated from the TS source of truth like `particles.ts` today | Easy |
 | Per-cell state (56 B) | Struct-of-arrays buffers (type, ctype, life, tmp…, temperature, velocity), so a pass reads only the fields it uses; `docs/decisions.md` already puts new per-cell data in separate buffers | Easy, but each field read costs bandwidth |
 | Powders and liquids falling, spreading, density swaps | Margolus CA rules driven by `Falldown` and `Weight`, as today | Easy |
-| Movement by velocity (several pixels per step) | Option A: velocity stored per cell, the CA moves a cell one step when its accumulated displacement reaches one, with more CA steps per frame for fast things. Option B: free particles that claim their target cell with an atomic, losers stay. A is closer to the current engine; B is closer to TPT. Open question 3 | Medium |
+| Movement by velocity (several pixels per step) | Option A: velocity stored per cell, the CA moves a cell one step when its accumulated displacement reaches one, with more CA steps per frame for fast things. Option B: free particles that claim their target cell with an atomic, losers stay. A is closer to the current engine; B is closer to TPT. Open question Q3 | Medium |
 | Heat conduction | One pass per step: each cell exchanges with its neighbors by `HeatConduct` (explicit diffusion, stable below 0.25 of the neighbor difference per step) | Easy |
 | Temperature and pressure transitions | Per-cell check against the table after the heat and air passes | Easy |
 | Air: pressure, velocity, ambient heat | TPT's air update is explicit and local (velocity from the pressure gradient, pressure from the velocity divergence, advection, loss), not a global solve: a few passes over the air grid. Particles feed pressure and heat into it by a gather (each air cell reads its fixed block of pixels), so no atomics | Easy |
 | Particles pushed by air | Per-cell read of the air velocity (`Advection`, `AirDrag`), feeding the movement above | Easy once movement exists |
 | Electricity (sparks) | Local: a spark spreads to adjacent conductors with `life` counters. Instant conductors (TPT's `INST`) cross a whole wire in one step: on the GPU, a flood fill by repeated passes or a connected-component labeling | Medium for instant conduction |
 | Energy particles | A separate free-particle layer with float positions; they rarely collide with each other, and they interact with matter by reading the cell grid | Medium |
-| Newtonian gravity | A gravity potential from the mass layout is the same kind of equation as the liquid pressure, so the existing multigrid solver (`src/fluid.ts`), or an FFT, on a coarse grid, updated every few frames | Medium |
+| Newtonian gravity | A gravity potential from the mass layout is the same kind of equation as the liquid pressure, so the multigrid solver of the FLIP liquids (`src/fluid.ts`, `src/shaders/fluid-multigrid.wgsl.ts`; in git history once M4 removes them), or an FFT, on a coarse grid, updated every few frames | Medium |
 | Water equalisation | Not part of the base game; see "The realistic water" | — |
 | Game of Life elements | Pure neighbor counting: the ideal GPU case | Easy |
 | Long-range elements: beams (`ARAY`, `BRAY`), portals and wifi channels, region copiers (`DRAY`), pistons, conveyors, stickmen | Each needs its own mechanism (a ray march per emitter, a per-channel buffer, a scan along a line). Few elements, each its own small project | Hard, one by one |
@@ -57,7 +57,7 @@ The GPU updates millions of cells at once, so a rule may only change cells it ow
 | More CA steps per frame | multiplies the base cost | Only worth it for fast-moving things, ideally only where they are |
 | A world larger than the screen | proportional to the active area | Settled regions must sleep (active tiles, as the liquids already do) |
 
-The same work on an integrated GPU (the dev machine's Intel UHD 770 shares system memory) is roughly 10× slower. So on a good desktop GPU, TPT parity fits at one cell per pixel with room for two or three extras; on a laptop's built-in GPU the field shrinks to about TPT's size to twice it (0.25–0.5M cells). That gap is the reason for open question 1.
+The same work on an integrated GPU (the dev machine's Intel UHD 770 shares system memory) is roughly 10× slower. So on a good desktop GPU, TPT parity fits at one cell per pixel with room for two or three extras; on a laptop's built-in GPU the field shrinks to about TPT's size to twice it (0.25–0.5M cells). That gap is the reason for open question Q1.
 
 Levers that keep features stacking: the coarsest resolution each field still looks right at (air, gravity, light), updating slow fields every few frames, and skipping settled regions. TPT uses the first two; the third is new here.
 
@@ -75,15 +75,15 @@ Cheap on a GPU at screen size, too costly on a CPU:
 
 The FLIP liquids (`src/fluid.ts`) cost about 49 ms a frame at full screen, three times the whole budget. TPT parity needs liquids that move by CA rules, like TPT's (`Falldown = 2`), which cost almost nothing. Those don't level in a U-tube (`docs/decisions.md` records why local rules can't); TPT has the same limit, and its water equalisation option exists to work around it.
 
-- **A. Remove FLIP.** Liquids move by CA rules, with TPT's look. The code, its measurements and its decisions stay in git history. Every later liquid rule is written once.
-- **B. Keep FLIP as a "realistic liquids" setting**, off by default. Possible, but every per-cell field of a liquid (temperature, `ctype`, `life`, `tmp`…) must then also live on its particles and be written back by the rasterization. Every reaction that creates, removes or changes a liquid cell needs a reconcile pass that spawns, kills or retypes the matching particles, and every liquid behavior is tested in both modes. The mode runs on a smaller field (I10) or below 60 fps, and its CPU reference and tests (about 100 s of CI, D13) stay.
+Decided: M4 removes the FLIP liquids, and liquids move by CA rules with TPT's look. M4 also replaces the four liquid entries of `docs/decisions.md` (velocity field, FLIP particles, multigrid solve, density correction) with one entry recording this choice, and deletes the backlog items that only concern FLIP (B12, D13–D15, D18–D22, I9).
 
-Recommendation: A. Dozens of TPT's elements are liquids, and B makes each of them, and each heat, pressure or electricity rule that touches them, carry a second implementation for an optional mode that can't run at full size. A GPU-friendly equivalent of water equalisation (correct levels without full FLIP) can be researched later on its own. Pending the user's decision.
+Rejected: keeping FLIP as a "realistic liquids" setting, off by default. Every per-cell field of a liquid (temperature, `ctype`, `life`, `tmp`…) would also have to live on its particles and be written back by the rasterization. Every reaction that creates, removes or changes a liquid cell would need a reconcile pass that spawns, kills or retypes the matching particles, and every liquid behavior would be tested in both modes. Dozens of TPT's elements are liquids, each with heat, pressure and electricity rules, so the optional mode would double all of that, for a mode that can't run at full size.
+
+A GPU-friendly equivalent of water equalisation (correct levels in connected vessels without FLIP) can be researched later on its own. The realistic liquids themselves may continue as a separate project (backlog I11).
 
 ## Open questions
 
-1. **Target hardware**: which GPU must hold 60 fps, at which field size? Proposal: hold 60 fps at one cell per pixel on a good desktop GPU, and pick the cells-per-pixel scale at load from a short GPU benchmark, so laptops get a coarser field instead of a slow one.
-2. **Realistic water**: A or B above.
-3. **Movement model**: velocity-driven Margolus CA (A) or claimed free particles (B). Decide with a prototype measuring both on a falling-sand pile and an explosion.
-4. **Faithfulness**: same elements and feel, or behavior close enough to load TPT's save files? Loading community saves would be a strong parity test and a large amount of free content, but it ties the engine to TPT's update-order quirks.
-5. **License**: TPT is GPLv3. Reimplementing behavior from observation and documentation is independent work; translating its source code or copying its element data tables would make this project a derivative work. CorniSand has no license file yet. Decide before porting any element from source.
+- **Q1 Target hardware**: which GPU must hold 60 fps, at which field size? Proposal: hold 60 fps at one cell per pixel on a good desktop GPU, and pick the cells-per-pixel scale at load from a short GPU benchmark, so laptops get a coarser field instead of a slow one.
+- **Q3 Movement model**: velocity-driven Margolus CA (A) or claimed free particles (B). Decide with a prototype measuring both on a falling-sand pile and an explosion.
+- **Q4 Faithfulness**: same elements and feel, or behavior close enough to load TPT's save files? Loading community saves would be a strong parity test and a large amount of free content, but it ties the engine to TPT's update-order quirks.
+- **Q5 License**: TPT is GPLv3. Reimplementing behavior from observation and documentation is independent work; translating its source code or copying its element data tables would make this project a derivative work. CorniSand has no license file yet. Decide before porting any element from source.
