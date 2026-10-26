@@ -69,7 +69,7 @@ describe.skipIf(!device)('bench', () => {
     const rows: { scene: string; supersteps: number; msPerFrame: number; msPerSuperstep: number }[] = [];
     for (const { name, build } of scenes) {
       const sim = new Simulation(dev, WIDTH, HEIGHT, { seedSource: mulberry32(1) });
-      sim.load(build());
+      sim.load({ kind: build() });
 
       const frame = async (supersteps: number): Promise<number> => {
         const start = performance.now();

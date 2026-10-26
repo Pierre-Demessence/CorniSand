@@ -21,8 +21,10 @@ describe.skipIf(!device)('GPU simulation', () => {
     for (const [x, y] of [[1, 0], [1, 1], [4, 0], [4, 1], [2, 2], [3, 2]]) cells[y * width + x] = cell(T.WALL);
     cells[2] = cell(T.OIL);
     cells[3] = cell(T.WATER);
-    cells[width + 2] = cell(T.FIRE, 0, FIRE_MAX_LIFE);
-    loadScene(sim, cells);
+    cells[width + 2] = cell(T.FIRE);
+    const life = emptyGrid(width, height);
+    life[width + 2] = FIRE_MAX_LIFE;
+    loadScene(sim, cells, life);
 
     await run(sim, 1);
     expect(cellType((await readCells(sim))[2]), 'the oil cell after one superstep').toBe(T.FIRE);
@@ -48,8 +50,12 @@ describe.skipIf(!device)('GPU simulation', () => {
     for (let y = 2; y < 7; y++) {
       for (let x = 5; x < 25; x++) cells[y * width + x] = cell(T.OIL);
     }
-    for (let x = 5; x < 25; x++) cells[7 * width + x] = cell(T.FIRE, 0, FIRE_MAX_LIFE);
-    loadScene(sim, cells);
+    const life = emptyGrid(width, height);
+    for (let x = 5; x < 25; x++) {
+      cells[7 * width + x] = cell(T.FIRE);
+      life[7 * width + x] = FIRE_MAX_LIFE;
+    }
+    loadScene(sim, cells, life);
 
     const oilCells: number[] = [];
     let smoke = 0;
@@ -74,10 +80,12 @@ describe.skipIf(!device)('GPU simulation', () => {
     const withWater = createSim(width, height);
     const dry = createSim(width, height);
     const cells = emptyGrid(width, height);
-    cells[2] = cell(T.FIRE, 0, FIRE_MAX_LIFE);
-    loadScene(dry, cells);
+    cells[2] = cell(T.FIRE);
+    const life = emptyGrid(width, height);
+    life[2] = FIRE_MAX_LIFE;
+    loadScene(dry, cells, life);
     cells[3] = cell(T.WATER);
-    loadScene(withWater, cells);
+    loadScene(withWater, cells, life);
 
     await run(withWater, 2);
     await run(dry, 2);
@@ -120,8 +128,8 @@ describe.skipIf(!device)('GPU simulation', () => {
   it('AC5: a dam break keeps its water and levels out to within 1 cell in 2,000 supersteps', async () => {
     const scene = SCENES.damBreak();
     const sim = createSim(scene.width, scene.height);
-    loadScene(sim, scene.cells);
-    const water = countTypes(scene.cells).get(T.WATER);
+    loadScene(sim, scene.fields.kind);
+    const water = countTypes(scene.fields.kind).get(T.WATER);
 
     await runMany(sim, 2000);
 
@@ -133,8 +141,8 @@ describe.skipIf(!device)('GPU simulation', () => {
   it('AC6: oil poured over water ends up on top of it with both counts unchanged after 1,000 supersteps', async () => {
     const scene = SCENES.oilOnWater();
     const sim = createSim(scene.width, scene.height);
-    loadScene(sim, scene.cells);
-    const before = countTypes(scene.cells);
+    loadScene(sim, scene.fields.kind);
+    const before = countTypes(scene.fields.kind);
 
     await runMany(sim, 1000);
 
@@ -174,7 +182,7 @@ describe.skipIf(!device)('GPU simulation', () => {
   it.each([['water', T.WATER], ['oil', T.OIL]])('AC7: sand dropped into %s sinks to the floor and nothing is lost', async (_name, liquid) => {
     const scene = SCENES.sandIntoPool();
     const sim = createSim(scene.width, scene.height);
-    const cells = scene.cells.map((c) => (cellType(c) === T.WATER ? cell(liquid) : c));
+    const cells = scene.fields.kind.map((c) => (cellType(c) === T.WATER ? cell(liquid) : c));
     loadScene(sim, cells);
     const before = countTypes(cells);
 
@@ -259,12 +267,67 @@ describe.skipIf(!device)('GPU simulation', () => {
     }
   });
 
+  it('AC9: cells carry every field with them: falling sand grains keep their life word', async () => {
+    const width = 40;
+    const height = 60;
+    const sim = createSim(width, height, 5);
+    const kind = emptyGrid(width, height);
+    const life = emptyGrid(width, height);
+    // Every other cell of two rows, each grain with its own life word.
+    let grains = 0;
+    for (const y of [50, 51]) {
+      for (let x = 1; x < width; x += 2) {
+        kind[y * width + x] = cell(T.SAND);
+        life[y * width + x] = 1000 + ++grains;
+      }
+    }
+    loadScene(sim, kind, life);
+
+    await runMany(sim, 12);
+
+    const kindAfter = await readCells(sim);
+    const lifeAfter = await sim.fields.read('life');
+    const lives: number[] = [];
+    for (let i = 0; i < kindAfter.length; i++) {
+      if (cellType(kindAfter[i]) === T.SAND) lives.push(lifeAfter[i]);
+      else expect(lifeAfter[i], `life of the empty cell ${i}`).toBe(0);
+    }
+    expect(kindAfter, 'the grains moved').not.toEqual(kind);
+    expect([...lives].sort((a, b) => a - b)).toEqual(Array.from({ length: grains }, (_, i) => 1001 + i));
+  });
+
+  it('AC10: two runs from the same seed are bit-identical in every field', async () => {
+    const width = 101;
+    const height = 67;
+    const rand = mulberry32(21);
+    const kind = emptyGrid(width, height);
+    const life = emptyGrid(width, height);
+    const kinds = [T.EMPTY, T.EMPTY, T.SAND, T.WATER, T.OIL, T.SMOKE, T.FIRE, T.WALL];
+    for (let i = 0; i < kind.length; i++) {
+      kind[i] = cell(kinds[rand() % kinds.length], rand() & 0xff);
+      if (cellType(kind[i]) === T.FIRE) life[i] = FIRE_MAX_LIFE;
+    }
+
+    const fieldsAfter = async (): Promise<[Uint32Array, Uint32Array]> => {
+      const sim = createSim(width, height, 8);
+      loadScene(sim, kind, life);
+      await runMany(sim, 100);
+      return [await sim.fields.read('kind'), await sim.fields.read('life')];
+    };
+    const [kindA, lifeA] = await fieldsAfter();
+    const [kindB, lifeB] = await fieldsAfter();
+
+    expect(kindA).not.toEqual(kind);
+    expect(kindB).toEqual(kindA);
+    expect(lifeB).toEqual(lifeA);
+  });
+
   it('D4: a frame (brush, 32 supersteps, render) is recorded into one encoder and one submit', async () => {
     const dev = device!;
     const width = 64;
     const height = 48;
     const sim = createSim(width, height);
-    const display = new Display(dev, 'rgba8unorm', width, height, sim.bufferA, sim.bufferB);
+    const display = new Display(dev, 'rgba8unorm', width, height, sim.fields);
     const target = dev.createTexture({
       size: [width, height],
       format: 'rgba8unorm',
@@ -281,7 +344,7 @@ describe.skipIf(!device)('GPU simulation', () => {
       mouseActive: true,
       brushSize: 4,
     });
-    display.render(encoder, target.createView(), sim.currentBuffer, width, height, {
+    display.render(encoder, target.createView(), width, height, {
       mousePos: { x: 30, y: 30 },
       brushSize: 4,
       showBrush: true,

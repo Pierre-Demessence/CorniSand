@@ -6,11 +6,13 @@ The simulation runs in WGSL compute shaders against the raw WebGPU API. The earl
 
 Rejected: `THREE.WebGPURenderer` (experimental, and it hides the compute API the simulation needs; direct WebGPU is less code than working around it).
 
-## Cell state in storage buffers, one packed u32 per cell
+## Per-cell fields in separate buffers, updated in place
 
-Cells are an array of `u32` words (type, variant and lifetime in 8, 8 and 16 bits) in two ping-pong storage buffers. A storage texture limits a cell to one texel format; a buffer is read by index in every shader and leaves the word layout under our control. One word is 4 B, so a 4K grid is 33 MB per buffer, inside the default 128 MiB binding limit. Per-cell floats that a future model needs (for example a velocity or a temperature) go in a separate buffer rather than widening this word, so the CA keeps its small footprint.
+Each per-cell field (`kind` with the element and variant, `life`, and later velocity, temperature…) is one 32-bit word per cell in its own storage buffer, declared once in `src/cell-fields.ts`; the buffers, bind groups and WGSL accessors are generated from that list. A buffer's size limit applies to one field, not to the sum, so the grid size does not shrink as fields are added, and a pass can later bind only the fields it uses (today every pass binds every field). A storage texture limits a cell to one texel format; buffers are read by index in every shader.
 
-Rejected: `rgba8unorm` storage textures (the first WebGPU version) or wider texture formats such as `rgba32float`; a 32-byte struct with float fields (the pressure and velocity fields it carried never affected movement).
+The CA updates the buffers in place: a Margolus thread reads and writes only the cells of its own 2×2 block, so threads never race, no second copy of the world is needed (half the memory) and a block that did not change writes nothing.
+
+Rejected: ping-pong pairs of buffers (twice the memory, every cell rewritten every dispatch); one struct per cell (every pass reads and writes every field, and the grid size is limited by the whole struct); `rgba8unorm` storage textures or wider texture formats such as `rgba32float` (the first WebGPU version).
 
 ## Margolus 2×2 block CA for every particle type
 

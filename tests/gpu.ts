@@ -57,8 +57,9 @@ export const idleInput: SimulationInput = {
   particleType: PARTICLE_TYPES.SAND,
 };
 
-export function cell(type: number, variant = 0, life = 0): number {
-  return (type | (variant << 8) | (life << 16)) >>> 0;
+// A `kind` word.
+export function cell(type: number, variant = 0): number {
+  return (type | (variant << 8)) >>> 0;
 }
 
 export function cellType(c: number): number {
@@ -69,13 +70,14 @@ export function createSim(width: number, height: number, seed = 1, options: Simu
   return new Simulation(device!, width, height, { seedSource: mulberry32(seed), ...options });
 }
 
-// Replaces the world with `cells`.
-export function loadScene(sim: Simulation, cells: Uint32Array): void {
-  sim.load(cells);
+// Replaces the world with `kind` words (and `life` words, when given).
+export function loadScene(sim: Simulation, kind: Uint32Array<ArrayBuffer>, life?: Uint32Array<ArrayBuffer>): void {
+  sim.load({ kind, ...(life && { life }) });
 }
 
+// The `kind` word of every cell.
 export function readCells(sim: Simulation): Promise<Uint32Array> {
-  return readBuffer(device!, sim.currentBuffer, sim.width * sim.height * 4);
+  return sim.fields.read('kind');
 }
 
 // Records and submits one encoder; fails the test on any WebGPU validation error.

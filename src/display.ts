@@ -1,4 +1,5 @@
 import { displayWGSL } from './shaders/display.wgsl';
+import type { CellFields } from './cell-field-buffers';
 import type { Vec2 } from './input';
 
 export interface DisplayOptions {
@@ -18,18 +19,16 @@ export class Display {
   private readonly pipeline: GPURenderPipeline;
   private readonly uniformBuffer: GPUBuffer;
   private readonly uniformData: Float32Array<ArrayBuffer>;
-  private readonly bindGroupLayout: GPUBindGroupLayout;
-  private readonly bindGroupA: GPUBindGroup;
-  private readonly bindGroupB: GPUBindGroup;
-  private readonly simBufferA: GPUBuffer;
+  private readonly uniformBindGroup: GPUBindGroup;
+  private readonly cells: CellFields;
   private readonly simWidth: number;
   private readonly simHeight: number;
 
-  constructor(device: GPUDevice, format: GPUTextureFormat, simWidth: number, simHeight: number, simBufferA: GPUBuffer, simBufferB: GPUBuffer) {
+  constructor(device: GPUDevice, format: GPUTextureFormat, simWidth: number, simHeight: number, cells: CellFields) {
     this.device = device;
     this.simWidth = simWidth;
     this.simHeight = simHeight;
-    this.simBufferA = simBufferA;
+    this.cells = cells;
 
     const shaderModule = device.createShaderModule({ code: displayWGSL });
 
@@ -39,15 +38,12 @@ export class Display {
     });
     this.uniformData = new Float32Array(UNIFORM_FLOATS);
 
-    this.bindGroupLayout = device.createBindGroupLayout({
-      entries: [
-        { binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
-        { binding: 1, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
-      ],
+    const uniformLayout = device.createBindGroupLayout({
+      entries: [{ binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } }],
     });
 
     this.pipeline = device.createRenderPipeline({
-      layout: device.createPipelineLayout({ bindGroupLayouts: [this.bindGroupLayout] }),
+      layout: device.createPipelineLayout({ bindGroupLayouts: [uniformLayout, cells.readLayout] }),
       vertex: {
         module: shaderModule,
         entryPoint: 'vs_main',
@@ -60,26 +56,15 @@ export class Display {
       primitive: { topology: 'triangle-list' },
     });
 
-    this.bindGroupA = device.createBindGroup({
-      layout: this.bindGroupLayout,
-      entries: [
-        { binding: 0, resource: { buffer: simBufferA } },
-        { binding: 1, resource: { buffer: this.uniformBuffer } },
-      ],
-    });
-    this.bindGroupB = device.createBindGroup({
-      layout: this.bindGroupLayout,
-      entries: [
-        { binding: 0, resource: { buffer: simBufferB } },
-        { binding: 1, resource: { buffer: this.uniformBuffer } },
-      ],
+    this.uniformBindGroup = device.createBindGroup({
+      layout: uniformLayout,
+      entries: [{ binding: 0, resource: { buffer: this.uniformBuffer } }],
     });
   }
 
   render(
     encoder: GPUCommandEncoder,
     targetView: GPUTextureView,
-    simBuffer: GPUBuffer,
     screenWidth: number,
     screenHeight: number,
     opts: DisplayOptions,
@@ -100,8 +85,6 @@ export class Display {
 
     this.device.queue.writeBuffer(this.uniformBuffer, 0, this.uniformData);
 
-    const bindGroup = simBuffer === this.simBufferA ? this.bindGroupA : this.bindGroupB;
-
     const pass = encoder.beginRenderPass({
       colorAttachments: [{
         view: targetView,
@@ -112,7 +95,8 @@ export class Display {
     });
 
     pass.setPipeline(this.pipeline);
-    pass.setBindGroup(0, bindGroup);
+    pass.setBindGroup(0, this.uniformBindGroup);
+    pass.setBindGroup(1, this.cells.readBindGroup);
     pass.draw(3); // Fullscreen triangle
     pass.end();
   }

@@ -48,10 +48,10 @@ async function main(): Promise<void> {
     const simulation = new Simulation(gpu.device, grid.width, grid.height);
     // Only the first device gets the scene; after a device loss the world is cleared, as the banner says.
     if (pendingScene) {
-      simulation.load(pendingScene.cells);
+      simulation.load(pendingScene.fields);
       pendingScene = undefined;
     }
-    const display = new Display(gpu.device, gpu.format, grid.width, grid.height, simulation.bufferA, simulation.bufferB);
+    const display = new Display(gpu.device, gpu.format, grid.width, grid.height, simulation.fields);
     return { gpu, simulation, display };
   }
 
@@ -226,7 +226,7 @@ async function main(): Promise<void> {
       brushSize: input.brushSize,
       particleType: input.particleType,
     });
-    display.render(encoder, context.getCurrentTexture().createView(), simulation.currentBuffer, canvas.width, canvas.height, {
+    display.render(encoder, context.getCurrentTexture().createView(), canvas.width, canvas.height, {
       mousePos: input.mousePos,
       brushSize: input.brushSize,
       showBrush: true,

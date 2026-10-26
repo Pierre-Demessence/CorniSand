@@ -33,14 +33,15 @@ The GPU suites in `tests/` run the real WGSL through Dawn's Node bindings (`webg
 - `src/gpu.ts` — adapter/device/context setup with the adapter's buffer limits, uncaptured-error banner, device-lost callback, reload overlay.
 - `src/grid.ts` — `computeGrid`: grid size and scale from the buffer limits.
 - `src/simulation.ts` — compute pipelines (brush, CA, particle count); `simulate(encoder, supersteps, input)` records the brush pass and the CA steps into the caller's encoder.
-- `src/cell-buffer.ts` — ping-pong pair of cell storage buffers.
-- `src/display.ts` — render pipeline drawing the current cell buffer plus the brush ring.
+- `src/cell-fields.ts` — `CELL_FIELDS`, the one list of per-cell fields (name, WGSL type), plus `CellData` and `FIELD_BYTES`.
+- `src/cell-field-buffers.ts` — `CellFields`: one storage buffer per field, the shared bind groups (`@group(1)`), `load`, `clear`, `read(name)` for tests.
+- `src/display.ts` — render pipeline drawing the cell field buffers plus the brush ring.
 - `src/input.ts` — pointer, wheel and Shift state.
 - `src/particles.ts` — particle type IDs and fire max life, the single source for TS and every shader.
-- `src/shaders/*.wgsl.ts` — WGSL sources exported as template strings (functions of the grid size where needed): `cell` (shared snippet: type constants, cell accessors, PCG hash, `CELL_BYTES`), `ca` (all particle rules), `brush`, `display`.
+- `src/shaders/*.wgsl.ts` — WGSL sources exported as template strings (functions of the grid size where needed): `cell` (`commonWGSL`: type constants and the PCG hash; `cellWGSL(access)`: the `Cell` struct, the field bindings, `loadCell`, `storeCell`, `storeChanged` and the accessors, generated from `CELL_FIELDS`), `ca` (all particle rules), `brush`, `display`.
 - `src/proto/` and `proto.html` — the M4.1 movement prototype (`docs/plans/m4-element-engine.md`): models A and C side by side at `/proto.html` under `npm run dev`, not built into `dist/`; deleted by M4.5c.
 - `src/scenes.ts` — scene builders (`SCENES`) shared by the tests and the `?scene=<name>` loader in `main.ts` (`findScene`).
-- `tests/` — Vitest: `grid`, `hash`, `metrics` and `scenes` (unit), `simulation` (GPU: the rules, and the liquid, sinking and fire behaviors as scenes with numeric thresholds), `gpu.ts` (device, scene upload and readback helpers), `metrics.ts` (column levels, flatness, layer order), `bench.gpu.ts` (`npm run bench`), `proto-*` (the movement prototype).
+- `tests/` — Vitest: `grid`, `hash`, `metrics` and `scenes` (unit), `simulation` (GPU: the rules, the liquid, sinking and fire behaviors as scenes with numeric thresholds, fields moving with their cell, bit-identical reruns), `gpu.ts` (device, scene upload and readback helpers), `metrics.ts` (column levels, flatness, layer order), `bench.gpu.ts` (`npm run bench`), `proto-*` (the movement prototype).
 
 ## Docs map
 
@@ -53,10 +54,10 @@ The GPU suites in `tests/` run the real WGSL through Dawn's Node bindings (`webg
 
 ## Invariants
 
-- A cell is one `u32`: bits 0–7 type, 8–15 variant, 16–31 lifetime. The layout, the accessors (`cellType`, `cellVariant`, `cellLife`, `makeCell`) and `CELL_BYTES` live in `src/shaders/cell.wgsl.ts`, which every shader includes; change the layout there only.
+- A cell is one 32-bit word in each field buffer of `CELL_FIELDS`: `kind` (bits 0–7 type, 8–15 variant, 16–31 reserved) and `life`. The fields are declared once in `src/cell-fields.ts`; every shader gets the `Cell` struct, its bindings (`@group(1)`, binding = field index) and the accessors (`cellType`, `cellVariant`, `cellLife`, `makeCell`) from `cellWGSL` in `src/shaders/cell.wgsl.ts`. Add or change a field there only; never index a field buffer by hand. A pass's own bindings (uniforms) are group 0.
 - Particle type IDs and the fire max life are declared once in `particles.ts` and reach the shaders through `cell.wgsl.ts`. Only the `index.html` `data-type` attributes repeat the IDs: keep them in sync.
-- Every CA dispatch reads the current buffer and writes the other one, then `CellBuffer.swap()`. Bind groups for both directions are pre-created; pick them from `currentBuffer`. The brush pass is the exception: it edits the current buffer in place (each thread touches only its own cell) and does not swap.
-- One thread handles one 2×2 block and writes all four cells. Out-of-bounds reads (`readCell`) return a wall cell, the world boundary; out-of-bounds writes are skipped.
+- The cells are updated in place, one buffer per field, no ping-pong. A CA rule reads and writes only the cells of its own 2×2 block (that is what makes the threads race-free); `storeChanged` writes back only the fields that differ from what the block loaded. Reading a neighbor outside the block breaks in-place updates silently; no test catches it yet (AC10 only checks that two runs of one seed agree, which a deterministic out-of-block read still passes), so review rule changes for it.
+- One thread handles one 2×2 block. Out-of-bounds reads (`readCell`) return a wall cell, the world boundary; out-of-bounds writes are skipped.
 - The Margolus offset alternates 0 then 1; never run two steps with the same offset in a row.
 - A frame is one `GPUCommandEncoder` and one `submit()`: `simulate()` records the brush pass and all CA steps, then `main.ts` records the render. Each CA dispatch has its own `{ offset, seed }` slot in one uniform buffer (stride `minUniformBufferOffsetAlignment`, selected by dynamic offset, written once per frame). Never submit mid-frame, and never `writeBuffer` a shared uniform between dispatches: all writes land before the first dispatch runs.
 - A liquid cell's `life` field holds its sideways direction (0 none, 1 left, 2 right), not a lifetime; only the liquid spread rule reads it (`spreadRow` in `ca.wgsl.ts`).

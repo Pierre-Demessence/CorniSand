@@ -1,7 +1,7 @@
 import { cellWGSL } from './cell.wgsl';
 
 export const displayWGSL = /* wgsl */`
-${cellWGSL}
+${cellWGSL('read')}
 
 struct DisplayUniforms {
   simResolution: vec2f,
@@ -38,8 +38,7 @@ fn vs_main(@builtin(vertex_index) vertexIndex: u32) -> VertexOutput {
   return out;
 }
 
-@group(0) @binding(0) var<storage, read> cells: array<u32>;
-@group(0) @binding(1) var<uniform> u: DisplayUniforms;
+@group(0) @binding(0) var<uniform> u: DisplayUniforms;
 
 fn ditherNoise(pos: vec2f) -> f32 {
   return fract(sin(dot(pos, vec2f(12.9898, 78.233))) * 43758.5453);
@@ -60,7 +59,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {
   let cellX = min(u32(uv.x * u.simResolution.x), w - 1u);
   let cellY = min(u32(uv.y * u.simResolution.y), h - 1u);
   let idx = cellY * w + cellX;
-  let cell = cells[idx];
+  let cell = loadCell(idx);
   let pType = cellType(cell);
 
   // Background gradient with dithering

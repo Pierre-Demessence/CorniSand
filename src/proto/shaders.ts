@@ -1,9 +1,10 @@
-import { cellWGSL } from '../shaders/cell.wgsl';
+import { commonWGSL } from '../shaders/cell.wgsl';
 import { BLAST_MARK, PROTO, type MovementModel } from './params';
 
 // WGSL of the M4.1 movement prototype: the CA of the three models (baseline, A, C), the blast and source passes, the
-// flyer passes of C, and the display. Cells are one `u32` (cell.wgsl.ts) and the motion one `vec4f` per cell
-// (vx, vy, remainder x, remainder y), both updated in place: a CA thread reads and writes only its own block.
+// flyer passes of C, and the display. Cells are one packed `u32` (`PACKED_CELL_WGSL`, not the engine's cell fields)
+// and the motion one `vec4f` per cell (vx, vy, remainder x, remainder y), both updated in place: a CA thread reads and
+// writes only its own block.
 
 export interface ShaderConstants {
   width: number;
@@ -48,9 +49,22 @@ const f = (x: number): string => {
   return /[.e]/.test(s) ? s : `${s}.0`;
 };
 
+// The prototype keeps the engine's former cell word: bits 0-7 type, 8-15 variant, 16-31 life.
+const PACKED_CELL_WGSL = /* wgsl */`
+${commonWGSL}
+
+fn cellType(c: u32) -> u32 { return c & 0xffu; }
+fn cellVariant(c: u32) -> u32 { return (c >> 8u) & 0xffu; }
+fn cellLife(c: u32) -> u32 { return c >> 16u; }
+
+fn makeCell(t: u32, variant: u32, life: u32) -> u32 {
+  return t | (variant << 8u) | (life << 16u);
+}
+`;
+
 function common(k: ShaderConstants): string {
   return /* wgsl */`
-${cellWGSL}
+${PACKED_CELL_WGSL}
 
 const W: u32 = ${k.width}u;
 const H: u32 = ${k.height}u;

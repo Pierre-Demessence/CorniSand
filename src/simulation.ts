@@ -1,7 +1,8 @@
 import { cellWGSL } from './shaders/cell.wgsl';
 import { BRUSH_UNIFORM_WORDS, brushWGSL } from './shaders/brush.wgsl';
 import { caWGSL } from './shaders/ca.wgsl';
-import { CellBuffer } from './cell-buffer';
+import { CellFields } from './cell-field-buffers';
+import type { CellData } from './cell-fields';
 import type { Vec2 } from './input';
 
 export interface SimulationInput {
@@ -31,30 +32,28 @@ export class Simulation {
   readonly height: number;
   private readonly seedSource: () => number;
 
-  private readonly cells: CellBuffer;
+  readonly fields: CellFields;
 
-  // -- Brush pipeline: edits the current cell buffer in place --
+  // -- Brush pipeline: edits the cell fields in place --
   private readonly brushUniformData = new ArrayBuffer(BRUSH_UNIFORM_WORDS * 4);
   private readonly brushFloats = new Float32Array(this.brushUniformData);
   private readonly brushWords = new Uint32Array(this.brushUniformData);
   private readonly brushUniformBuffer: GPUBuffer;
   private readonly brushPipeline: GPUComputePipeline;
-  private readonly brushBindGroupA: GPUBindGroup;
-  private readonly brushBindGroupB: GPUBindGroup;
+  private readonly brushBindGroup: GPUBindGroup;
 
   // -- CA pipeline: one uniform slot per dispatch, picked with a dynamic offset --
   private readonly slotWords: number;
   private readonly slotData: Uint32Array<ArrayBuffer>;
   private readonly stepUniformBuffer: GPUBuffer;
   private readonly caPipeline: GPUComputePipeline;
-  private readonly caBindGroupAtoB: GPUBindGroup;
-  private readonly caBindGroupBtoA: GPUBindGroup;
+  private readonly caBindGroup: GPUBindGroup;
 
   // Particle counting
   private readonly counterBuffer: GPUBuffer;
   private readonly counterStagingBuffer: GPUBuffer;
   private readonly countPipeline: GPUComputePipeline;
-  private readonly countBindGroupLayout: GPUBindGroupLayout;
+  private readonly countBindGroup: GPUBindGroup;
   private pendingCount = false;
   private mapping = false;
   private lastCount = 0;
@@ -65,7 +64,7 @@ export class Simulation {
     this.height = height;
     this.seedSource = options.seedSource ?? defaultSeedSource;
 
-    this.cells = new CellBuffer(device, width, height);
+    this.fields = new CellFields(device, width, height);
 
     // -- Brush setup --
     this.brushUniformBuffer = device.createBuffer({
@@ -73,24 +72,16 @@ export class Simulation {
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     const brushLayout = device.createBindGroupLayout({
-      entries: [
-        { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
-        { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
-      ],
+      entries: [{ binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } }],
     });
     this.brushPipeline = device.createComputePipeline({
-      layout: device.createPipelineLayout({ bindGroupLayouts: [brushLayout] }),
+      layout: device.createPipelineLayout({ bindGroupLayouts: [brushLayout, this.fields.writeLayout] }),
       compute: { module: device.createShaderModule({ code: brushWGSL(width, height) }), entryPoint: 'main' },
     });
-    const brushBindGroup = (cells: GPUBuffer): GPUBindGroup => device.createBindGroup({
+    this.brushBindGroup = device.createBindGroup({
       layout: brushLayout,
-      entries: [
-        { binding: 0, resource: { buffer: cells } },
-        { binding: 1, resource: { buffer: this.brushUniformBuffer } },
-      ],
+      entries: [{ binding: 0, resource: { buffer: this.brushUniformBuffer } }],
     });
-    this.brushBindGroupA = brushBindGroup(this.cells.bufferA);
-    this.brushBindGroupB = brushBindGroup(this.cells.bufferB);
 
     // -- CA setup --
     this.slotWords = device.limits.minUniformBufferOffsetAlignment / 4;
@@ -100,27 +91,17 @@ export class Simulation {
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     const caLayout = device.createBindGroupLayout({
-      entries: [
-        { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
-        { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
-        { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform', hasDynamicOffset: true } },
-      ],
+      entries: [{ binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform', hasDynamicOffset: true } }],
     });
     this.caPipeline = device.createComputePipeline({
-      layout: device.createPipelineLayout({ bindGroupLayouts: [caLayout] }),
+      layout: device.createPipelineLayout({ bindGroupLayouts: [caLayout, this.fields.writeLayout] }),
       compute: { module: device.createShaderModule({ code: caWGSL(width, height) }), entryPoint: 'main' },
     });
-    const caBindGroup = (input: GPUBuffer, output: GPUBuffer): GPUBindGroup => device.createBindGroup({
+    this.caBindGroup = device.createBindGroup({
       layout: caLayout,
-      entries: [
-        { binding: 0, resource: { buffer: input } },
-        { binding: 1, resource: { buffer: output } },
-        // Step uniforms are { offset, seed }: two u32.
-        { binding: 2, resource: { buffer: this.stepUniformBuffer, size: 8 } },
-      ],
+      // Step uniforms are { offset, seed }: two u32.
+      entries: [{ binding: 0, resource: { buffer: this.stepUniformBuffer, size: 8 } }],
     });
-    this.caBindGroupAtoB = caBindGroup(this.cells.bufferA, this.cells.bufferB);
-    this.caBindGroupBtoA = caBindGroup(this.cells.bufferB, this.cells.bufferA);
 
     // -- Particle counter setup --
     this.counterBuffer = device.createBuffer({
@@ -134,10 +115,9 @@ export class Simulation {
 
     const countShader = device.createShaderModule({
       code: /* wgsl */`
-        ${cellWGSL}
+        ${cellWGSL('read')}
 
-        @group(0) @binding(0) var<storage, read> cells: array<u32>;
-        @group(0) @binding(1) var<storage, read_write> counter: atomic<u32>;
+        @group(0) @binding(0) var<storage, read_write> counter: atomic<u32>;
 
         const W: u32 = ${width}u;
         const H: u32 = ${height}u;
@@ -145,7 +125,7 @@ export class Simulation {
         @compute @workgroup_size(8, 8)
         fn main(@builtin(global_invocation_id) gid: vec3u) {
           if (gid.x >= W || gid.y >= H) { return; }
-          let t = cellType(cells[gid.y * W + gid.x]);
+          let t = cellType(loadCell(gid.y * W + gid.x));
           if (t != TYPE_EMPTY && t != TYPE_WALL) {
             atomicAdd(&counter, 1u);
           }
@@ -153,29 +133,27 @@ export class Simulation {
       `,
     });
 
-    this.countBindGroupLayout = device.createBindGroupLayout({
-      entries: [
-        { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
-        { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
-      ],
+    const countLayout = device.createBindGroupLayout({
+      entries: [{ binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } }],
+    });
+    this.countBindGroup = device.createBindGroup({
+      layout: countLayout,
+      entries: [{ binding: 0, resource: { buffer: this.counterBuffer } }],
     });
 
     this.countPipeline = device.createComputePipeline({
-      layout: device.createPipelineLayout({ bindGroupLayouts: [this.countBindGroupLayout] }),
+      layout: device.createPipelineLayout({ bindGroupLayouts: [countLayout, this.fields.readLayout] }),
       compute: { module: countShader, entryPoint: 'main' },
     });
   }
 
-  // Replaces the world: `cells` (width x height packed cells) go into the current buffer.
-  load(cells: Uint32Array): void {
-    if (cells.length !== this.width * this.height) {
-      throw new RangeError(`expected ${this.width * this.height} cells, got ${cells.length}`);
-    }
-    this.device.queue.writeBuffer(this.cells.currentBuffer, 0, cells);
+  // Replaces the world: each field of `data` (width x height words) goes into its buffer; a missing field is zero.
+  load(data: Partial<CellData>): void {
+    this.fields.load(data);
   }
 
   clear(): void {
-    this.cells.clear();
+    this.fields.clear();
   }
 
   // Records the brush (while a button is down) and `supersteps` supersteps (two CA dispatches each) into the caller's
@@ -201,10 +179,9 @@ export class Simulation {
       pass.setPipeline(this.caPipeline);
       const blocksX = Math.ceil((this.width + offset) / 2);
       const blocksY = Math.ceil((this.height + offset) / 2);
-      const bindGroup = this.cells.currentBuffer === this.cells.bufferA ? this.caBindGroupAtoB : this.caBindGroupBtoA;
-      pass.setBindGroup(0, bindGroup, [i * this.slotWords * 4]);
+      pass.setBindGroup(0, this.caBindGroup, [i * this.slotWords * 4]);
+      pass.setBindGroup(1, this.fields.writeBindGroup);
       pass.dispatchWorkgroups(Math.ceil(blocksX / 8), Math.ceil(blocksY / 8));
-      this.cells.swap();
     }
     pass.end();
   }
@@ -224,20 +201,9 @@ export class Simulation {
     this.device.queue.writeBuffer(this.brushUniformBuffer, 0, this.brushUniformData);
 
     pass.setPipeline(this.brushPipeline);
-    pass.setBindGroup(0, this.cells.currentBuffer === this.cells.bufferA ? this.brushBindGroupA : this.brushBindGroupB);
+    pass.setBindGroup(0, this.brushBindGroup);
+    pass.setBindGroup(1, this.fields.writeBindGroup);
     pass.dispatchWorkgroups(Math.ceil(this.width / 8), Math.ceil(this.height / 8));
-  }
-
-  get currentBuffer(): GPUBuffer {
-    return this.cells.currentBuffer;
-  }
-
-  get bufferA(): GPUBuffer {
-    return this.cells.bufferA;
-  }
-
-  get bufferB(): GPUBuffer {
-    return this.cells.bufferB;
   }
 
   requestParticleCount(): void {
@@ -246,18 +212,11 @@ export class Simulation {
     const zeros = new Uint32Array([0]);
     this.device.queue.writeBuffer(this.counterBuffer, 0, zeros);
 
-    const bindGroup = this.device.createBindGroup({
-      layout: this.countBindGroupLayout,
-      entries: [
-        { binding: 0, resource: { buffer: this.cells.currentBuffer } },
-        { binding: 1, resource: { buffer: this.counterBuffer } },
-      ],
-    });
-
     const encoder = this.device.createCommandEncoder();
     const pass = encoder.beginComputePass();
     pass.setPipeline(this.countPipeline);
-    pass.setBindGroup(0, bindGroup);
+    pass.setBindGroup(0, this.countBindGroup);
+    pass.setBindGroup(1, this.fields.readBindGroup);
     pass.dispatchWorkgroups(Math.ceil(this.width / 8), Math.ceil(this.height / 8));
     pass.end();
 

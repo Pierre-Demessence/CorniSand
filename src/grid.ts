@@ -1,4 +1,4 @@
-import { CELL_BYTES } from './shaders/cell.wgsl';
+import { FIELD_BYTES } from './cell-fields';
 
 export interface Grid {
   width: number;
@@ -7,10 +7,10 @@ export interface Grid {
   scale: number;
 }
 
-// Largest cell count the cell buffers can hold on this device.
+// Largest cell count the cell field buffers can hold on this device (the limits apply to each buffer on its own).
 export function maxCellsForDevice(device: GPUDevice): number {
   const { maxStorageBufferBindingSize, maxBufferSize } = device.limits;
-  return Math.floor(Math.min(maxStorageBufferBindingSize, maxBufferSize) / CELL_BYTES);
+  return Math.floor(Math.min(maxStorageBufferBindingSize, maxBufferSize) / FIELD_BYTES);
 }
 
 // One cell per CSS pixel, or the smallest integer cells-per-pixel scale that fits maxCells.

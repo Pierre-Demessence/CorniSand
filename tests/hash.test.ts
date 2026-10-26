@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cellWGSL } from '../src/shaders/cell.wgsl';
+import { commonWGSL } from '../src/shaders/cell.wgsl';
 import { device, readBuffer } from './gpu';
 
 const W = 1280;
@@ -9,7 +9,7 @@ async function blockHashes(seed: number): Promise<Uint32Array> {
   const dev = device!;
   const module = dev.createShaderModule({
     code: /* wgsl */`
-      ${cellWGSL}
+      ${commonWGSL}
       @group(0) @binding(0) var<storage, read_write> out: array<u32>;
       @compute @workgroup_size(8, 8)
       fn main(@builtin(global_invocation_id) g: vec3u) {

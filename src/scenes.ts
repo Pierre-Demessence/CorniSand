@@ -1,3 +1,4 @@
+import { emptyCellData, type CellData } from './cell-fields';
 import { PARTICLE_TYPES as T } from './particles';
 
 // Columns [x0, x1) whose liquid is expected to settle at one shared level.
@@ -11,32 +12,32 @@ export interface Scene {
   name: string;
   width: number;
   height: number;
-  /** Packed cells (same layout as `cell.wgsl.ts`), row y = 0 at the bottom. */
-  cells: Uint32Array<ArrayBuffer>;
+  /** Every cell field, row y = 0 at the bottom. */
+  fields: CellData;
   /** First open row above the floor; levels are heights above it. */
   floorY: number;
   chambers: Chamber[];
 }
 
-// Same packing as `makeCell` in `cell.wgsl.ts`.
-export function packCell(type: number, variant = 0, life = 0): number {
-  return (type | (variant << 8) | (life << 16)) >>> 0;
+// The `kind` word, packed as `makeCell` in `cell.wgsl.ts` does.
+export function packCell(type: number, variant = 0): number {
+  return (type | (variant << 8)) >>> 0;
 }
 
 class Canvas {
-  readonly cells: Uint32Array<ArrayBuffer>;
+  readonly fields: CellData;
 
   constructor(
     readonly width: number,
     readonly height: number,
   ) {
-    this.cells = new Uint32Array(width * height);
+    this.fields = emptyCellData(width * height);
   }
 
   /** Fills columns [x0, x1) and rows [y0, y1). */
   fill(type: number, x0: number, x1: number, y0: number, y1: number): void {
     const c = packCell(type);
-    for (let y = y0; y < y1; y++) this.cells.fill(c, y * this.width + x0, y * this.width + x1);
+    for (let y = y0; y < y1; y++) this.fields.kind.fill(c, y * this.width + x0, y * this.width + x1);
   }
 }
 
@@ -83,7 +84,7 @@ export function uTube(): Scene {
     name: 'uTube',
     width,
     height: U_TUBE_HEIGHT,
-    cells: canvas.cells,
+    fields: canvas.fields,
     floorY: floor,
     chambers: [
       { name: 'left', x0: leftX0, x1: leftX1 },
@@ -102,7 +103,7 @@ function basinScene(name: string, blockWidth: number, blockHeight: number): Scen
     name,
     width: BASIN_WIDTH,
     height: BASIN_HEIGHT,
-    cells: canvas.cells,
+    fields: canvas.fields,
     floorY: WALL,
     chambers: [{ name: 'tank', x0: WALL, x1: BASIN_WIDTH - WALL }],
   };
@@ -131,7 +132,7 @@ export function sandIntoPool(): Scene {
     name: 'sandIntoPool',
     width,
     height: 60,
-    cells: canvas.cells,
+    fields: canvas.fields,
     floorY: WALL,
     chambers: [{ name: 'pool', x0: WALL, x1: width - WALL }],
   };
@@ -147,7 +148,7 @@ export function oilOnWater(): Scene {
     name: 'oilOnWater',
     width,
     height: 40,
-    cells: canvas.cells,
+    fields: canvas.fields,
     floorY: WALL,
     chambers: [{ name: 'tank', x0: WALL, x1: width - WALL }],
   };

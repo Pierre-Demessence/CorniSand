@@ -1,14 +1,14 @@
 # Simulation
 
-How a frame turns into particle movement. Code: `src/simulation.ts`, `src/shaders/cell.wgsl.ts`, `src/shaders/ca.wgsl.ts`, `src/shaders/brush.wgsl.ts`.
+How a frame turns into particle movement. Code: `src/simulation.ts`, `src/cell-fields.ts`, `src/cell-field-buffers.ts`, `src/shaders/cell.wgsl.ts`, `src/shaders/ca.wgsl.ts`, `src/shaders/brush.wgsl.ts`.
 
 ## Frame pipeline
 
 Each animation frame runs `stepsPerFrame` supersteps (1, 2, 4, 8, 16, 24 or 32; the speed labelled "1x" is 4), then one render pass. All of it is recorded into one command encoder and sent with one `submit()` (`main.ts`). A frame is:
 
-1. **Brush**: while a mouse button is down, the brush pass, one thread per cell, in place on the current buffer (each thread touches only its own cell, so there is no second buffer and no swap).
-2. **Supersteps**: `stepsPerFrame` of them, each two CA dispatches with Margolus offset 0, then 1. Each CA dispatch reads one cell buffer and writes the other, then the buffers swap (on the CPU, while recording).
-3. **Render** of the final buffer, with the brush ring.
+1. **Brush**: while a mouse button is down, the brush pass, one thread per cell (each thread touches only its own cell).
+2. **Supersteps**: `stepsPerFrame` of them, each two CA dispatches with Margolus offset 0, then 1. The dispatches update the cell buffers in place.
+3. **Render** of the cell buffers, with the brush ring.
 
 Every CA dispatch needs its own `{ offset, seed }`. They live in 256-byte slots (`minUniformBufferOffsetAlignment`) of one uniform buffer sized for the 64 dispatches of a 32-superstep frame; one `writeBuffer` fills the used slots and each dispatch selects its slot with a dynamic offset. The grid size is a shader constant.
 
@@ -16,13 +16,16 @@ At most every 2 seconds, on frames where no mouse button is down, a separate com
 
 ## Cell format
 
-One `u32` per cell (`src/shaders/cell.wgsl.ts`):
+A cell is one 32-bit word in each of the field buffers listed in `CELL_FIELDS` (`src/cell-fields.ts`), one storage buffer per field (`src/cell-field-buffers.ts`):
 
-- bits 0–7 `type`: particle type ID (0 empty, 1 sand, 2 wall, 3 water, 4 smoke, 5 oil, 6 fire).
-- bits 8–15 `variant`: random 0–255 assigned at paint time. Currently not used by the display.
-- bits 16–31 `life`: for fire, the lifetime: starts at 200 and loses 4 per CA step. For water and oil, the sideways direction the cell last moved in (0 none, 1 left, 2 right).
+- `kind`: bits 0–7 `type`, the particle type ID (0 empty, 1 sand, 2 wall, 3 water, 4 smoke, 5 oil, 6 fire); bits 8–15 `variant`, random 0–255 assigned at paint time (not used by the display yet); bits 16–31 reserved.
+- `life`: for fire, the lifetime: starts at 200 and loses 4 per CA step. For water and oil, the sideways direction the cell last moved in (0 none, 1 left, 2 right).
 
-Cells travel as whole words: swapping two cells swaps everything.
+The shaders see them as a `Cell` struct (`loadCell`, `storeCell`, `storeChanged`, `cellType`, `cellVariant`, `cellLife`, `makeCell`), generated from the field list with the bindings in `@group(1)`, binding = field index. A new field is one entry in `CELL_FIELDS`; `makeCell` starts it at 0.
+
+Cells travel as whole structs: swapping two cells swaps every field.
+
+Intuition for the layout: each field is its own array, like the columns of a table, so a pass can later skip the columns it does not need (today every pass binds all of them), and the device's buffer size limit applies to one column at a time. The CA updates the arrays in place instead of writing a second copy: a thread loads its block's four cells, runs the rules, and writes back only the fields that differ from what it loaded. This is safe because blocks do not overlap, so a rule must read and write only the four cells of its own block.
 
 ## Margolus neighborhood
 
@@ -30,7 +33,7 @@ Intuition: the grid is cut into 2×2 blocks, and each block is updated on its ow
 
 Example with offset 0, the block whose bottom-left cell is (4, 6) holds (4, 6), (5, 6), (4, 7), (5, 7). With offset 1 the cell (4, 6) belongs instead to the block starting at (3, 5), as its top-right cell.
 
-One thread handles one block: it reads the four cells, runs all rules and writes the four results. Block `b` has its bottom-left cell at `2·b − offset`, and there are `ceil((W + offset) / 2) × ceil((H + offset) / 2)` blocks, so at offset 1 (and at odd sizes) edge blocks stick out of the grid.
+One thread handles one block: it reads the four cells, runs all rules and writes back the changed fields. Block `b` has its bottom-left cell at `2·b − offset`, and there are `ceil((W + offset) / 2) × ceil((H + offset) / 2)` blocks, so at offset 1 (and at odd sizes) edge blocks stick out of the grid.
 
 y = 0 is the bottom row; gravity points toward lower y.
 

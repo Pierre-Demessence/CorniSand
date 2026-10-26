@@ -1,6 +1,6 @@
 # M4 Element engine
 
-Status: M4.1 and M4.2 done (M4.2 is uncommitted; the user's browser check of the liquids is open). Next: M4.3.
+Status: M4.1, M4.2 and M4.3 done (the user's browser check of the liquids from M4.2 is open). Next: M4.4.
 
 ## Goal
 
@@ -178,7 +178,7 @@ Ports the approved model from `src/proto/` into the engine, then deletes `src/pr
 ### Edge cases and failure modes
 
 - Determinism: every random choice comes from `pcg`/`hash2` on block or cell coordinates and the dispatch seed; every list slot from a prefix sum in a fixed order; every conflict from the slot index. A GPU test reruns each model and scene from one seed and compares buffers.
-- In-place updates break silently if a rule reads outside its block: the M4.3 invariant states it, and the determinism test catches most violations (a race shows up as a mismatch between reruns).
+- In-place updates break silently if a rule reads outside its block: the M4.3 invariant states it, and a race shows up as a mismatch between reruns, but a deterministic out-of-block read does not (M4.3 results, deviation 7).
 - A flyer landing where the brush just painted: the brush runs at frame start, flyers land after it; a claimed cell must be empty at landing, else the flyer retries.
 - Flyer cap reached: the extra cells stay in the CA, clamped (AC18).
 - `f16` velocity: the smallest gravity step must stay representable at top speed (1/32 next to 8 is fine in `f16`: about 3 decimal digits).
@@ -208,8 +208,8 @@ Needs you: a quick browser check (steps in the item's report): pour water and oi
 
 ### M4.3 Cell fields (tasks)
 
-- [ ] M4.3a `src/cell-fields.ts`, `CellFields`, generated accessors; CA, brush, counter and display on the field buffers, in place; scenes and `tests/gpu.ts` read and write fields by name. AC9 test (a `life` marker on a falling grain) and a determinism test (same seed, two runs, every field compared). Verify: lint, typecheck, `npm test`, build, `npm run bench` (record `tank` and `mix75` next to the M4.2 baseline).
-- [ ] M4.3b Docs: decisions entry, `simulation.md` cell format, `AGENTS.md` invariants (cell layout, in-place CA, block-only reads).
+- [x] M4.3a `src/cell-fields.ts`, `CellFields`, generated accessors; CA, brush, counter and display on the field buffers, in place; scenes and `tests/gpu.ts` read and write fields by name. AC9 test (a `life` marker on a falling grain) and a determinism test (same seed, two runs, every field compared). Verify: lint, typecheck, `npm test`, build, `npm run bench` (record `tank` and `mix75` next to the M4.2 baseline).
+- [x] M4.3b Docs: decisions entry, `simulation.md` cell format, `AGENTS.md` invariants (cell layout, in-place CA, block-only reads).
 
 Visible after: nothing: the cells' data is reorganized, the game behaves the same.
 Needs you: nothing.
@@ -307,3 +307,25 @@ Deviations from Design:
 2. `uTube` lost its options (scale, arm widths, liquid) and the `expectedLevel` field, with `chamberLevel` kept for its test; `bubbleCount`, `foamCount` and `expectedLevel` were removed from `tests/metrics.ts` with the FLIP suites that read them. The sealed, droplet and film scenes went with the other FLIP scenes.
 3. The test of oil beside fire and water runs in a sealed 2×2 chamber, since liquids now move.
 4. Added tests: water under oil rises above it (AC6), sand sinks to the floor in water and in oil (AC7), smoke rises through oil as well as water (AC7).
+
+## M4.3 results
+
+`npm run bench` on the RTX 4080 after M4.3 (`tests/bench.gpu.ts`, same method as the M4.2 baseline), seven runs of the new code and three runs of the M4.2 commit back to back, ms per frame:
+
+| Scene | 1x | 2x | 4x | 8x |
+| --- | --- | --- | --- | --- |
+| `tank` (new) | 0.30–0.34 | 0.70–0.78 | 1.22–1.34 | 12.0–12.7 |
+| `mix75` (new) | 0.32–0.39 (one run 1.39) | 0.57–0.87 (one run 2.21) | 1.25–2.0 (one run 2.69) | 2.3–13.4 (a run each 5.1, 10.9, 24.7) |
+| `mix75` (M4.2, same session) | 0.31–0.42 | 0.62–0.80 | 1.29–1.37 | 10.3–11.9 |
+
+M4.3 does not change the speed within the noise: `tank` equals the M4.2 baseline, and `mix75` at 1x to 4x overlaps the M4.2 runs, with a few outlier runs on the new side (the 8x row is backlog D23). In-place updates and generated accessors cost nothing measurable. Creation: 77–108 ms the first time, 0–2 ms after.
+
+Deviations from Design:
+
+1. The fields live in `src/cell-fields.ts` (the list) and `src/cell-field-buffers.ts` (`CellFields`, formerly `cell-buffer.ts`).
+2. `FIELD_BYTES` (4, one 32-bit word per field) replaces `CELL_BYTES`: the device limits apply to one buffer, so the grid is sized by the largest field buffer, not the sum (Design says "sum" in one place and "largest" under Edge cases; the latter is right).
+3. All fields are bound in every pass (two groups: read-only for the counter and the display, read-write for the CA and the brush), not only the fields a pass reads. With two fields the saving is nil; per-pass binding comes with M4.5, when the motion fields make it matter.
+4. The prototype keeps the old packed cell word in its own `PACKED_CELL_WGSL` (`src/proto/shaders.ts`) so it still runs; it goes with M4.5c.
+5. `Cell` is a WGSL struct, so cells are compared with a generated `cellEq`, and the rules keep their form (`makeCell(type, variant, life)` returns a `Cell`).
+6. Scenes expose `fields: CellData` (every field, zeros where unused); `packCell` and the test helper `cell()` pack the `kind` word only, and tests that need a `life` pass it as a second array to `loadScene`.
+7. Equivalence with M4.2: a read-only reviewer ran the M4.2 ping-pong code and the new code over random mixes of every element (101×67 for 100 supersteps, 64×48 for 300, 33×129 for 57, 200×60 for 400) and the `kind` and `life` hashes matched in all four, so the in-place CA is bit-identical to the old rules. That is a one-off check, not a test: AC10 (two runs of one seed agree) cannot detect an out-of-block read that is deterministic, which the reviewer confirmed by inserting one. A reference check (CPU rules or a pinned hash) would need re-pinning at every rule change from M4.4 on, so it is not added.
