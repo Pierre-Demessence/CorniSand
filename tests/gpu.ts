@@ -1,3 +1,4 @@
+import type { AirData } from '../src/air-grid';
 import { ELEMENT } from '../src/elements';
 import { MAX_SUPERSTEPS, Simulation, type SimulationInput, type SimulationOptions } from '../src/simulation';
 import { mulberry32 } from '../src/random';
@@ -105,4 +106,15 @@ export function countTypes(cells: Uint32Array): Map<number, number> {
     counts.set(t, (counts.get(t) ?? 0) + 1);
   }
   return counts;
+}
+
+// The bits of each air array, so that a -0 or a NaN counts as a difference.
+export function airWords(air: AirData): Record<keyof AirData, Uint32Array> {
+  const bits = (values: Float32Array): Uint32Array => new Uint32Array(values.buffer, values.byteOffset, values.length);
+  return {
+    pressure: bits(air.pressure),
+    velocityX: bits(air.velocityX),
+    velocityY: bits(air.velocityY),
+    temperature: bits(air.temperature),
+  };
 }

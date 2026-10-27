@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { type CellData, tempView } from '../src/cell-fields';
 import { ELEMENT as T } from '../src/elements';
 import { packHalf2 } from '../src/half';
+import { AIR_CELL_SIZES, type AirCellSize } from '../src/air';
 import type { PassTimer } from '../src/passes';
 import { Simulation } from '../src/simulation';
 import { cell, createDevice, idleInput } from './gpu';
@@ -10,7 +11,9 @@ import { mulberry32 } from '../src/random';
 // GPU time per frame at 2560x1340, the screen-sized grid, from timestamp queries. Run with `npm run bench`; only
 // numbers from the RTX 4080 count, the machine also has an Intel iGPU. The element engine stays under 4 ms per 1x
 // frame (docs/powder-toy.md, "Frame budget").
-// BENCH_SCENES=mix75,blast runs only those scenes; BENCH_SPLIT_ONLY=1 only the 1x breakdown by pass.
+// BENCH_SCENES=mix75,blast runs only those scenes; BENCH_SPLIT_ONLY=1 only the 1x breakdown by pass. BENCH_AIR=1,2,4,8
+// runs every scene at each of those air cell sizes (`off` for no air); the default is the simulation's own. The air
+// passes show in the breakdown under their own labels, and their sum in the `air` column.
 
 const WIDTH = 2560;
 const HEIGHT = 1340;
@@ -198,6 +201,13 @@ describe.skipIf(!device)('bench', () => {
     ];
     const only = process.env.BENCH_SCENES?.split(',');
     const splitOnly = process.env.BENCH_SPLIT_ONLY === '1';
+    const airRuns = (process.env.BENCH_AIR?.split(',') ?? [undefined]).map((entry): { label: string; options: { air?: boolean; airCellSize?: AirCellSize } } => {
+      if (entry === undefined) return { label: 'default', options: {} };
+      if (entry === 'off') return { label: 'off', options: { air: false } };
+      const size = AIR_CELL_SIZES.find((candidate) => String(candidate) === entry);
+      if (size === undefined) throw new Error(`BENCH_AIR: "${entry}" is not off or one of ${AIR_CELL_SIZES.join(', ')}`);
+      return { label: entry, options: { airCellSize: size } };
+    });
     const burner = new Simulation(dev, WIDTH, HEIGHT, { seedSource: mulberry32(2) });
     burner.load(full100Scene());
     const burnIn = async (): Promise<void> => {
@@ -206,10 +216,10 @@ describe.skipIf(!device)('bench', () => {
 
     const rows: Record<string, string | number>[] = [];
     const breakdown: Record<string, Record<string, number>> = {};
-    for (const { name, build, warmup } of scenes) {
+    for (const { label: air, options: airOptions } of airRuns) for (const { name, build, warmup } of scenes) {
       if (only && !only.includes(name)) continue;
       const fields = build();
-      const sim = new Simulation(dev, WIDTH, HEIGHT, { seedSource: mulberry32(1) });
+      const sim = new Simulation(dev, WIDTH, HEIGHT, { seedSource: mulberry32(1), ...airOptions });
       // Dawn compiles a pipeline on its first use: not inside a measured frame.
       sim.load(fields);
       await timeFrames(sim, 1, 2, true);
@@ -226,6 +236,7 @@ describe.skipIf(!device)('bench', () => {
         const stats = supersteps === SPEEDS[0] && name === 'blast' ? await sim.flyers.readStats() : undefined;
         rows.push({
           scene: name,
+          air,
           speed: `${supersteps / SPEEDS[0]}x`,
           msMedian: round(median(times)),
           msMax: round(Math.max(...times)),
@@ -238,14 +249,15 @@ describe.skipIf(!device)('bench', () => {
       const split = await measure(SPEEDS[0], true);
       const labels = [...split[0].keys()];
       const perLabel = Object.fromEntries(labels.map((label) => [label, round(mean(split.map((t) => t.get(label) ?? 0)), 3)]));
+      perLabel.air = round(mean(split.map((t) => [...t].filter(([label]) => label.startsWith('air')).reduce((a, [, ms]) => a + ms, 0))), 3);
       perLabel.sum = round(mean(split.map((t) => [...t.values()].reduce((a, b) => a + b, 0))), 3);
-      breakdown[name] = perLabel;
+      breakdown[`${name} (air ${air})`] = perLabel;
     }
     console.log('GPU ms per frame (one compute pass, as the game records it):');
     console.table(rows);
     console.log('GPU ms per 1x frame by pass (mean of the frames, every pass split into its own compute pass):');
     console.table(breakdown);
-    if (!only && !splitOnly) expect(rows).toHaveLength(SPEEDS.length * scenes.length);
+    if (!only && !splitOnly) expect(rows).toHaveLength(SPEEDS.length * scenes.length * airRuns.length);
   });
 
   // Backlog D17: what `main.ts` waits for before the first frame. Pipelines are created on the first call (Dawn

@@ -6,7 +6,7 @@ import { packHalf2, unpackHalf2 } from '../src/half';
 import { MAX_FLYER_SLOTS, MOVEMENT } from '../src/movement';
 import { BLAST_CENTER, BLAST_MARK, SCENES, type Scene } from '../src/scenes';
 import type { Simulation } from '../src/simulation';
-import { cell, cellType, countTypes, createSim, device, idleInput, loadScene, mulberry32, readCells, run, runMany } from './gpu';
+import { airWords, cell, cellType, countTypes, createSim, device, idleInput, loadScene, mulberry32, readCells, run, runMany } from './gpu';
 import { columnsWithAbove, flatness } from './metrics';
 
 const FIRE_MAX_LIFE = elementByKey(ELEMENTS, 'FIRE').life!.start;
@@ -417,18 +417,19 @@ describe.skipIf(!device)('GPU simulation', () => {
       expect(stats.jammed, 'grains that could not land').toBe(0);
     });
 
-    it('AC17: a rerun from the same seed is bit-identical in every field and every flyer', async () => {
+    it('AC17: a rerun from the same seed is bit-identical in every field, every flyer and every air word', async () => {
       const scene = SCENES.blast();
-      const snapshot = async (): Promise<[Record<string, Uint32Array>, Uint32Array]> => {
+      const snapshot = async (): Promise<[Record<string, Uint32Array>, Uint32Array, Record<string, Uint32Array>]> => {
         const sim = createSim(scene.width, scene.height, 5);
         sim.load(scene.fields);
         await runMany(sim, 40);
         const fields: Record<string, Uint32Array> = {};
         for (const { name } of CELL_FIELDS) fields[name] = await sim.fields.read(name);
-        return [fields, await sim.flyers.snapshot()];
+        return [fields, await sim.flyers.snapshot(), airWords(await sim.air.read())];
       };
-      const [fieldsA, flyersA] = await snapshot();
-      const [fieldsB, flyersB] = await snapshot();
+      const [fieldsA, flyersA, airA] = await snapshot();
+      const [fieldsB, flyersB, airB] = await snapshot();
+      expect(airB).toEqual(airA);
 
       expect(flyersA.length, 'flyers were in the air').toBeGreaterThan(8);
       expect(flyersB).toEqual(flyersA);
@@ -550,14 +551,15 @@ describe.skipIf(!device)('GPU simulation', () => {
       if (cellType(kind[i]) === T.FIRE) life[i] = FIRE_MAX_LIFE;
     }
 
-    const fieldsAfter = async (): Promise<[Uint32Array, Uint32Array]> => {
+    const fieldsAfter = async (): Promise<[Uint32Array, Uint32Array, Record<string, Uint32Array>]> => {
       const sim = createSim(width, height, 8);
       loadScene(sim, kind, life);
       await runMany(sim, 100);
-      return [await sim.fields.read('kind'), await sim.fields.read('life')];
+      return [await sim.fields.read('kind'), await sim.fields.read('life'), airWords(await sim.air.read())];
     };
-    const [kindA, lifeA] = await fieldsAfter();
-    const [kindB, lifeB] = await fieldsAfter();
+    const [kindA, lifeA, airA] = await fieldsAfter();
+    const [kindB, lifeB, airB] = await fieldsAfter();
+    expect(airB).toEqual(airA);
 
     expect(kindA).not.toEqual(kind);
     expect(kindB).toEqual(kindA);

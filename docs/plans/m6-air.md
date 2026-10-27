@@ -1,6 +1,6 @@
 # M6 Air
 
-Status: M6.1a to M6.1c and M6.2a done; next open item M6.2b.
+Status: M6.1a to M6.1c and M6.2a, M6.2b done; next open item M6.2c.
 
 ## Goal
 
@@ -184,7 +184,10 @@ Needs you: nothing (an idle RTX 4080 for the bench is checked before the run sta
   Decided during the run: a face's speed is multiplied by `faceGate(openness) = max(0, 2 * openness - 1)`, not by the openness itself (`faceGate` in `src/shaders/air.wgsl.ts`). Why: with the plain openness a 45° wall leaked (the far side reached 20 to 40% of the near side's pulse in a measurement at s 4 and 2), because a wall crossing the corner of an air cell leaves two faces half open; the gate closes every path through a one-cell wall at any angle and angle offset measured (s 1, 2 and 4), and still passes the gap control. Alternative: the plain openness, or any other curve. Change: one function.
   Decided during the run: the arrays hold one more column and row than there are air cells (array position (a, b) is air cell (a - 1, b - 1); column 0 and row 0 are ghost cells whose faces are the left and bottom faces of the first cells), and the faces on the world's edge carry no pressure gradient: the air through them leaves at `waveSpeed` times the pressure inside (an open boundary), plus `edgeDamping` on the outer ring. Why: the pressure-0 ghost air alone reflects a wave back inverted at full strength; this lets it out (the pressure two air cells from the edge shows no echo above 5% of the arrival in a measurement). Alternative: a thick damped ring only. Change: the edge branches of `airVelocityWGSL`. M6.3a and later samples through `at(a, b)` of the same file.
   Decided during the run: `AIR.maxSpeed` is 2 cells per dispatch, and the heat the air carries moves at the air's speed up to a cap of `cellSize * substeps / 8` (0.5 at 1, 2 and 4; 1 at 8), the speed at which a cell would give away all its heat in one step; and the temperature is advected as the excess over room temperature. Why: without the cap the upwind sum can overshoot at maxSpeed, and advecting the plain temperature changes a uniform room-temperature air that is compressed or stretched. Heat is kept to 1e-5 until it reaches the edge (measured at s 1, 2, 4, 8); a compressed hot blob peaks up to 35% above its start (s 1). Alternative: a smaller `maxSpeed` for the whole air. Change: `AIR.maxSpeed`, `fluxCap` in `src/air.ts`.
-- [ ] M6.2b `tests/air.test.ts`: AC2–AC6; the determinism tests compare the air words too. Bench with `BENCH_AIR` into "M6.2 results". Verify: lint, typecheck, `npm test`, build.
+- [x] M6.2b `tests/air.test.ts`: AC2–AC6; the determinism tests compare the air words too. Bench with `BENCH_AIR` into "M6.2 results". Verify: lint, typecheck, `npm test`, build.
+  Decided during the run: AC4's echo is measured against a free wave: the same pulse in a 512-cell grid whose wave has not reached its edge, compared air cell by air cell with the 128-cell grid, over cells at least 24 grid cells from the edge (nearer, the difference is the wave leaving, not an echo); the incident peak is the free wave's largest |pressure| in the small grid's outer ring. Measured: echo 29.0% of the incident peak at s 4 and 16.5% at s 2, so the 30% bar passes with little room at s 4 (the worst point is a slanted arrival near a corner; a wall along the edge, as control, gives 83% and 142%). Draining: under 5% of the start after 94 supersteps at s 4 and 89 at s 2; the test allows 100. Why: the plan names no way to separate echo from the incident wave. Alternative: look at normal incidence on the axis only (lower numbers), or a different band. Change: `EDGE_BAND` and `DRAINED` in `tests/air.test.ts`; a retune of `edgeDamping` or the edge faces would raise the margin.
+  Decided during the run: AC2's clause "compile the CA and flight without air code" is not tested here: the CA and the flight pass have no air code until M6.3a and M6.3b, so the clause holds trivially; the test covers `air: false` recording no air pass and holding no buffer. Why: nothing to check yet. Alternative: a test on the generated source now (it would assert an absence). Change: M6.3a adds the check on the CA source when it adds the air code.
+  Decided during the run: `BENCH_AIR` also takes `off` (air disabled), and the 1x breakdown has an `air` column (sum of the `air *` passes). Why: the same-session `off` run separates the air's cost from the drift between sessions (the M6.1 baseline and the `off` run differ by up to 0.13 ms on `mix75`). Alternative: only the sizes. Change: `airRuns` in `tests/bench.gpu.ts`.
 - [ ] M6.2c `docs/simulation.md`: an Air section (grid, step, walls and edges; intuition, example, formula).
 
 Visible after: nothing: the air moves but nothing reads it and no view shows it yet.
@@ -273,7 +276,23 @@ AC24 allows at most 1 ms more at 1x than these numbers on each scene.
 
 ## M6.2 results
 
-To be filled by M6.2b.
+Taken at `8975da5` plus the M6.2b tests, same machine and method as the baseline (`BENCH_AIR=<size> npm run bench`, one run per size). Wallpaper Engine closed, `nvidia-smi` 22% desktop load (browser, Discord, Steam open), no game.
+
+Median GPU ms per 1x frame at 2560x1340 by air cell size. `off` is `air: false` in the same session; the baseline column is from "Baseline (M6.1)". There is no air work in the CA yet (M6.3), so these numbers are the air passes alone.
+
+| Scene | Baseline | off | 8 | 4 (default) | 2 | 1 |
+| --- | --- | --- | --- | --- | --- | --- |
+| `tank` | 0.46 | 0.46 | 0.52 | 0.59 | 1.38 | 16.91 |
+| `mix75` | 1.44 | 1.57 | 1.70 | 1.90 | 2.56 | 18.15 |
+| `full100` | 1.31 | 1.44 | 1.57 | 1.70 | 2.42 | 18.09 |
+| `blast` | 0.39 | 0.39 | 0.46 | 0.52 | 1.25 | 16.65 |
+| `thermal` | 1.05 | 1.11 | 1.25 | 1.38 | 2.16 | 17.43 |
+
+At the default size the 1x frame is 0.13 (`tank`, `blast`) to 0.46 ms (`mix75`) above the baseline, inside AC24's 1 ms. The sum of the `air *` passes at 1x (the `air` column of the breakdown, mean of the frames): size 8 0.07 to 0.12 ms, size 4 0.11 to 0.20, size 2 0.78 to 0.95, size 1 16.1 to 17.0. At size 4, per pass on `mix75`: mask 0.023, coupling 0.025, velocity 0.063, pressure 0.023, advect 0.033, diffuse 0.028. Size 1 is unusable at screen size (4 to 5 ms for each of its velocity, advect and diffuse passes, and 4 air steps per superstep); size 2 costs about 0.8 ms on every scene.
+
+Median ms at 2x, 4x and 8x with size 4: `tank` 1.25, 2.49, 4.78; `mix75` 3.60, 5.96, 7.93; `full100` 3.28, 6.49, 11.01; `blast` 0.79, 1.57, 3.21; `thermal` 2.69, 5.24, 10.55.
+
+Tests: AC3 ring speed 1.024 times `waveSpeed` at size 4 and 1.049 at size 2, the four directions equal; AC4 numbers are in the decision under M6.2b; AC5: the far side of a one-cell wall stays under 0.0003 of the pulse peak in every orientation and offset, and a gap of 3 air cells lets 0.12 to 0.16 through.
 
 ## M6.4 results
 
