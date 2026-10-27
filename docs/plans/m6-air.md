@@ -1,6 +1,6 @@
 # M6 Air
 
-Status: M6.1a to M6.1c, M6.2a to M6.2c, M6.3a to M6.3d and M6.4a done; next open item M6.4b.
+Status: M6.1a to M6.1c, M6.2a to M6.2c, M6.3a to M6.3d and M6.4a to M6.4b done; next open item M6.5a.
 
 ## Goal
 
@@ -227,7 +227,8 @@ Needs you: nothing (the playtest is M6.6's gate).
   Decided during the run: the exchange runs once per air step with the capacity `heatCapacity * s * s`, with no scaling by the number of steps per superstep, as the Design says; so at `?air=2` (2 steps per superstep, a quarter of the capacity per air cell) heat moves between cells and air at another rate than at 4. Why: the Design's formula; a scaling would be a second tuning. Alternative: scale the exchange share by the step length and the cells per air cell. Change: `airCouplingWGSL`.
   Decided during the run: M5's heat tests that measure a cell's own temperature, or a sealed box's total without the air, run with `air: false` (`NO_AIR` in `tests/heat.test.ts`: the flyer test AC4, AC7 empty space and walls, AC8, AC14, the phase-change tests through `oneSuperstep`, AC9 and the freeze test, the Heat tool's flyer test AC16 and the probe test AC18), as the Design expects; M6 AC14 to AC17 in `tests/air-heat.test.ts` replace them with the air counted (`heatContent` takes the air). Change: `NO_AIR`.
   Decided during the run: the tuning target "a fire's plume lifts smoke faster than smoke beside it" is not met and has no test: a gas cell that rose this dispatch (every dispatch in open air) drifts sideways only (the M6.3a decision), and it already rises at the top speed of 1 cell per dispatch, so the air cannot lift it faster; the plume carries smoke sideways (inflow toward the base) and lifts what would otherwise sit under a ceiling. The `plume` scene keeps its two smoke blocks for the gate to watch. Alternative: let a rising gas also drift upward with the air. Change: `driftCell`.
-- [ ] M6.4b Docs: `docs/simulation.md` (Heat: empty space now holds the air's temperature, heat leaves through the edge).
+- [x] M6.4b Docs: `docs/simulation.md` (Heat: empty space now holds the air's temperature, heat leaves through the edge).
+  Decided during the run: besides the Heat section (a new "Heat and the air" subsection and two corrected sentences), the Air section's coupling and velocity steps and its Cost line are updated, with the s = 4 figure from "M6.4 results" and a note that the other sizes were measured before the heat exchange. Why: those sentences said the heat exchange was still to come and the cost was out of date. Alternative: leave Cost to M6.7. Change: the Cost paragraph of `docs/simulation.md`. `AGENTS.md` (its Heat invariant still says nothing cools in open air before M6) is left to M6.8, which the plan assigns it to.
 
 Visible after: hot things cool down in open air; fire, lava and hot metal send up a plume of hot air that carries smoke; steam clouds turn back into water; `?scene=plume` shows it.
 Needs you: nothing.
