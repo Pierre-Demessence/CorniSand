@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { AIR } from '../src/air';
 import { ELEMENT as T, ELEMENTS, elementByKey, elementDrag, elementGravity } from '../src/elements';
-import { fromHalf, toHalf, unpackHalf2 } from '../src/half';
+import { fromHalf, packHalf2, toHalf, unpackHalf2 } from '../src/half';
 import { caWGSL } from '../src/shaders/ca.wgsl';
+import { flightWGSL } from '../src/shaders/flyers.wgsl';
 import { RULES } from '../src/shaders/rules';
 import type { Simulation } from '../src/simulation';
 import { gaussian, peakAt } from './air-pulse';
@@ -57,6 +58,12 @@ describe.skipIf(!device)('M6 air moves matter', () => {
       expect(source(), 'without air').not.toMatch(/airState|AIR_PUSH|driftCell|airAround/);
       expect(source(shape), 'with air').toMatch(/airState/);
       expect(source(shape), 'with air').toMatch(/driftCell/);
+    });
+
+    it('M6 AC2: the flight source has no air code without air, and reads the air with it', () => {
+      const shape = { cellSize: 4, columns: 16, rows: 16 };
+      expect(flightWGSL(ELEMENTS, 64, 64, 1024), 'without air').not.toMatch(/airState|AIR_PUSH|airAround/);
+      expect(flightWGSL(ELEMENTS, 64, 64, 1024, shape), 'with air').toMatch(/airAround/);
     });
   });
 
@@ -374,5 +381,77 @@ describe.skipIf(!device)('M6 air moves matter', () => {
       expect(movedBefore, 'control: grains on the pulse side that moved more than 2 cells').toBeGreaterThan(10);
       expect(farthest, 'the farthest any grain behind the wall moved').toBeLessThanOrEqual(1);
     }, 60_000);
+  });
+
+  describe('AC9: flyers read the air', () => {
+    const WIDTH = 640;
+    const HEIGHT = 128;
+    const START = { x: 10, y: 90 };
+    // The air speed of the crosswind, cells per dispatch, held steady.
+    const WIND = 0.5;
+    // How far a wind of WIND moves a grain thrown at 6 cells per dispatch, in cells, measured: 40 dispatches in (the
+    // grain is still flying, so only the flight pass acts on it) and where it lands, 30 cells either way. The
+    // criterion allows 30% less.
+    const MEASURED_MIDFLIGHT_SHIFT = 5.3;
+    const MEASURED_LANDING_SHIFT = 30;
+
+    // A grain thrown sideways from high above a floor. Returns the sim, set up.
+    function thrown(options: { air: boolean }): Simulation {
+      const sim = createSim(WIDTH, HEIGHT, 5, options);
+      const kinds = new Kinds(WIDTH, HEIGHT);
+      kinds.fill(0, 0, WIDTH, 2, T.WALL);
+      kinds.set(START.x, START.y, T.SAND, 1);
+      const velocity = new Uint32Array(WIDTH * HEIGHT);
+      velocity[START.y * WIDTH + START.x] = packHalf2(6, 0);
+      sim.load({ kind: kinds.kind, velocity });
+      return sim;
+    }
+
+    // Where the grain is after `supersteps` of a wind at `wind` cells per dispatch (0 for still air), set again before
+    // every superstep.
+    async function after(sim: Simulation, supersteps: number, wind: number): Promise<Grain> {
+      const n = sim.air.columns * sim.air.rows;
+      for (let t = 0; t < supersteps; t++) {
+        if (wind !== 0) sim.air.load({ velocityX: new Float32Array(n).fill(wind) });
+        await run(sim, 1);
+      }
+      return (await tagged(sim)).get(1)!;
+    }
+
+    it('M6 AC9: a grain in flight is carried downwind of where it is in still air, and upwind in a headwind', async () => {
+      const midflight = async (wind: number): Promise<number> => {
+        const sim = thrown({ air: true });
+        const g = await after(sim, 20, wind);
+        expect((await sim.flyers.readStats()).live, 'the grain is still in the air').toBe(1);
+        return g.x;
+      };
+      const still = await midflight(0);
+      expect(await midflight(WIND) - still, 'shift downwind, in cells').toBeGreaterThanOrEqual(MEASURED_MIDFLIGHT_SHIFT * 0.7);
+      expect(still - await midflight(-WIND), 'shift upwind, in cells').toBeGreaterThanOrEqual(MEASURED_MIDFLIGHT_SHIFT * 0.7);
+    }, 60_000);
+
+    it('M6 AC9: a grain thrown through a crosswind lands downwind of where it lands in still air, and upwind in a headwind', async () => {
+      const still = await after(thrown({ air: true }), 120, 0);
+      const downwind = await after(thrown({ air: true }), 120, WIND);
+      const upwind = await after(thrown({ air: true }), 120, -WIND);
+      const flew = thrown({ air: true });
+      await after(flew, 120, WIND);
+      expect((await flew.flyers.readStats()).launched, 'the grain flew').toBeGreaterThan(0);
+      expect(downwind.x - still.x, 'landing shift downwind, in cells').toBeGreaterThanOrEqual(MEASURED_LANDING_SHIFT * 0.7);
+      expect(still.x - upwind.x, 'landing shift upwind, in cells').toBeGreaterThanOrEqual(MEASURED_LANDING_SHIFT * 0.7);
+    }, 60_000);
+
+    it('M6 AC9: in still air a flyer flies as it does without air, word for word', async () => {
+      const withAir = thrown({ air: true });
+      const without = thrown({ air: false });
+      for (let t = 0; t < 12; t++) {
+        await run(withAir, 1);
+        await run(without, 1);
+        const a = await withAir.flyers.snapshot();
+        const b = await without.flyers.snapshot();
+        expect(a, `flyer words after ${t + 1} supersteps`).toEqual(b);
+      }
+      expect((await withAir.flyers.readStats()).live, 'the grain is still in the air').toBe(1);
+    });
   });
 });

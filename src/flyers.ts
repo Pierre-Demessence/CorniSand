@@ -1,3 +1,4 @@
+import type { AirShape } from './air';
 import { CELL_FIELDS } from './cell-fields';
 import type { CellFields } from './cell-field-buffers';
 import type { ElementTable } from './element-table';
@@ -48,6 +49,7 @@ export class Flyers {
   readonly overlay: FlyerOverlay;
 
   private readonly device: GPUDevice;
+  private readonly hasAir: boolean;
   private readonly fields: CellFields;
   private readonly elementTable: ElementTable;
   private readonly flightFields: ReturnType<CellFields['subset']>;
@@ -78,12 +80,13 @@ export class Flyers {
     elements: ElementTable,
     brushUniforms: GPUBuffer,
     maxFlyers: number,
-    airState?: GPUBuffer,
+    air?: { state: GPUBuffer; shape: AirShape },
   ) {
     if (!Number.isInteger(maxFlyers) || maxFlyers < 1 || maxFlyers > MAX_FLYER_SLOTS) {
       throw new RangeError(`maxFlyers must be an integer in 1..${MAX_FLYER_SLOTS}, got ${maxFlyers}`);
     }
     this.device = device;
+    this.hasAir = air !== undefined;
     this.maxFlyers = maxFlyers;
     this.launchGroupCount = launchGroups(width, height);
 
@@ -111,11 +114,11 @@ export class Flyers {
       entries: types.map((type, binding) => ({ binding, visibility, buffer: { type } })),
     });
 
-    // Binding 0 is the launch counts the CA writes; binding 1 the air state it reads, when there is air.
-    this.launchLayout = layoutOf(airState ? ['storage', 'read-only-storage'] : ['storage']);
+    // Binding 0 is the launch counts the CA writes; binding 1 the air state the CA and the flight pass read, when there is air.
+    this.launchLayout = layoutOf(air ? ['storage', 'read-only-storage'] : ['storage']);
     this.launchBindGroup = device.createBindGroup({
       layout: this.launchLayout,
-      entries: [{ binding: 0, resource: { buffer: this.launch } }, ...(airState ? [{ binding: 1, resource: { buffer: airState } }] : [])],
+      entries: [{ binding: 0, resource: { buffer: this.launch } }, ...(air ? [{ binding: 1, resource: { buffer: air.state } }] : [])],
     });
     const overlayLayout = layoutOf(['read-only-storage'], GPUShaderStage.FRAGMENT);
     this.overlay = {
@@ -158,10 +161,10 @@ export class Flyers {
     );
     this.flightFields = fields.subset(FLIGHT_FIELDS);
     this.flight = makePass(
-      flightWGSL(table, width, height, maxFlyers),
+      flightWGSL(table, width, height, maxFlyers, air?.shape),
       ['storage', 'storage', 'storage'],
       (live) => [live, claim, this.state],
-      [this.flightFields.layout, elements.layout],
+      [this.flightFields.layout, elements.layout, ...(air ? [this.launchLayout] : [])],
     );
     this.retry = makePass(
       retryWGSL(table, width, height, maxFlyers),
@@ -228,6 +231,7 @@ export class Flyers {
     pass.setBindGroup(0, this.flight.groups[p]);
     pass.setBindGroup(1, this.flightFields.bindGroup);
     pass.setBindGroup(2, this.elementTable.bindGroup);
+    if (this.hasAir) pass.setBindGroup(3, this.launchBindGroup);
     pass.dispatchWorkgroupsIndirect(this.args, ARGS_DISPATCH * 4);
 
     this.dispatchLand(passes.pass('land 1'), this.lands[0], p);

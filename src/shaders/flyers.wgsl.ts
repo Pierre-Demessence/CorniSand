@@ -1,6 +1,8 @@
+import type { AirShape } from '../air';
 import { CELL_FIELDS } from '../cell-fields';
 import type { ElementDef } from '../elements';
 import { MOVEMENT, launchGroups, movementWGSL } from '../movement';
+import { airReadWGSL } from './air.wgsl';
 import { BRUSH_COMMON_WGSL } from './brush.wgsl';
 import { cellBindingsWGSL, cellTypesWGSL } from './cell.wgsl';
 import { elementsWGSL } from './elements.wgsl';
@@ -9,8 +11,9 @@ import { elementsWGSL } from './elements.wgsl';
 // position until it lands (docs/decisions.md "Cells move by velocity; fast cells fly as particles"). Once per superstep,
 // after the offset-1 CA dispatch:
 //   1. launch: a prefix sum over the launching cells, in cell order, gives each a slot after the live flyers
-//   2. flight: two dispatches of gravity and drag, walking the cells crossed (read-only); a flyer that hits something
-//      or slows down claims the free cell it stopped in
+//   2. flight: two dispatches of gravity and drag (relative to the air, with its pressure gradient pushing, when there
+//      is air), walking the cells crossed (read-only); a flyer that hits something or slows down claims the free cell
+//      it stopped in
 //   3. landing, two rounds: the lowest claim of each cell enters the grid; the losers look for a free cell nearby
 //   4. compaction: a stable prefix sum drops the landed flyers
 // Every slot comes from a prefix sum in a fixed order and every conflict is resolved by the slot index, so nothing
@@ -309,9 +312,14 @@ fn claimNearby(fl: ptr<function, Flyer>, slot: u32, salt: u32) -> bool {
 
 // Flight: two dispatches of gravity and drag per flyer, walking the cells it crosses (read-only). A flyer that hits
 // something, or slowed below the launch speed, claims the cell it stopped in. Flyers the brush removed are skipped.
-export const flightWGSL = (elements: readonly ElementDef[], width: number, height: number, maxFlyers: number): string => /* wgsl */`
+// With \`air\` (the shape of the air grid) a flyer reads the air state (group 3, binding 1) at its position before each
+// dispatch, as a cell in the grid does at its block's center: it loses \`drag\` of its speed relative to the air and the
+// pressure gradient pushes it, lighter matter harder (\`velocityRule\` in \`ca.wgsl.ts\`). In air at rest the flight is the
+// one without air, bit for bit. The air state changes only in the air passes, after the flyer passes.
+export const flightWGSL = (elements: readonly ElementDef[], width: number, height: number, maxFlyers: number, air?: AirShape): string => /* wgsl */`
 ${landingCommon(elements, width, height, maxFlyers, 'read')}
 ${elementsWGSL}
+${air ? airReadWGSL(air) : ''}
 
 // Walks the grid cells from p0 to p1, 4-connected, so a path cannot slip between two diagonal cells. Returns
 // (x, y, hit, cells walked): the last free cell before the first occupied one, or the cell of p1 when nothing is hit.
@@ -361,8 +369,11 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     var hit = false;
     for (var s = 0; s < 2 && !hit; s++) {
       fl.vel.y -= gravity;
-      fl.vel *= 1.0 - drag;
-      if (length(fl.vel) > MAX_FLYER_SPEED) { fl.vel *= MAX_FLYER_SPEED / length(fl.vel); }
+${air ? `      let around = airAround(fl.pos.x, fl.pos.y);
+      fl.vel = fl.vel * (1.0 - drag) + drag * around.velocity;
+      fl.vel -= AIR_PUSH * around.gradient / elDensity(t);
+` : `      fl.vel *= 1.0 - drag;
+`}      if (length(fl.vel) > MAX_FLYER_SPEED) { fl.vel *= MAX_FLYER_SPEED / length(fl.vel); }
       let to = fl.pos + fl.vel;
       let w = walk(fl.pos, to);
       walked += u32(w.w);
