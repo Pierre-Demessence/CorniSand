@@ -30,7 +30,9 @@ const withRow = (key: string, change: Partial<ElementDef>): ElementDef[] => [...
 
 describe('element table', () => {
   it('AC11: describes every current material, the IDs the cells already store', () => {
-    expect(ELEMENT).toEqual({ EMPTY: 0, SAND: 1, WALL: 2, WATER: 3, SMOKE: 4, OIL: 5, FIRE: 6, METAL: 7, STONE: 8 });
+    expect(ELEMENT).toEqual({ EMPTY: 0, SAND: 1, WALL: 2, WATER: 3, SMOKE: 4, OIL: 5, FIRE: 6, METAL: 7, STONE: 8,
+      ICE: 9, STEAM: 10, LAVA: 11, MOLTEN_METAL: 12,
+    });
     expect(() => validateElements(ELEMENTS)).not.toThrow();
     expect(elementByKey(ELEMENTS, 'FIRE').life).toEqual({ start: 200, decay: 4, becomes: 'SMOKE' });
   });
@@ -86,7 +88,8 @@ describe('element table', () => {
   });
 
   it('M5: starts fire at its flame temperature and everything else at room temperature, packed for the GPU', () => {
-    for (const e of ELEMENTS) expect(elementTemperature(e), e.key).toBe(e.key === 'FIRE' ? 1000 : ROOM_TEMP);
+    const painted: Record<string, number> = { FIRE: 1000, ICE: -20, STEAM: 110, LAVA: 1300, MOLTEN_METAL: 1600 };
+    for (const e of ELEMENTS) expect(elementTemperature(e), e.key).toBe(painted[e.key] ?? ROOM_TEMP);
     expect(elementTemperature({ ...MUD, temperature: -20 })).toBe(-20);
     const floats = new Float32Array(packElements(ELEMENTS));
     const at = (id: number): number => id * PROP_FIELDS.length + PROP_FIELDS.findIndex((f) => f.name === 'temperature');
@@ -230,13 +233,16 @@ describe('toolbar', () => {
       { id: ELEMENT.WALL, label: 'Wall', key: '6' },
       { id: ELEMENT.METAL, label: 'Metal', key: '7' },
       { id: ELEMENT.STONE, label: 'Stone', key: '8' },
+      { id: ELEMENT.ICE, label: 'Ice', key: '9' },
+      { id: ELEMENT.LAVA, label: 'Lava', key: undefined },
+      { id: ELEMENT.STEAM, label: 'Steam', key: undefined },
     ]);
   });
 
   it('follows a table: an extra row appears at its position, an element without one does not', () => {
     const table: ElementDef[] = [...ELEMENTS, { ...MUD, toolbar: 3 }].map((e) => (e.key === 'OIL' ? { ...e, toolbar: 70 } : e));
-    expect(toolbarEntries(table).map((e) => e.label)).toEqual(['Sand', 'Water', 'Mud', 'Fire', 'Smoke', 'Wall', 'Metal', 'Stone', 'Oil']);
-    expect(toolbarEntries([...ELEMENTS, { ...MUD, toolbar: undefined }])).toHaveLength(8);
+    expect(toolbarEntries(table).map((e) => e.label)).toEqual(['Sand', 'Water', 'Mud', 'Fire', 'Smoke', 'Wall', 'Metal', 'Stone', 'Ice', 'Lava', 'Steam', 'Oil']);
+    expect(toolbarEntries([...ELEMENTS, { ...MUD, toolbar: undefined }])).toHaveLength(11);
   });
 
   it('gives each button the element ID in data-type and the tool-btn class', () => {

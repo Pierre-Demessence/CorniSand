@@ -33,5 +33,9 @@ fn elConductivity(t: u32) -> f32 { return elements[t].conductivity; }
 fn elHeatCapacity(t: u32) -> f32 { return elements[t].heatCapacity; }
 fn elHoldsHeat(t: u32) -> bool { return elements[t].holdsHeat != 0u; }
 fn elBelowTemp(t: u32) -> f32 { return elements[t].belowTemp; }
+fn elBelowWidth(t: u32) -> f32 { return elements[t].belowWidth; }
 fn elAboveTemp(t: u32) -> f32 { return elements[t].aboveTemp; }
+fn elAboveWidth(t: u32) -> f32 { return elements[t].aboveWidth; }
+fn elBelowBecomes(t: u32) -> u32 { return elements[t].transitions & 0xffu; }
+fn elAboveBecomes(t: u32) -> u32 { return (elements[t].transitions >> 8u) & 0xffu; }
 `;

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { tempView } from '../src/cell-fields';
 import { ELEMENT as T, ELEMENTS, elementByKey, elementConductivity, elementHeatCapacity, elementTemperature, type ElementDef } from '../src/elements';
+import { packHalf2 } from '../src/half';
 import { ROOM_TEMP, effectiveTemp } from '../src/heat';
 import { HEAT_BARS, SCENES } from '../src/scenes';
 import type { Simulation } from '../src/simulation';
@@ -292,9 +293,10 @@ describe.skipIf(!device)('M5.3 conduction', () => {
     const next = mulberry32(8);
     const rand = (): number => next() / 2 ** 32;
     const kinds = [T.METAL, T.STONE, T.SAND, T.WATER, T.OIL, T.EMPTY];
-    // Each element inside its own range, so no phase change can be due once M5.4 adds them.
+    // Conduction only averages, so with every start inside 1 to 99 °C no cell can ever reach a threshold (water's 0 and
+    // 100, oil's 250), and no phase change is due.
     const range: Record<number, [number, number]> = {
-      [T.METAL]: [0, 600], [T.STONE]: [0, 600], [T.SAND]: [0, 600], [T.WATER]: [1, 99], [T.OIL]: [0, 249],
+      [T.METAL]: [1, 99], [T.STONE]: [1, 99], [T.SAND]: [1, 99], [T.WATER]: [1, 99], [T.OIL]: [1, 99],
     };
     const kind = new Uint32Array(width * height);
     const temp = uniformTemps(width * height, 0);
@@ -359,4 +361,161 @@ describe.skipIf(!device)('M5.4 temperature', () => {
     expect(after[1], 'metal').toBeCloseTo(20 + flow * cs, 3);
     expect((await readCells(sim)).map(cellType), 'no phase change yet').toEqual(new Uint32Array([201, T.METAL]));
   });
+});
+
+// A grid of `kinds` cells in a row (the cell 0 at the bottom left) at the given stored temperatures, run for one
+// superstep (two dispatches); the rest of the row is walls, which neither conduct nor move.
+async function oneSuperstep(
+  cells: { type: number; temp: number; life?: number }[],
+  supersteps = 1,
+): Promise<{ kinds: number[]; temps: Float32Array; lives: Uint32Array }> {
+  const width = cells.length;
+  const sim = createSim(width, 1);
+  const kind = new Uint32Array(cells.map((c) => cell(c.type)));
+  const temp = uniformTemps(width, 0);
+  const life = new Uint32Array(cells.map((c) => c.life ?? 0));
+  cells.forEach((c, i) => { tempView({ temp })[i] = c.temp; });
+  sim.load({ kind, temp, life });
+  await runMany(sim, supersteps);
+  return { kinds: [...(await readCells(sim))].map(cellType), temps: await readTemps(sim), lives: await sim.fields.read('life') };
+}
+
+describe.skipIf(!device)('M5.4b phase changes', () => {
+  const water = elementByKey(ELEMENTS, 'WATER');
+  const ice = elementByKey(ELEMENTS, 'ICE');
+  const steam = elementByKey(ELEMENTS, 'STEAM');
+  const upper = (e: ElementDef): number => e.above!.temp + e.above!.latent! / elementHeatCapacity(e);
+  const lower = (e: ElementDef): number => e.below!.temp - e.below!.latent! / elementHeatCapacity(e);
+
+  it('a cell past the top of its latent range becomes the element above, at the threshold plus the overshoot scaled by the capacities', async () => {
+    const stored = upper(water) + 50;
+    const { kinds, temps } = await oneSuperstep([{ type: T.WATER, temp: stored }, { type: T.WALL, temp: 0 }]);
+    expect(kinds).toEqual([T.STEAM, T.WALL]);
+    expect(temps[0]).toBeCloseTo(100 + (50 * elementHeatCapacity(water)) / elementHeatCapacity(steam), 3);
+  });
+
+  it('a cell under the bottom of its latent range becomes the element below, at the threshold minus the scaled overshoot', async () => {
+    const stored = lower(water) - 20;
+    const { kinds, temps } = await oneSuperstep([{ type: T.WATER, temp: stored }, { type: T.WALL, temp: 0 }]);
+    expect(kinds).toEqual([T.ICE, T.WALL]);
+    expect(temps[0]).toBeCloseTo(0 - (20 * elementHeatCapacity(water)) / elementHeatCapacity(ice), 3);
+  });
+
+  it('keeps the element while the stored temperature is inside the latent range, edges included', async () => {
+    for (const stored of [100, 150, upper(water), lower(water), -20]) {
+      const { kinds, temps } = await oneSuperstep([{ type: T.WATER, temp: stored }, { type: T.WALL, temp: 0 }]);
+      expect(kinds, `water stored at ${stored}`).toEqual([T.WATER, T.WALL]);
+      expect(temps[0], `water stored at ${stored}`).toBe(Math.fround(stored));
+    }
+  });
+
+  it('carries a large overshoot through the next change in the same direction on the next dispatch', async () => {
+    // Ice at 1,000 °C stored becomes water in the first dispatch at 381 °C, past water's 195, then steam in the second.
+    const first = (1000 - upper(ice)) * elementHeatCapacity(ice) / elementHeatCapacity(water);
+    expect(first, 'the water cell is already past its own latent range').toBeGreaterThan(upper(water));
+    const { kinds, temps } = await oneSuperstep([{ type: T.ICE, temp: 1000 }, { type: T.WALL, temp: 0 }]);
+    expect(kinds).toEqual([T.STEAM, T.WALL]);
+    expect(temps[0]).toBeCloseTo(100 + ((first - upper(water)) * elementHeatCapacity(water)) / elementHeatCapacity(steam), 2);
+  });
+
+  it('keeps the heat of a cell through a change: the latent heat and the capacities balance', async () => {
+    const stored = upper(water) + 50;
+    const { temps } = await oneSuperstep([{ type: T.WATER, temp: stored }, { type: T.WALL, temp: 0 }]);
+    // Heat above the water-steam threshold: water holds C·(stored - 100) of which the latent heat is not yet temperature.
+    const before = elementHeatCapacity(water) * (stored - 100);
+    const after = elementHeatCapacity(steam) * (temps[0] - 100) + water.above!.latent!;
+    expect(after).toBeCloseTo(before, 2);
+  });
+
+  it('a burning cell starts with the lifetime of fire', async () => {
+    const { kinds, lives } = await oneSuperstep([{ type: T.OIL, temp: 300, life: 2 }, { type: T.WALL, temp: 0 }]);
+    expect(kinds[0], 'oil at 300 °C ignites').toBe(T.FIRE);
+    expect(lives[0], 'fire starts with its lifetime, less one dispatch of decay').toBeGreaterThan(190);
+  });
+
+  it('a cell that freezes or condenses keeps no motion, and a liquid starts with no sideways direction', async () => {
+    const sim = createSim(2, 1);
+    const kind = new Uint32Array([cell(T.WATER), cell(T.WALL)]);
+    const temp = uniformTemps(2, 0);
+    tempView({ temp })[0] = lower(water) - 5;
+    // A moving, left-spreading water cell: freezing must drop both.
+    sim.load({ kind, temp, life: new Uint32Array([1, 0]), velocity: new Uint32Array([packHalf2(0.25, -0.25), 0]) });
+    await runMany(sim, 1);
+    expect([...(await readCells(sim))].map(cellType)).toEqual([T.ICE, T.WALL]);
+    expect((await sim.fields.read('velocity'))[0], 'velocity').toBe(0);
+    expect((await sim.fields.read('life'))[0], 'life').toBe(0);
+
+    // Steam condenses into a liquid with life 0, and conserves heat in the below direction.
+    const stored = steam.below!.temp - steam.below!.latent! / elementHeatCapacity(steam) - 10;
+    const { kinds, temps, lives } = await oneSuperstep([{ type: T.STEAM, temp: stored }, { type: T.WALL, temp: 0 }]);
+    expect(kinds).toEqual([T.WATER, T.WALL]);
+    expect(lives[0]).toBe(0);
+    const before = elementHeatCapacity(steam) * (stored - 100);
+    const after = elementHeatCapacity(water) * (temps[0] - 100) - steam.below!.latent!;
+    expect(after).toBeCloseTo(before, 2);
+  });
+
+  it('a fire cell is raised to the flame temperature, and smoke keeps the temperature of the fire it came from', async () => {
+    const burning = await oneSuperstep([{ type: T.FIRE, temp: 300, life: 100 }, { type: T.WALL, temp: 0 }]);
+    expect(burning.kinds[0]).toBe(T.FIRE);
+    expect(burning.temps[0]).toBe(FIRE_TEMP);
+    const dying = await oneSuperstep([{ type: T.FIRE, temp: 700, life: 4 }, { type: T.WALL, temp: 0 }]);
+    expect(dying.kinds[0]).toBe(T.SMOKE);
+    expect(dying.temps[0]).toBe(700);
+  });
+
+  it('oil lit by heat burns at the flame temperature from the next dispatch on', async () => {
+    const { kinds, temps } = await oneSuperstep([{ type: T.OIL, temp: 260 }, { type: T.WALL, temp: 0 }]);
+    expect(kinds[0]).toBe(T.FIRE);
+    expect(temps[0]).toBe(FIRE_TEMP);
+  });
+
+  it('oil touching fire still ignites at once', async () => {
+    const { kinds } = await oneSuperstep([{ type: T.OIL, temp: 20 }, { type: T.FIRE, temp: FIRE_TEMP, life: 100 }]);
+    expect(kinds).toEqual([T.FIRE, T.FIRE]);
+  });
+
+  // A closed 24×18 box with a 4-row metal floor at `floorTemp` and 3 rows of oil on it.
+  function oilOnMetal(floorTemp: number): { sim: Simulation; oil: number } {
+    const width = 24;
+    const height = 18;
+    const kind = new Uint32Array(width * height);
+    const temp = uniformTemps(width * height, 20);
+    const temps = tempView({ temp });
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const i = y * width + x;
+        if (y === height - 1 || x === 0 || x === width - 1) kind[i] = cell(T.WALL);
+        else if (y < 4) {
+          kind[i] = cell(T.METAL);
+          temps[i] = floorTemp;
+        } else if (y < 7) kind[i] = cell(T.OIL);
+      }
+    }
+    const sim = createSim(width, height);
+    sim.load({ kind, temp });
+    return { sim, oil: kind.filter((k) => cellType(k) === T.OIL).length };
+  }
+  const burned = (kinds: Uint32Array): boolean => kinds.some((k) => cellType(k) === T.FIRE || cellType(k) === T.SMOKE);
+
+  it('AC12: oil on metal at 400 °C ignites, within the measured number of supersteps', async () => {
+    const { sim } = oilOnMetal(400);
+    let supersteps = 0;
+    while (supersteps < 2000 && !burned(await readCells(sim))) {
+      await runMany(sim, 5);
+      supersteps += 5;
+    }
+    // First run: the first fire showed at the sample of superstep 15 (sampled every 5). Limit with a 30% margin: 20.
+    expect(supersteps, 'supersteps until the first fire').toBeLessThanOrEqual(20);
+  }, 60_000);
+
+  it('AC12: oil on metal at 100 °C does not ignite in 2,000 supersteps', async () => {
+    const { sim, oil } = oilOnMetal(100);
+    for (let i = 0; i < 20; i++) {
+      await runMany(sim, 100);
+      const kinds = await readCells(sim);
+      expect(burned(kinds), `after ${(i + 1) * 100} supersteps`).toBe(false);
+      expect(kinds.filter((k) => cellType(k) === T.OIL).length).toBe(oil);
+    }
+  }, 120_000);
 });

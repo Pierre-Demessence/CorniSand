@@ -127,12 +127,38 @@ export const ELEMENTS = [
   // The engine's invincible wall and the world's edge, not a real material: it never conducts, so heat never leaves the world.
   { key: 'WALL', id: 2, label: 'Wall', color: [0.43, 0.45, 0.47], state: 'solid', density: 2500, toolbar: 6 },
   // Water conducts 0.6 W/m·K, which ranks 0.1; it gets 0.3 to stand in for the convection a resting CA liquid does not
-  // have. Capacity 4.2 from its 4.2 MJ/m³·K, the highest of the table.
-  { key: 'WATER', id: 3, label: 'Water', color: [0.18, 0.42, 0.72], state: 'liquid', density: 1000, conductivity: 0.3, heatCapacity: 4.2, toolbar: 2 },
+  // have. Capacity 4.2 from its 4.2 MJ/m³·K, the highest of the table. Freezes and boils at the physical 0 and 100 °C;
+  // the latent heats are starting values, tuned with the scenes.
+  {
+    key: 'WATER',
+    id: 3,
+    label: 'Water',
+    color: [0.18, 0.42, 0.72],
+    state: 'liquid',
+    density: 1000,
+    conductivity: 0.3,
+    heatCapacity: 4.2,
+    below: { temp: 0, becomes: 'ICE', latent: 300 },
+    above: { temp: 100, becomes: 'STEAM', latent: 400 },
+    toolbar: 2,
+  },
   // A placeholder for every fire's smoke (backlog I16): stand-in heat values, not tuned.
   { key: 'SMOKE', id: 4, label: 'Smoke', color: [0.72, 0.72, 0.74], state: 'gas', density: 0.6, conductivity: 0.05, heatCapacity: 1, toolbar: 5 },
-  // Oil: 0.14 W/m·K (rank 0.1) and 1.7 MJ/m³·K.
-  { key: 'OIL', id: 5, label: 'Oil', color: [0.22, 0.16, 0.10], state: 'liquid', density: 900, flammable: true, conductivity: 0.1, heatCapacity: 1.7, toolbar: 3 },
+  // Oil: 0.14 W/m·K (rank 0.1) and 1.7 MJ/m³·K. Catches fire at 250 °C, which is a stand-in for the flash point of a
+  // lamp oil, and burns on its own from there (no latent heat: the fire rule heats the cell the next dispatch).
+  {
+    key: 'OIL',
+    id: 5,
+    label: 'Oil',
+    color: [0.22, 0.16, 0.10],
+    state: 'liquid',
+    density: 900,
+    flammable: true,
+    conductivity: 0.1,
+    heatCapacity: 1.7,
+    above: { temp: 250, becomes: 'FIRE' },
+    toolbar: 3,
+  },
   {
     key: 'FIRE',
     id: 6,
@@ -150,10 +176,89 @@ export const ELEMENTS = [
     graphics: 'fire',
     toolbar: 4,
   },
-  // Steel-like metal: the best conductor of the table (about 50 W/m·K, rank 1), 3.5 MJ/m³·K.
-  { key: 'METAL', id: 7, label: 'Metal', color: [0.70, 0.74, 0.80], state: 'solid', density: 7870, conductivity: 1, heatCapacity: 3.5, toolbar: 7 },
-  // Granite-like stone: about 2.5 W/m·K (rank 0.1), 2.2 MJ/m³·K.
-  { key: 'STONE', id: 8, label: 'Stone', color: [0.52, 0.46, 0.40], state: 'solid', density: 2700, conductivity: 0.1, heatCapacity: 2.2, toolbar: 8 },
+  // Steel-like metal: the best conductor of the table (about 50 W/m·K, rank 1), 3.5 MJ/m³·K. Melts at iron's 1,538 °C.
+  {
+    key: 'METAL',
+    id: 7,
+    label: 'Metal',
+    color: [0.70, 0.74, 0.80],
+    state: 'solid',
+    density: 7870,
+    conductivity: 1,
+    heatCapacity: 3.5,
+    above: { temp: 1538, becomes: 'MOLTEN_METAL', latent: 600 },
+    toolbar: 7,
+  },
+  // Granite-like stone: about 2.5 W/m·K (rank 0.1), 2.2 MJ/m³·K. Melts into lava at 1,200 °C.
+  {
+    key: 'STONE',
+    id: 8,
+    label: 'Stone',
+    color: [0.52, 0.46, 0.40],
+    state: 'solid',
+    density: 2700,
+    conductivity: 0.1,
+    heatCapacity: 2.2,
+    above: { temp: 1200, becomes: 'LAVA', latent: 400 },
+    toolbar: 8,
+  },
+  // Ice: 917 kg/m³, 2.2 W/m·K (rank 0.2), 1.9 MJ/m³·K. Painted at -20 °C. It does not float: a solid never moves.
+  {
+    key: 'ICE',
+    id: 9,
+    label: 'Ice',
+    color: [0.68, 0.86, 0.96],
+    state: 'solid',
+    density: 917,
+    temperature: -20,
+    conductivity: 0.2,
+    heatCapacity: 1.9,
+    above: { temp: 0, becomes: 'WATER', latent: 300 },
+    toolbar: 9,
+  },
+  // Steam: 0.59 kg/m³ at 100 °C. A gas holds far less heat per volume than water; 2.0 is a tuned per-cell capacity, and
+  // 0.2 a gas's high rank for a cell that stands for a cloud. Painted at 110 °C, just past its condensing point.
+  {
+    key: 'STEAM',
+    id: 10,
+    label: 'Steam',
+    color: [0.84, 0.90, 0.97],
+    state: 'gas',
+    density: 0.59,
+    temperature: 110,
+    conductivity: 0.2,
+    heatCapacity: 2,
+    below: { temp: 100, becomes: 'WATER', latent: 400 },
+    toolbar: 11,
+  },
+  // Lava is molten stone: liquid stone at 2,700 kg/m³, painted at 1,300 °C and setting at 1,200. One molten element per
+  // meltable material (backlog I15).
+  {
+    key: 'LAVA',
+    id: 11,
+    label: 'Lava',
+    color: [0.92, 0.32, 0.06],
+    state: 'liquid',
+    density: 2700,
+    temperature: 1300,
+    conductivity: 0.15,
+    heatCapacity: 2.6,
+    below: { temp: 1200, becomes: 'STONE', latent: 400 },
+    toolbar: 10,
+  },
+  // Molten steel: 7,000 kg/m³, painted at 1,600 °C, sets back into METAL at 1,538. Not paintable: metal melts into it.
+  {
+    key: 'MOLTEN_METAL',
+    id: 12,
+    label: 'Molten metal',
+    color: [1.0, 0.62, 0.28],
+    state: 'liquid',
+    density: 7000,
+    temperature: 1600,
+    conductivity: 0.6,
+    heatCapacity: 4,
+    below: { temp: 1538, becomes: 'METAL', latent: 600 },
+  },
 ] as const satisfies readonly ElementDef[];
 
 /** The IDs of the default table by key: the only way code outside the table names an element. */
@@ -209,9 +314,9 @@ export function validateElements(elements: readonly ElementDef[]): void {
       positions.add(e.toolbar);
     }
   }
-  validateTransitions(elements);
   if (elements.some((e) => e.flammable) && !keys.has('FIRE')) throw new Error('a flammable element needs a FIRE element to become');
   if (keys.has('FIRE') && !elements.find((e) => e.key === 'FIRE')?.life) throw new Error('FIRE needs a life: that is what a burning cell starts with');
+  validateTransitions(elements);
 }
 
 // A threshold, its target and its latent heat must leave every stored temperature a cell can have inside the range the

@@ -14,7 +14,8 @@ const SLOTS = [0, 1, 2, 3] as const;
 //
 // The phases: gases rise, falling cells move by velocity, gases and liquids spread sideways, lifetimes, then the optional
 // rules. Ignition is decided between the lifetimes and the rules but applied after them, so a rule never sees a cell
-// that ignites in the same dispatch. Last, the four cells of the block exchange heat pairwise. A cell faster than
+// that ignites in the same dispatch. Then the four cells of the block exchange heat pairwise, and last a cell whose
+// stored temperature has passed a threshold (and its latent heat) becomes the element beyond it. A cell faster than
 // LAUNCH_SPEED waits where it is for the flyer passes, which run after the offset-1 dispatch; that dispatch also counts
 // the launching cells of each workgroup (group 3).
 // `rules` maps a rule name (`ElementDef.rule`) to its WGSL.
@@ -29,6 +30,7 @@ export const caWGSL = (
   for (const e of ruled) if (!(e.rule! in rules)) throw new Error(`element ${e.key}: unknown rule "${e.rule}"`);
   const ruleNames = [...new Set(ruled.map((e) => e.rule!))];
   const burns = elements.some((e) => e.flammable);
+  const transitions = elements.some((e) => e.below !== undefined || e.above !== undefined);
   const groups = launchGroups(width, height);
 
   // For each cell of the block, whether it ignites: flammable, with a fire cell in the block (after the lifetimes).
@@ -330,6 +332,28 @@ fn ageCell(c: Cell) -> Cell {
   return withLife(c, life - decay);
 }
 
+// Phase 8 for one cell: once its stored temperature has run past a threshold by the whole latent width, the cell becomes
+// the element beyond it. It starts there at the threshold plus the overshoot scaled by the two heat capacities, so the
+// heat it holds is the heat it had; it starts with the new element's life. A large overshoot can carry it through the
+// next change in the same direction on the next dispatch. Cells that hold no heat have thresholds out of reach.
+fn transitionCell(c: Cell) -> Cell {
+  let t = cellType(c);
+  let s = cellStoredTemp(c);
+  let upper = elAboveTemp(t) + elAboveWidth(t);
+  let lower = elBelowTemp(t) - elBelowWidth(t);
+  if (s > upper) {
+    let next = elAboveBecomes(t);
+    let start = elAboveTemp(t) + (s - upper) * elHeatCapacity(t) / elHeatCapacity(next);
+    return retype(withTemp(c, start), next, cellVariant(c), elLifeStart(next));
+  }
+  if (s < lower) {
+    let next = elBelowBecomes(t);
+    let start = elBelowTemp(t) - (lower - s) * elHeatCapacity(t) / elHeatCapacity(next);
+    return retype(withTemp(c, start), next, cellVariant(c), elLifeStart(next));
+  }
+  return c;
+}
+
 @compute @workgroup_size(8, 8)
 fn main(
   @builtin(global_invocation_id) gid: vec3u,
@@ -393,6 +417,9 @@ ${ignitionApplied}` : ''}
 
     // Phase 7: Heat conduction
 ${conduction}
+${transitions ? `
+    // Phase 8: Phase changes
+${SLOTS.map((n) => `    blk${n} = transitionCell(blk${n});`).join('\n')}` : ''}
 
 ${storeBlock}
   }

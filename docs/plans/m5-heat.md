@@ -1,6 +1,6 @@
 # M5 Heat and phase changes
 
-Status: M5.1 to M5.3 and M5.4a done; next is M5.4b.
+Status: M5.1 to M5.3, M5.4a and M5.4b done; next is M5.4c.
 
 ## Goal
 
@@ -261,7 +261,7 @@ Needs you: nothing.
 ### M5.4 Phase changes (tasks)
 
 - [x] M5.4a `below` and `above` with latent heat, `cellTemp` and `effectiveTemp`, 80-byte packing, validation; AC15 unit tests. Verify: lint, typecheck, `npm test`.
-- [ ] M5.4b Phase 8; the ICE (9), STEAM (10), LAVA (11) and MOLTEN_METAL (12) rows and the changed rows; oil ignited by heat; fire's flame temperature; the cell-level transition tests and AC12. Verify: lint, typecheck, `npm test`.
+- [x] M5.4b Phase 8; the ICE (9), STEAM (10), LAVA (11) and MOLTEN_METAL (12) rows and the changed rows; oil ignited by heat; fire's flame temperature; the cell-level transition tests and AC12. Verify: lint, typecheck, `npm test`.
 - [ ] M5.4c The `iceLava`, `steamCeiling` and `moltenMetal` scenes; AC9–AC11, AC13 and AC14 tests; latent heats tuned and recorded in the rows. Verify: lint, typecheck, `npm test`, build, bench into "M5.4 results".
 - [ ] M5.4d Docs: `docs/simulation.md` (rows, phase 8, latent heat, fire and smoke), AGENTS.md (the phase order).
 
