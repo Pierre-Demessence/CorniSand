@@ -159,6 +159,8 @@ describe.skipIf(!device)('M6 ambient heat', () => {
     it('M6 AC15: a sealed wall box across all thresholds keeps the total heat of its cells, flyers and air, latent heat included, over 2,000 supersteps', async () => {
       const width = 52;
       const height = 44;
+      // The boiling water of a sealed box raises the pressure for good, so the stone of this box is crushed into sand: the
+      // crush keeps the heat, which this test counts on the real table.
       const sim = createSim(width, height, 15);
       const next = mulberry32(15);
       const rand = (): number => next() / 2 ** 32;
@@ -194,7 +196,8 @@ describe.skipIf(!device)('M6 ambient heat', () => {
       const after = await measure();
       // The air took part: the cells alone no longer hold the total.
       expect(Math.abs(after.cells - before.cells), 'heat that went into the air').toBeGreaterThan(MEASURED.airShare * 0.5);
-      for (const [type, name] of [[T.STONE, 'stone'], [T.METAL, 'metal'], [T.STEAM, 'steam']] as const) {
+      expect(after.types.get(T.SAND) ?? 0, 'sand: the pressure of the boiling water crushed stone').toBeGreaterThan(0);
+      for (const [type, name] of [[T.METAL, 'metal'], [T.STEAM, 'steam']] as const) {
         expect(after.types.get(type)!, name).toBeGreaterThan(before.types.get(type)!);
       }
       for (const [type, name] of [[T.LAVA, 'lava'], [T.MOLTEN_METAL, 'molten metal'], [T.ICE, 'ice']] as const) {

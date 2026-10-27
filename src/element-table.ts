@@ -4,6 +4,10 @@ import {
 } from './elements';
 import { NO_THRESHOLD } from './heat';
 
+// The `pressureAbove` of an element with no pressure transition: a finite float no air pressure reaches (infinity is not
+// guaranteed to compare the same on every GPU).
+export const NO_PRESSURE = 3e38;
+
 // What the GPU reads of a row, in struct order: the WGSL `ElementProps` and `packElements` are both generated from this
 // list, so they cannot disagree. A multiple of four 32-bit words (16 bytes), the stride a uniform array needs.
 interface PropField {
@@ -37,17 +41,21 @@ export const PROP_FIELDS: readonly PropField[] = [
   { name: 'belowWidth', wgslType: 'f32', value: (e) => (e.below ? latentWidth(e, e.below) : 0) },
   { name: 'aboveTemp', wgslType: 'f32', value: (e) => e.above?.temp ?? NO_THRESHOLD },
   { name: 'aboveWidth', wgslType: 'f32', value: (e) => (e.above ? latentWidth(e, e.above) : 0) },
-  // The ID of the element a cell becomes: below in bits 0-7, above in bits 8-15. 0 (EMPTY) when absent, which no cell
-  // reaches since the threshold is out of range.
+  // The ID of the element a cell becomes: below in bits 0-7, above in bits 8-15, the pressure transition in bits 16-23.
+  // 0 (EMPTY) when absent, which no cell reaches since the threshold is out of range.
   {
     name: 'transitions',
     wgslType: 'u32',
-    value: (e, all) => (e.below ? elementByKey(all, e.below.becomes).id : 0) | ((e.above ? elementByKey(all, e.above.becomes).id : 0) << 8),
+    value: (e, all) =>
+      (e.below ? elementByKey(all, e.below.becomes).id : 0)
+      | ((e.above ? elementByKey(all, e.above.becomes).id : 0) << 8)
+      | ((e.pressureAbove ? elementByKey(all, e.pressureAbove.becomes).id : 0) << 16),
   },
   // The pressure the cell releases into the air as it passes the above threshold, or ignites into FIRE.
   { name: 'aboveBurst', wgslType: 'f32', value: (e) => (e.above ? transitionBurst(e.above) : 0) },
+  // The pressure above which the cell becomes the element in bits 16-23 of `transitions`; out of reach when absent.
+  { name: 'pressureAbove', wgslType: 'f32', value: (e) => e.pressureAbove?.pressure ?? NO_PRESSURE },
   // Padding up to the next multiple of four words.
-  { name: 'pad0', wgslType: 'u32', value: () => 0 },
   { name: 'pad1', wgslType: 'u32', value: () => 0 },
   { name: 'pad2', wgslType: 'u32', value: () => 0 },
 ];

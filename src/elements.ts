@@ -36,6 +36,12 @@ export interface ElementDef {
   below?: Transition;
   /** Becomes the element `becomes` (a key) when its stored temperature rises above `temp` plus the latent width. */
   above?: Transition;
+  /**
+   * Becomes the element `becomes` (a key) in the dispatch the pressure of its air cell rises above `pressure`: one way,
+   * instant, no latent heat, the cell keeps its heat (it starts at the temperature that holds the same heat, as at a temperature threshold). Dimensionless, like the air's pressure. Needs the air; without
+   * it the cell never changes. Checked after the temperature thresholds.
+   */
+  pressureAbove?: PressureTransition;
   /** `life` counts down by `decay` per dispatch from `start` and the cell becomes the element `becomes` (a key) at 0. */
   life?: { start: number; decay: number; becomes: string };
   /** Optional WGSL rule run for cells of this element: the name of a file in `src/shaders/rules/`. */
@@ -63,6 +69,14 @@ export interface Transition {
    * it ignites by touching fire. Default 0. Dimensionless, like the air's pressure.
    */
   burst?: number;
+}
+
+/** A change of element at a pressure (`ElementDef.pressureAbove`). */
+export interface PressureTransition {
+  /** Finite and above 0. */
+  pressure: number;
+  /** The key of the element the cell becomes. */
+  becomes: string;
 }
 
 // A grain reaches the CA's top speed (1 cell per dispatch) after falling 16 cells.
@@ -108,11 +122,11 @@ export function latentWidth(e: ElementDef, t: Transition): number {
 }
 
 /**
- * Whether a cell of this element never changes by itself: empty or solid, with no lifetime, no rule and no heat. A block
- * of only such cells is a fixed point of every CA phase, so the CA skips it.
+ * Whether a cell of this element never changes by itself: empty or solid, with no lifetime, no rule, no heat and no
+ * pressure transition. A block of only such cells is a fixed point of every CA phase, so the CA skips it.
  */
 export function elementInert(e: ElementDef): boolean {
-  return (e.state === 'empty' || e.state === 'solid') && !e.life && e.rule === undefined && !elementHoldsHeat(e);
+  return (e.state === 'empty' || e.state === 'solid') && !e.life && e.rule === undefined && !elementHoldsHeat(e) && e.pressureAbove === undefined;
 }
 
 /** The drag of a row with its default applied. */
@@ -132,6 +146,8 @@ export const MAX_ELEMENTS = 256;
 const WATER_BURST = 0.1;
 // The pressure a cell of gunpowder releases as it burns.
 const GUNPOWDER_BURST = 3;
+// The pressure that crushes stone into sand (`ElementDef.pressureAbove`).
+const STONE_CRUSH = 0.2;
 
 // Conductivity and heat capacity are tuning grounded in physical ranks, not physical units: a cell is one unit of matter
 // whatever its state, so the capacity is per cell and the conductivity a share per exchange. Empty space holds no heat
@@ -219,6 +235,9 @@ export const ELEMENTS = [
     conductivity: 0.1,
     heatCapacity: 2.2,
     above: { temp: 1200, becomes: 'LAVA', latent: 400 },
+    // Crushed rock: a blast turns stone into sand, its stand-in. The pressure is tuned in tests/air-crush.test.ts so that a
+    // gunpowder charge of about 50 cells crushes the stone within about 15 cells.
+    pressureAbove: { pressure: STONE_CRUSH, becomes: 'SAND' },
     toolbar: 8,
   },
   // Ice: 917 kg/m³, 2.2 W/m·K (rank 0.2), 1.9 MJ/m³·K. Painted at -20 °C. It does not float: a solid never moves.
@@ -382,6 +401,17 @@ function validateTransitions(elements: readonly ElementDef[]): void {
       if (!target) throw new Error(`${name}.becomes "${t.becomes}" is not in the table`);
       const [targetLow, targetHigh] = range(target);
       if (!(t.temp >= targetLow && t.temp <= targetHigh)) throw new Error(`${name}.temp ${t.temp} is outside the range ${targetLow}..${targetHigh} of ${target.key}`);
+    }
+    if (e.pressureAbove) {
+      const p = e.pressureAbove;
+      if (!(p.pressure > 0 && p.pressure < Infinity)) throw new Error(`element ${e.key}: pressureAbove.pressure must be a finite number above 0`);
+      if (!byKey.has(p.becomes)) throw new Error(`element ${e.key}: pressureAbove.becomes "${p.becomes}" is not in the table`);
+      // A crush chain that returns to this element would retype its cell every dispatch above the limit.
+      const seen = new Set<string>();
+      for (let next = byKey.get(p.becomes); next && !seen.has(next.key); next = next.pressureAbove && byKey.get(next.pressureAbove.becomes)) {
+        if (next === e) throw new Error(`element ${e.key}: pressureAbove.becomes "${p.becomes}" leads back to ${e.key}`);
+        seen.add(next.key);
+      }
     }
     if (e.below && e.above && !(e.below.temp < e.above.temp)) throw new Error(`element ${e.key}: below.temp must be under above.temp`);
     const [low, high] = range(e);

@@ -1,6 +1,6 @@
 # M6 Air
 
-Status: M6.1a to M6.1c, M6.2a to M6.2c, M6.3a to M6.3d and M6.4a to M6.4b done; next open item M6.5a.
+Status: M6.1a to M6.1c, M6.2a to M6.2c, M6.3a to M6.3d, M6.4a to M6.4b and M6.5a done; next open item M6.5b.
 
 ## Goal
 
@@ -68,7 +68,7 @@ Ambient heat (M6.4)
 
 Pressure transitions (M6.5)
 
-- AC18 WHEN the pressure of its air cell passes an element's `pressureAbove.pressure`, THE SYSTEM SHALL turn the cell into `pressureAbove.becomes` in that dispatch, keeping its temperature; stone within a measured distance of a gunpowder charge is crushed into sand, stone beyond it and stone behind a wall is not.
+- AC18 WHEN the pressure of its air cell passes an element's `pressureAbove.pressure`, THE SYSTEM SHALL turn the cell into `pressureAbove.becomes` in that dispatch, keeping its heat (the new cell starts at the temperature that holds the same heat, as at a threshold change, so a crush keeps AC15's total); stone within a measured distance of a gunpowder charge is crushed into sand, stone beyond it and stone behind a wall is not.
 - AC19 IF a `pressureAbove` has a non-finite or non-positive pressure or a target missing from the table, or a `burst` is negative, non-finite or on a `below` transition, THEN THE SYSTEM SHALL reject the table with an error naming the row; an element with a pressure transition is never inert.
 
 Tools and views (M6.6)
@@ -235,7 +235,11 @@ Needs you: nothing.
 
 ### M6.5 Pressure transitions (tasks)
 
-- [ ] M6.5a `pressureAbove`, `burst` validation, 96-byte packing, the inert rule, the phase 8 check, STONE → SAND; AC18–AC19. Verify: lint, typecheck, `npm test`.
+- [x] M6.5a `pressureAbove`, `burst` validation, 96-byte packing, the inert rule, the phase 8 check, STONE → SAND; AC18–AC19. Verify: lint, typecheck, `npm test`.
+  Decided during the run: `STONE_CRUSH` is 0.2. Measured (`tests/air-crush.test.ts`: the 48-cell charge on a platform in open air, single stone cells every 3 cells to its right, 40 supersteps): the farthest stone crushed is 13 cells from the charge's edge at 0.18, 0.2 and 0.22, 10 at 0.25, 25 at 0.14 and every stone out to 61 cells at 0.08 (the pressure settles to a long low tail below about 0.15); behind a 2-thick wall no stone is crushed even at 0.03. Why: 0.2 sits on the plateau of the 13-cell range, near the plan's "about 15", and above the 0.175 peak of water poured onto lava, so boiling water alone does not crush stone. Alternative: any value in 0.18 to 0.22 gives the same range; a lower one makes the blast reach far across the screen. Change: `STONE_CRUSH` in `src/elements.ts`.
+  Decided during the run: an element without a pressure transition packs `NO_PRESSURE` (3e38, a finite float) in `pressureAbove`, and `pressureAbove` took the first padding word (the row stays 24 words); the target is in bits 16 to 23 of `transitions`. The CA reads the pressure of the air cell that holds the grid cell (the same one the burst is added to), only when the table has a pressure transition and the sim has air. Why: infinity compares differently across GPUs; a target of 0 cannot mean "none" since EMPTY is a valid target. Alternative: a flag bit. Change: `PROP_FIELDS`, `transitionCell`.
+  Decided during the run: a crush keeps the heat, not the temperature: the sand starts at `stored temperature * C_stone / C_sand` (stone 500 degrees becomes sand at 846), as phase 8 does at a threshold change. The user chose this (2026-10-28) over keeping the temperature and amending AC15, because AC15 is the invariant the rest of M6 builds on; a crushed cell can look hotter than the stone it came from for a moment. Why: stone and sand hold different heat per degree (2.2 against 1.3), so the same temperature changes the box's total (7% in the AC15 box). AC15 now runs on the real table (the test asserts sand appeared, so the crush is in it) and holds within 1e-4. Alternative: keep the temperature and amend AC15 to exclude crushes. Change: `transitionCell` in `src/shaders/ca.wgsl.ts`; M6.5b records the rule in `docs/simulation.md`.
+  Backlog I20: a stone mass is crushed from its exposed surface only, because an air cell that is half solid or more is closed to the air (visible at the gate with thick walls).
 - [ ] M6.5b Docs: `docs/simulation.md` (phase 8, the table's columns).
 
 Visible after: a gunpowder blast crushes nearby stone into sand.

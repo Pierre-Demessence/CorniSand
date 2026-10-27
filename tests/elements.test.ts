@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PROP_FIELDS, ROW_BYTES, packElements } from '../src/element-table';
+import { NO_PRESSURE, PROP_FIELDS, ROW_BYTES, packElements } from '../src/element-table';
 import {
   DEFAULT_DRAG, DEFAULT_GRAVITY, ELEMENT, ELEMENTS, MAX_ELEMENTS, STATES, elementByKey, elementConductivity, elementDrag, elementGravity, elementHeatCapacity, elementHoldsHeat, elementInert,
   elementTemperature, latentWidth, validateElements, type ElementDef,
@@ -207,6 +207,54 @@ describe('element table', () => {
     ['a threshold that is not a number', withRow('SLUSH', { above: { temp: NaN, becomes: 'BROTH', latent: 300 } }), /SLUSH: above\.temp NaN/],
   ])('M5: rejects %s', (_name, table, message) => {
     expect(() => validateElements(table)).toThrow(message);
+  });
+
+  describe('M6 AC19: pressure transitions', () => {
+    const CRUSHED: ElementDef = { ...MUD, state: 'solid', pressureAbove: { pressure: 2, becomes: 'SAND' } };
+
+    it('M6 AC19: crushes stone into sand, and never counts an element with a pressure transition as inert', () => {
+      expect(elementByKey(ELEMENTS, 'STONE').pressureAbove?.becomes).toBe('SAND');
+      expect(elementInert(CRUSHED), 'a solid with only a pressure transition').toBe(false);
+      expect(elementInert({ ...CRUSHED, pressureAbove: undefined })).toBe(true);
+      expect(elementHoldsHeat(CRUSHED), 'a pressure transition gives no temperature').toBe(false);
+      expect(() => validateElements([...ELEMENTS, CRUSHED])).not.toThrow();
+    });
+
+    it('M6 AC19: packs the pressure limit and its target into the row, and an unreachable limit for the others', () => {
+      const buffer = packElements([...ELEMENTS, CRUSHED]);
+      const words = new Uint32Array(buffer);
+      const floats = new Float32Array(buffer);
+      const at = (id: number, field: string): number => id * PROP_FIELDS.length + PROP_FIELDS.findIndex((f) => f.name === field);
+      expect(floats[at(ELEMENT.STONE, 'pressureAbove')]).toBe(Math.fround(elementByKey(ELEMENTS, 'STONE').pressureAbove!.pressure));
+      expect((words[at(ELEMENT.STONE, 'transitions')] >> 16) & 0xff).toBe(ELEMENT.SAND);
+      // The temperature transition of stone keeps its bits.
+      expect((words[at(ELEMENT.STONE, 'transitions')] >> 8) & 0xff).toBe(ELEMENT.LAVA);
+      expect(floats[at(200, 'pressureAbove')]).toBe(2);
+      expect(words[at(200, 'inert')]).toBe(0);
+      expect(floats[at(ELEMENT.SAND, 'pressureAbove')]).toBe(Math.fround(NO_PRESSURE));
+      expect(words[at(ELEMENT.SAND, 'transitions')] >> 16).toBe(0);
+    });
+
+    it.each([
+      ['a pressure of 0', { pressure: 0, becomes: 'SAND' }, /MUD: pressureAbove\.pressure must be a finite number above 0/],
+      ['a negative pressure', { pressure: -1, becomes: 'SAND' }, /MUD: pressureAbove\.pressure must be a finite number above 0/],
+      ['an infinite pressure', { pressure: Infinity, becomes: 'SAND' }, /MUD: pressureAbove\.pressure must be a finite number above 0/],
+      ['a pressure that is not a number', { pressure: NaN, becomes: 'SAND' }, /MUD: pressureAbove\.pressure must be a finite number above 0/],
+      ['a target missing from the table', { pressure: 2, becomes: 'GHOST' }, /MUD: pressureAbove\.becomes "GHOST" is not in the table/],
+      ['a target that is the element itself', { pressure: 2, becomes: 'MUD' }, /MUD: pressureAbove\.becomes "MUD" leads back to MUD/],
+    ])('M6 AC19: rejects %s', (_name, pressureAbove, message) => {
+      expect(() => validateElements([...ELEMENTS, { ...CRUSHED, pressureAbove }])).toThrow(message);
+    });
+
+    it('M6 AC19: rejects two elements that crush into each other, and accepts a chain that ends', () => {
+      const CLAY: ElementDef = { ...MUD, key: 'CLAY', id: 201, toolbar: 51, pressureAbove: { pressure: 2, becomes: 'MUD' } };
+      const loop = { ...CRUSHED, pressureAbove: { pressure: 2, becomes: 'CLAY' } };
+      expect(() => validateElements([...ELEMENTS, loop, CLAY])).toThrow(/pressureAbove\.becomes "(CLAY|MUD)" leads back to (MUD|CLAY)/);
+      // A third element that only leads into the loop is not part of it, and must not hang the check.
+      const FEEDER: ElementDef = { ...MUD, key: 'FEEDER', id: 202, toolbar: 52, pressureAbove: { pressure: 2, becomes: 'CLAY' } };
+      expect(() => validateElements([...ELEMENTS, loop, CLAY, FEEDER])).toThrow(/leads back to/);
+      expect(() => validateElements([...ELEMENTS, { ...CRUSHED, pressureAbove: { pressure: 2, becomes: 'CLAY' } }, { ...CLAY, pressureAbove: { pressure: 2, becomes: 'SAND' } }])).not.toThrow();
+    });
   });
 
   it.each([['below absolute zero', ABSOLUTE_ZERO - 1], ['above the hottest', MAX_TEMP + 1], ['not a number', NaN]])('M5: rejects a temperature %s', (_name, temperature) => {

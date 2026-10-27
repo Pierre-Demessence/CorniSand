@@ -24,7 +24,8 @@ const SLOTS = [0, 1, 2, 3] as const;
 // block's center: powders and liquids lose `drag` of their speed relative to the air and are pushed by its pressure
 // gradient, and gases and fire drift with the air after the sideways dispersion. A cell that passes an `above` threshold
 // with a burst, or ignites into FIRE (phase 6) from an element whose `above` is FIRE, adds the burst to its air cell's
-// entry of the burst buffer (group 3, binding 2) by an integer atomic add. Without air none of that code exists.
+// entry of the burst buffer (group 3, binding 2) by an integer atomic add. Phase 8 also turns a cell into its
+// `pressureAbove` target when the pressure of its air cell is above the limit. Without air none of that code exists.
 // `rules` maps a rule name (`ElementDef.rule`) to its WGSL.
 export const caWGSL = (
   width: number,
@@ -38,7 +39,9 @@ export const caWGSL = (
   for (const e of ruled) if (!(e.rule! in rules)) throw new Error(`element ${e.key}: unknown rule "${e.rule}"`);
   const ruleNames = [...new Set(ruled.map((e) => e.rule!))];
   const burns = elements.some((e) => e.flammable);
-  const transitions = elements.some((e) => e.below !== undefined || e.above !== undefined);
+  // A pressure transition needs the air to read; without it the element never changes.
+  const pressures = air !== undefined && elements.some((e) => e.pressureAbove !== undefined);
+  const transitions = pressures || elements.some((e) => e.below !== undefined || e.above !== undefined);
   const groups = launchGroups(width, height);
 
   // For each cell of the block, whether it ignites: flammable, with a fire cell in the block (after the lifetimes).
@@ -383,7 +386,16 @@ ${air ? '    releaseBurst(x, y, elAboveBurst(t));\n' : ''}    let start = elAbov
     let start = elBelowTemp(t) - (lower - s) * elHeatCapacity(t) / elHeatCapacity(next);
     return retype(withTemp(c, start), next, cellVariant(c), elLifeStart(next));
   }
-  return c;
+${pressures ? `  // Then the pressure of the air cell over the cell: past the element's limit it becomes its pressure target, keeping its
+  // heat (not its temperature: the two elements hold different heat per degree, so the new cell starts at the temperature
+  // that holds the same heat, as above). Nothing is read from the cell's neighbors; the air state does not change during a
+  // dispatch.
+  if (pressureAt(x / AIR_SI + 1, y / AIR_SI + 1) > elPressureAbove(t)) {
+    let next = elPressureBecomes(t);
+    let start = s * elHeatCapacity(t) / elHeatCapacity(next);
+    return retype(withTemp(c, start), next, cellVariant(c), elLifeStart(next));
+  }
+` : ''}  return c;
 }
 
 ${air ? `// -- Air drift --

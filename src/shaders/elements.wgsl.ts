@@ -39,4 +39,6 @@ fn elAboveWidth(t: u32) -> f32 { return elements[t].aboveWidth; }
 fn elBelowBecomes(t: u32) -> u32 { return elements[t].transitions & 0xffu; }
 fn elAboveBecomes(t: u32) -> u32 { return (elements[t].transitions >> 8u) & 0xffu; }
 fn elAboveBurst(t: u32) -> f32 { return elements[t].aboveBurst; }
+fn elPressureAbove(t: u32) -> f32 { return elements[t].pressureAbove; }
+fn elPressureBecomes(t: u32) -> u32 { return (elements[t].transitions >> 16u) & 0xffu; }
 `;
