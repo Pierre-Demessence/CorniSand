@@ -23,7 +23,7 @@ A cell is one 32-bit word in each of the field buffers listed in `CELL_FIELDS` (
 
 - `velocity`: the cell's velocity in cells per dispatch, x in the low 16 bits and y in the high 16 bits, each a binary16 float (`pack2x16float`). y = 0 is the bottom row, so a falling cell has a negative y.
 - `remainder`: the part of the cell's movement it has not spent yet, packed the same way. A cell moves one cell inside its block when the remainder on an axis reaches 1, so a speed of 1/4 cell per dispatch is a move every four dispatches. Both words are 0 for anything that does not fall, and for a cell at rest.
-- `temp`: the stored temperature in °C, an `f32` (the TypeScript side reads the words through `tempView`). It means nothing for a cell that holds no heat, empty space and walls: `makeCell`, the eraser and Clear leave it 0. A painted cell starts at its element's `temperature`, and so does every cell of a scene built by `src/scenes.ts` or loaded without a `temp` field (`Simulation.load`). No rule reads or changes it: a cell carries it unchanged wherever it moves or flies.
+- `temp`: the stored temperature in °C, an `f32` (the TypeScript side reads the words through `tempView`). It means nothing for a cell that holds no heat, empty space and walls: `makeCell`, the eraser and Clear leave it 0. A painted cell starts at its element's `temperature`, and so does every cell of a scene built by `src/scenes.ts` or loaded without a `temp` field (`Simulation.load`; a scene may set other temperatures, as `heatBars` does). Heat conduction (phase 7) changes it for the cells that hold heat; a cell carries it unchanged wherever it moves or flies.
 
 The shaders see them as a `Cell` struct (`loadCell`, `storeCell`, `storeChanged`, `cellType`, `cellVariant`, `cellLife`, `cellVelocity`, `cellRemainder`, `cellStoredTemp`, `makeCell`, `withType`, `withLife`, `withMotion`, `withTemp`), generated from the field list with the bindings in `@group(1)`, binding = field index. A new field is one entry in `CELL_FIELDS`; `makeCell` starts it at 0, and the `with…` builders copy a cell and change only the named part. `storeChanged` compares an `f32` field by its bits, so a moved cell keeps its exact word (as floats, −0 equals 0).
 
@@ -38,16 +38,20 @@ Every material is a row of `ELEMENTS` (`src/elements.ts`):
 | Element | ID | State | Density (kg/m³) | Other |
 | --- | --- | --- | --- | --- |
 | empty | 0 | empty | 1.2 (air) | |
-| sand | 1 | powder | 1600 | gravity 1/32 |
+| sand | 1 | powder | 1600 | gravity 1/32; conductivity 0.05, capacity 1.3 |
 | wall | 2 | solid | 2500 | |
-| water | 3 | liquid | 1000 | gravity 1/32 |
-| smoke | 4 | gas | 0.6 | |
-| oil | 5 | liquid | 900 | flammable, gravity 1/32 |
-| fire | 6 | plasma | 0.3 | life 200, loses 4 per dispatch, becomes smoke; rule `fire`; graphics `fire`; 1,000 °C |
+| water | 3 | liquid | 1000 | gravity 1/32; conductivity 0.3, capacity 4.2 |
+| smoke | 4 | gas | 0.6 | conductivity 0.05, capacity 1 (placeholder, backlog I16) |
+| oil | 5 | liquid | 900 | flammable, gravity 1/32; conductivity 0.1, capacity 1.7 |
+| fire | 6 | plasma | 0.3 | life 200, loses 4 per dispatch, becomes smoke; rule `fire`; graphics `fire`; 1,000 °C; conductivity 0.5, capacity 1 |
+| metal | 7 | solid | 7870 | holds heat: conductivity 1, capacity 3.5 |
+| stone | 8 | solid | 2700 | holds heat: conductivity 0.1, capacity 2.2 |
 
-The states: *empty* is air; a *solid* never moves and nothing passes through it; *powders* and *liquids* fall, and liquids also spread sideways; *gases* rise; *plasma* (fire) stays where it is, but a gas rises through it. A row also holds a label, a color, a `temperature` (°C, default 20: what a painted or loaded cell starts at), an optional `rule`, an optional `graphics` function and an optional toolbar order. A powder or liquid row has a `gravity` (cells per dispatch squared, default 1/32) and a `drag` (the share of its speed a flyer loses per dispatch, default 1/64); other states have no gravity.
+The states: *empty* is air; a *solid* never moves and nothing passes through it; *powders* and *liquids* fall, and liquids also spread sideways; *gases* rise; *plasma* (fire) stays where it is, but a gas rises through it. A row also holds a label, a color, a `temperature` (°C, default 20: what a painted or loaded cell starts at), a `conductivity` (0 to 1, default 0) and a `heatCapacity` (above 0, default 1; see Heat), an optional `rule`, an optional `graphics` function and an optional toolbar order. A powder or liquid row has a `gravity` (cells per dispatch squared, default 1/32) and a `drag` (the share of its speed a flyer loses per dispatch, default 1/64); other states have no gravity.
 
-The CA, the brush and the display read the table as a uniform array of 256 rows of 48 bytes (a uniform array's stride is a multiple of 16) (`@group(2)`; `ElementTable` fills it, `PROP_FIELDS` lists a row's words and generates both the WGSL struct and the packer). A uniform array indexed by the cell's type is one cached read, where a `const` array may be copied into every thread's memory. The element IDs and states are also generated as WGSL constants (`EL_SAND`, `ST_POWDER`), so no shader names a number. A test or a variant of the game gives `Simulation` another table (and extra rule sources) through its options.
+An element *holds heat* when its conductivity is above 0 (`elementHoldsHeat`, the table's `holdsHeat` word): its cells' `temp` words mean something. Empty space and the wall hold none. WALL is the engine's invincible wall and the world's edge, not a real material: it never conducts, so heat never leaves the world; the real building materials are metal and stone. SMOKE's heat values are placeholders (backlog I16).
+
+The CA, the brush and the display read the table as a uniform array of 256 rows of 64 bytes (a uniform array's stride is a multiple of 16) (`@group(2)`; `ElementTable` fills it, `PROP_FIELDS` lists a row's words and generates both the WGSL struct and the packer). A uniform array indexed by the cell's type is one cached read, where a `const` array may be copied into every thread's memory. The element IDs and states are also generated as WGSL constants (`EL_SAND`, `ST_POWDER`), so no shader names a number. A test or a variant of the game gives `Simulation` another table (and extra rule sources) through its options.
 
 Intuition: a new material only has to say what it is, powder or liquid or gas, and how heavy it is; the CA then knows it falls, piles up, sinks through lighter things and floats on heavier ones. Example: a powder row with density 1300 (mud) falls like sand, sinks through water (1000) and stays on top of sand (1600) with no other change (`tests/element-table.test.ts`).
 
@@ -59,7 +63,7 @@ Example with offset 0, the block whose bottom-left cell is (4, 6) holds (4, 6), 
 
 One thread handles one block: it reads the four cells, runs all rules and writes back the changed fields. Block `b` has its bottom-left cell at `2·b − offset`, and there are `ceil((W + offset) / 2) × ceil((H + offset) / 2)` blocks, so at offset 1 (and at odd sizes) edge blocks stick out of the grid.
 
-A block whose four cells are all inert (empty or solid, with no lifetime and no rule: `elementInert`, the table's `inert` word) cannot change in any phase, so the thread reads only their `kind` words and stops. Most of a screen is empty space or walls, so most threads stop there. A thread keeps its block in four separate variables, not in an array: on the RTX 4080 an array indexed by a slot computed at run time sits in slow per-thread memory instead of registers, which made the CA about three times slower.
+A block whose four cells are all inert (empty or solid, with no lifetime, no rule and no heat: `elementInert`, the table's `inert` word) cannot change in any phase, so the thread reads only their `kind` words and stops. Most of a screen is empty space or walls, so most threads stop there. A thread keeps its block in four separate variables, not in an array: on the RTX 4080 an array indexed by a slot computed at run time sits in slow per-thread memory instead of registers, which made the CA about three times slower.
 
 y = 0 is the bottom row; gravity points toward lower y.
 
@@ -80,10 +84,26 @@ Phases run in order on the block's four cells (BL, BR, TL, TR), each phase seein
 4. **Lifetimes**: an element with a `life` row loses its `decay` per dispatch and becomes the element named by `becomes` when it runs out (fire becomes smoke at 0).
 5. **Element rules**: for each cell, a generated `switch` on its element calls that element's rule, if the row has one; the rule sees the block and may change any of its cells. Fire's rule: fire next to water becomes smoke.
 6. **Ignition**: a flammable cell (oil) with a fire cell in its block becomes fire, starting at fire's `life.start`. Which cells ignite is decided right after the lifetimes (phase 4), before the rules, and applied here, so a rule never sees a cell that ignites in the same dispatch: oil that ignites beside water burns for a step before its fire goes out, while the fire that lit it is put out at once.
+7. **Heat conduction**: the four cells of the block exchange heat pairwise, see Heat.
 
 Fire has no movement rule; it only moves when a gas rises through it.
 
 Intuition for the liquids: each cell looks only at its 2×2 block, so a liquid cannot feel the weight of the water above it or push water along a pipe. A pool flattens because surface cells slide off the high spots, and falls into every gap. Example: a 30×40 block of water against the left wall of a 200-wide tank spreads out to a sheet 6 to 7 cells deep in about 1,200 supersteps (`tests/simulation.test.ts`, "dam break"). Connected vessels do not level: in the `uTube` scene the filled arm stays full and the empty arm stays empty, as in The Powder Toy (`docs/decisions.md`).
+
+## Heat
+
+Intuition: a hot cell warms the cell next to it and cools down itself, until the two have the same temperature, and a metal passes heat on much more readily than stone. Every cell that holds heat has a temperature (`temp`); empty space and the wall have none and stay out of it, so a hot cell surrounded by empty space and walls keeps its heat (empty space gets an air temperature in M6).
+
+Each dispatch, after all the other phases, the four cells of a block exchange heat in four pairs: the two rows, then the two columns at offset 0, the two columns, then the two rows at offset 1, so neither axis always goes first. Over a superstep every cell exchanges with each of its four neighbors. For a pair (a, b) with conductivities κa, κb and heat capacities Ca, Cb:
+
+- the pair's conductivity is the harmonic mean g = 2·κa·κb / (κa + κb), and 0 when either κ is 0 (the plain formula is 0/0 for two cells that hold no heat, which would write NaN into empty cells);
+- with d = Ta − Tb, stored Ta −= g·d·Cb / (Ca + Cb) and Tb += g·d·Ca / (Ca + Cb); nothing is written when g or d is 0, so a cell that holds no heat keeps its `temp` word bit for bit.
+
+Because Ca·ΔTa + Cb·ΔTb = 0, the heat C·T is conserved up to rounding; each exchange moves both cells toward their capacity-weighted mean and never past it (d becomes d·(1 − g)), so any κ in [0, 1] and any capacities are stable. The exchange reads and writes only the block's cells, which `tests/block-locality.test.ts` checks. The capacity is per cell: a cell is one unit of matter whatever its state, so metal (3.5) takes 3.5 times the heat of a fresh cell of capacity 1 for the same change of temperature, and water (4.2) soaks up the most. Conductivity and capacity are tuned from physical ranks, not physical units; the comment on each row says where its numbers come from.
+
+Speed: for one element, a unit of heat steps to its pair partner with probability κ/2 per dispatch, and its next partner is on the far side unless it stepped, so the variance of its position grows by κ/(2 − κ) cells² per dispatch along each axis. For metal (κ 1) that is 1 cell² per dispatch, a spread of about 22 cells in a second at 1x (62 at 8x); for stone (κ 0.1) about 5 (14). κ = 1 is the most a per-dispatch exchange allows.
+
+Example (`tests/heat.test.ts`): a 4-column line at 500 °C in a 256-wide slab at 20 °C. Between superstep 100 and 400 the variance of the excess heat along the slab grows by 600·κ/(2 − κ) within 5% (measured within 0.01%), for metal and for stone. In the `heatBars` scene (a metal bar and a stone bar, 48×4 each, hot in the 6 left columns) the far end of the metal bar is 10 °C above its start after about 180 supersteps, the stone bar's after about 3,300.
 
 ## Movement by velocity
 

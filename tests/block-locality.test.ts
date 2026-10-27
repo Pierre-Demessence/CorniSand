@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CELL_FIELDS, emptyCellData, type CellData } from '../src/cell-fields';
-import { ELEMENT as T, ELEMENTS, elementByKey, type ElementDef } from '../src/elements';
+import { ELEMENT as T, ELEMENTS, elementByKey, elementHoldsHeat, type ElementDef } from '../src/elements';
 import { packHalf2 } from '../src/half';
 import { mulberry32 } from '../src/random';
 import { caWGSL } from '../src/shaders/ca.wgsl';
@@ -21,8 +21,6 @@ type CellWords = Record<string, number>;
 type FieldGenerator = (e: ElementDef, variant: number, rand: Rand) => number;
 
 const falls = (e: ElementDef): boolean => e.state === 'powder' || e.state === 'liquid';
-// Empty space and walls hold no heat: their `temp` word means nothing.
-const holdsHeat = (e: ElementDef): boolean => e.key !== 'EMPTY' && e.key !== 'WALL';
 
 const floatBits = new Float32Array(1);
 const floatWord = new Uint32Array(floatBits.buffer);
@@ -47,8 +45,8 @@ const FIELD_GENERATORS: Partial<Record<string, FieldGenerator>> = {
     return packHalf2(Math.cos(angle) * length, Math.sin(angle) * length);
   },
   remainder: (e, _variant, rand) => (falls(e) ? packHalf2(rand() * 1.998 - 0.999, rand() * 1.998 - 0.999) : 0),
-  // -50 to 1,600 °C: from cold to past the melting point of metal.
-  temp: (e, _variant, rand) => (holdsHeat(e) ? f32Word(-50 + rand() * 1650) : 0),
+  // -50 to 1,600 °C: from cold to past the melting point of metal. A cell that holds no heat has no temperature.
+  temp: (e, _variant, rand) => (elementHoldsHeat(e) ? f32Word(-50 + rand() * 1650) : 0),
 };
 
 // A random cell of the table: about a quarter empty, the rest any row.

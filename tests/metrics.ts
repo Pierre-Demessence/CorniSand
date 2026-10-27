@@ -1,4 +1,4 @@
-import { ELEMENT as T } from '../src/elements';
+import { ELEMENT as T, elementHeatCapacity, elementHoldsHeat, type ElementDef } from '../src/elements';
 import type { Chamber } from '../src/scenes';
 
 // Measurements on a packed cell grid (row y = 0 at the bottom). Levels are heights above `floorY`.
@@ -89,4 +89,29 @@ export function columnsWithAbove(cells: Uint32Array, width: number, height: numb
     }
   }
   return columns;
+}
+
+/**
+ * The heat of the cells that hold heat: the sum of heat capacity times stored temperature over the cells of the grid
+ * and the flyers in the air (`kind` and `temp` words).
+ */
+export function heatContent(
+  table: readonly ElementDef[],
+  grid: { kind: Uint32Array; temp: Uint32Array },
+  flyers: readonly { cell: { kind: number; temp: number } }[] = [],
+): number {
+  const capacity = new Map<number, number>();
+  for (const e of table) if (elementHoldsHeat(e)) capacity.set(e.id, elementHeatCapacity(e));
+  const bits = new Uint32Array(1);
+  const asFloat = new Float32Array(bits.buffer);
+  const heat = (kind: number, temp: number): number => {
+    const c = capacity.get(kind & 0xff);
+    if (c === undefined) return 0;
+    bits[0] = temp;
+    return c * asFloat[0];
+  };
+  let total = 0;
+  for (let i = 0; i < grid.kind.length; i++) total += heat(grid.kind[i], grid.temp[i]);
+  for (const f of flyers) total += heat(f.cell.kind, f.cell.temp);
+  return total;
 }

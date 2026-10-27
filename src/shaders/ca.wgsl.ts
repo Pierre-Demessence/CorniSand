@@ -2,6 +2,7 @@ import type { ElementDef } from '../elements';
 import { launchGroups, movementWGSL } from '../movement';
 import { cellWGSL } from './cell.wgsl';
 import { elementsWGSL } from './elements.wgsl';
+import { heatWGSL } from './heat.wgsl';
 
 // The cells of a block are slots 0 to 3: bottom left, bottom right, top left, top right (slot = column + 2 * row).
 const SLOTS = [0, 1, 2, 3] as const;
@@ -13,8 +14,9 @@ const SLOTS = [0, 1, 2, 3] as const;
 //
 // The phases: gases rise, falling cells move by velocity, gases and liquids spread sideways, lifetimes, then the optional
 // rules. Ignition is decided between the lifetimes and the rules but applied after them, so a rule never sees a cell
-// that ignites in the same dispatch. A cell faster than LAUNCH_SPEED waits where it is for the flyer passes, which run
-// after the offset-1 dispatch; that dispatch also counts the launching cells of each workgroup (group 3).
+// that ignites in the same dispatch. Last, the four cells of the block exchange heat pairwise. A cell faster than
+// LAUNCH_SPEED waits where it is for the flyer passes, which run after the offset-1 dispatch; that dispatch also counts
+// the launching cells of each workgroup (group 3).
 // `rules` maps a rule name (`ElementDef.rule`) to its WGSL.
 export const caWGSL = (
   width: number,
@@ -37,6 +39,19 @@ export const caWGSL = (
   const ignitionApplied = SLOTS.map((n) =>
     `  if (ignite_${n} && elFlammable(cellType(blk${n}))) { blk${n} = retype(blk${n}, EL_FIRE, cellVariant(blk${n}), elLifeStart(EL_FIRE)); }`,
   ).join('\n');
+
+  // Phase 7: the four pairs of a block, rows then columns at offset 0 and columns then rows at offset 1, so neither axis
+  // always goes first. Written out per slot pair, never through a runtime slot index.
+  const exchange = ([a, b]: readonly [number, number]): string =>
+    `{ let t = exchangeHeat(blk${a}, blk${b}); blk${a}.temp = t.x; blk${b}.temp = t.y; }`;
+  const rowPairs = [[0, 1], [2, 3]] as const;
+  const columnPairs = [[0, 2], [1, 3]] as const;
+  const exchanges = (pairs: readonly (readonly [number, number])[]): string => pairs.map((p) => `      ${exchange(p)}`).join('\n');
+  const conduction = `    if (u.offset == 0u) {
+${exchanges([...rowPairs, ...columnPairs])}
+    } else {
+${exchanges([...columnPairs, ...rowPairs])}
+    }`;
 
   // A generated switch on the cell's element: only cells of an element with a rule call it.
   const ruleSwitches = SLOTS.map((i) => `  switch (cellType(block[${i}])) {
@@ -71,6 +86,7 @@ ${ruleSwitches}
   return /* wgsl */`
 ${cellWGSL('read_write', elements)}
 ${elementsWGSL}
+${heatWGSL}
 ${movementWGSL(maxFlyers)}
 ${ruleNames.map((n) => rules[n]).join('\n')}
 
@@ -127,7 +143,7 @@ fn readCell(x: i32, y: i32) -> Cell {
   return loadCell(u32(y) * W + u32(x));
 }
 
-// Whether the cell at (x, y) is of an inert element (empty or solid, no lifetime, no rule); out of bounds is a wall.
+// Whether the cell at (x, y) is of an inert element (empty or solid, no lifetime, no rule, no heat); out of bounds is a wall.
 fn inertAt(x: i32, y: i32) -> bool {
   return !inBounds(x, y) || elInert(loadKind(u32(y) * W + u32(x)) & 0xffu);
 }
@@ -374,6 +390,9 @@ ${ruleSection}
 ${burns ? `
     // Phase 6: Ignition
 ${ignitionApplied}` : ''}
+
+    // Phase 7: Heat conduction
+${conduction}
 
 ${storeBlock}
   }

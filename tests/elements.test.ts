@@ -1,14 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { PROP_FIELDS, ROW_BYTES, packElements } from '../src/element-table';
-import { DEFAULT_DRAG, DEFAULT_GRAVITY, ELEMENT, ELEMENTS, MAX_ELEMENTS, STATES, elementByKey, elementDrag, elementGravity, elementInert, elementTemperature, validateElements, type ElementDef } from '../src/elements';
+import {
+  DEFAULT_DRAG, DEFAULT_GRAVITY, ELEMENT, ELEMENTS, MAX_ELEMENTS, STATES, elementByKey, elementConductivity, elementDrag, elementGravity, elementHeatCapacity, elementHoldsHeat, elementInert,
+  elementTemperature, validateElements, type ElementDef,
+} from '../src/elements';
 import { ABSOLUTE_ZERO, MAX_TEMP, ROOM_TEMP } from '../src/heat';
 import { buttonAttributes, toolbarEntries } from '../src/toolbar';
 
-const MUD: ElementDef = { key: 'MUD', id: 7, label: 'Mud', color: [0.4, 0.3, 0.2], state: 'powder', density: 1300, toolbar: 7 };
+// Test rows sit far from the game's IDs and toolbar positions, which grow with the table.
+const MUD: ElementDef = { key: 'MUD', id: 200, label: 'Mud', color: [0.4, 0.3, 0.2], state: 'powder', density: 1300, toolbar: 50 };
 
 describe('element table', () => {
   it('AC11: describes every current material, the IDs the cells already store', () => {
-    expect(ELEMENT).toEqual({ EMPTY: 0, SAND: 1, WALL: 2, WATER: 3, SMOKE: 4, OIL: 5, FIRE: 6 });
+    expect(ELEMENT).toEqual({ EMPTY: 0, SAND: 1, WALL: 2, WATER: 3, SMOKE: 4, OIL: 5, FIRE: 6, METAL: 7, STONE: 8 });
     expect(() => validateElements(ELEMENTS)).not.toThrow();
     expect(elementByKey(ELEMENTS, 'FIRE').life).toEqual({ start: 200, decay: 4, becomes: 'SMOKE' });
   });
@@ -20,8 +24,8 @@ describe('element table', () => {
     expect(density('WATER')).toBeLessThan(density('SAND'));
   });
 
-  it('packs one 48-byte row per element ID, at the offset the ID gives', () => {
-    expect(ROW_BYTES).toBe(48);
+  it('packs one 64-byte row per element ID, at the offset the ID gives', () => {
+    expect(ROW_BYTES).toBe(64);
     const buffer = packElements(ELEMENTS);
     const words = new Uint32Array(buffer);
     const floats = new Float32Array(buffer);
@@ -38,6 +42,7 @@ describe('element table', () => {
     expect(floats[at(ELEMENT.WATER, 'drag')]).toBe(DEFAULT_DRAG);
     expect(words[at(ELEMENT.WALL, 'inert')]).toBe(1);
     expect(words[at(ELEMENT.SAND, 'inert')]).toBe(0);
+    expect(words[at(ELEMENT.METAL, 'inert')], 'a solid that holds heat is not inert').toBe(0);
     expect(words.subarray(at(100, 'colorR'), at(101, 'colorR')).every((w) => w === 0), 'an unused ID').toBe(true);
   });
 
@@ -46,6 +51,7 @@ describe('element table', () => {
     expect(inert).toEqual(expect.arrayContaining(['EMPTY', 'WALL']));
     expect(inert).toHaveLength(2);
     const wall = elementByKey(ELEMENTS, 'WALL');
+    expect(elementInert({ ...wall, conductivity: 0.1 })).toBe(false);
     expect(elementInert({ ...wall, rule: 'fire' })).toBe(false);
     expect(elementInert({ ...wall, life: { start: 10, decay: 1, becomes: 'EMPTY' } })).toBe(false);
   });
@@ -67,6 +73,43 @@ describe('element table', () => {
     const at = (id: number): number => id * PROP_FIELDS.length + PROP_FIELDS.findIndex((f) => f.name === 'temperature');
     expect(floats[at(ELEMENT.FIRE)]).toBe(1000);
     expect(floats[at(ELEMENT.WATER)]).toBe(ROOM_TEMP);
+  });
+
+  it('M5: gives METAL and STONE their conductivity and capacity, and everything else a default', () => {
+    const metal = elementByKey(ELEMENTS, 'METAL');
+    const stone = elementByKey(ELEMENTS, 'STONE');
+    expect([metal.state, metal.density, elementConductivity(metal), elementHeatCapacity(metal)]).toEqual(['solid', 7870, 1, 3.5]);
+    expect([stone.state, stone.density, elementConductivity(stone), elementHeatCapacity(stone)]).toEqual(['solid', 2700, 0.1, 2.2]);
+    expect(elementConductivity(MUD)).toBe(0);
+    expect(elementHeatCapacity(MUD)).toBe(1);
+    expect(ELEMENTS.filter((e) => !elementHoldsHeat(e)).map((e) => e.key).sort()).toEqual(['EMPTY', 'WALL']);
+  });
+
+  it('M5: packs conductivity, heat capacity and whether the element holds heat for the GPU', () => {
+    const buffer = packElements([...ELEMENTS, { ...MUD, conductivity: 0.25, heatCapacity: 2 }]);
+    const words = new Uint32Array(buffer);
+    const floats = new Float32Array(buffer);
+    const at = (id: number, field: string): number => id * PROP_FIELDS.length + PROP_FIELDS.findIndex((f) => f.name === field);
+    expect(floats[at(ELEMENT.METAL, 'conductivity')]).toBe(1);
+    expect(floats[at(ELEMENT.METAL, 'heatCapacity')]).toBe(3.5);
+    expect(floats[at(ELEMENT.STONE, 'conductivity')]).toBeCloseTo(0.1, 7);
+    expect(floats[at(200, 'conductivity')]).toBe(0.25);
+    expect(floats[at(200, 'heatCapacity')]).toBe(2);
+    expect(floats[at(ELEMENT.WALL, 'conductivity')]).toBe(0);
+    expect(floats[at(ELEMENT.WALL, 'heatCapacity')]).toBe(1);
+    for (const key of ['METAL', 'STONE', 'SAND', 'WATER', 'OIL', 'SMOKE', 'FIRE'] as const) expect(words[at(ELEMENT[key], 'holdsHeat')], key).toBe(1);
+    for (const key of ['EMPTY', 'WALL'] as const) expect(words[at(ELEMENT[key], 'holdsHeat')], key).toBe(0);
+  });
+
+  it.each([
+    ['a negative conductivity', { conductivity: -0.1 }, /MUD: conductivity must be a number in 0\.\.1/],
+    ['a conductivity above 1', { conductivity: 1.5 }, /MUD: conductivity must be a number in 0\.\.1/],
+    ['a conductivity that is not a number', { conductivity: NaN }, /MUD: conductivity must be a number in 0\.\.1/],
+    ['a heat capacity of 0', { heatCapacity: 0 }, /MUD: heatCapacity must be a finite number above 0/],
+    ['a negative heat capacity', { heatCapacity: -1 }, /MUD: heatCapacity must be a finite number above 0/],
+    ['an infinite heat capacity', { heatCapacity: Infinity }, /MUD: heatCapacity must be a finite number above 0/],
+  ])('M5: rejects %s', (_name, change, message) => {
+    expect(() => validateElements([...ELEMENTS, { ...MUD, ...change }])).toThrow(message);
   });
 
   it.each([['below absolute zero', ABSOLUTE_ZERO - 1], ['above the hottest', MAX_TEMP + 1], ['not a number', NaN]])('M5: rejects a temperature %s', (_name, temperature) => {
@@ -101,21 +144,23 @@ describe('toolbar', () => {
       { id: ELEMENT.FIRE, label: 'Fire', key: '4' },
       { id: ELEMENT.SMOKE, label: 'Smoke', key: '5' },
       { id: ELEMENT.WALL, label: 'Wall', key: '6' },
+      { id: ELEMENT.METAL, label: 'Metal', key: '7' },
+      { id: ELEMENT.STONE, label: 'Stone', key: '8' },
     ]);
   });
 
   it('follows a table: an extra row appears at its position, an element without one does not', () => {
-    const table: ElementDef[] = [...ELEMENTS, { ...MUD, toolbar: 3 }].map((e) => (e.key === 'OIL' ? { ...e, toolbar: 7 } : e));
-    expect(toolbarEntries(table).map((e) => e.label)).toEqual(['Sand', 'Water', 'Mud', 'Fire', 'Smoke', 'Wall', 'Oil']);
-    expect(toolbarEntries([...ELEMENTS, { ...MUD, toolbar: undefined }])).toHaveLength(6);
+    const table: ElementDef[] = [...ELEMENTS, { ...MUD, toolbar: 3 }].map((e) => (e.key === 'OIL' ? { ...e, toolbar: 70 } : e));
+    expect(toolbarEntries(table).map((e) => e.label)).toEqual(['Sand', 'Water', 'Mud', 'Fire', 'Smoke', 'Wall', 'Metal', 'Stone', 'Oil']);
+    expect(toolbarEntries([...ELEMENTS, { ...MUD, toolbar: undefined }])).toHaveLength(8);
   });
 
   it('gives each button the element ID in data-type and the tool-btn class', () => {
-    expect(buttonAttributes({ id: 7, label: 'Mud', key: '7' })).toEqual({ type: 'button', class: 'tool-btn', 'data-type': '7' });
+    expect(buttonAttributes({ id: 200, label: 'Mud', key: '7' })).toEqual({ type: 'button', class: 'tool-btn', 'data-type': '200' });
   });
 
   it('gives only the first nine buttons a key', () => {
-    const table: ElementDef[] = Array.from({ length: 11 }, (_, i) => ({ ...MUD, key: `E${i + 1}`, id: i + 10, toolbar: i + 1 }));
+    const table: ElementDef[] = Array.from({ length: 11 }, (_, i) => ({ ...MUD, key: `E${i + 1}`, id: i + 201, toolbar: i + 1 }));
     const unpaintable = (ELEMENTS as readonly ElementDef[]).filter((e) => e.toolbar === undefined);
     expect(toolbarEntries([...unpaintable, ...table]).map((e) => e.key))
       .toEqual(['1', '2', '3', '4', '5', '6', '7', '8', '9', undefined, undefined]);

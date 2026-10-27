@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { CELL_FIELDS, tempView } from '../src/cell-fields';
 import { ELEMENT as T, ELEMENTS, elementTemperature } from '../src/elements';
 import { unpackHalf2 } from '../src/half';
-import { BLAST, BLAST_CENTER, BLAST_MARK, findScene, packCell, SCENES, uTube } from '../src/scenes';
+import { BLAST, BLAST_CENTER, BLAST_MARK, findScene, HEAT_BARS, heatBars, packCell, SCENES, uTube } from '../src/scenes';
 import { cell } from './gpu';
 import { chamberLevel, liquidVolume } from './metrics';
 
@@ -23,9 +23,10 @@ describe('scenes', () => {
     }
   });
 
-  it('M5 AC3: start every cell of every scene at its element temperature', () => {
+  it('M5 AC3: start every cell of every scene at its element temperature, except where a scene sets its own', () => {
     const temps = new Map(ELEMENTS.map((e) => [e.id as number, Math.fround(elementTemperature(e))]));
     for (const [name, build] of Object.entries(SCENES)) {
+      if (name === 'heatBars') continue;
       const { fields } = build();
       const temp = tempView(fields);
       for (let i = 0; i < temp.length; i++) {
@@ -34,6 +35,27 @@ describe('scenes', () => {
         }
       }
     }
+  });
+
+  it('M5.3: lay out the heat bars as a metal bar over a stone bar, each in its own wall channel, hot at the left end', () => {
+    const { fields, width, height } = heatBars();
+    const { x0, x1, hotColumns, hot, cold, metalY0, stoneY0, barHeight } = HEAT_BARS;
+    const temp = tempView(fields);
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const i = y * width + x;
+        const bar = x >= x0 && x < x1 && ((y >= metalY0 && y < metalY0 + barHeight) || (y >= stoneY0 && y < stoneY0 + barHeight));
+        if (!bar) {
+          expect(fields.kind[i], `cell (${x}, ${y}) outside the bars`).toBe(packCell(T.WALL));
+          continue;
+        }
+        const type = y < stoneY0 ? T.METAL : T.STONE;
+        expect(fields.kind[i], `cell (${x}, ${y})`).toBe(packCell(type));
+        expect(temp[i], `temperature of cell (${x}, ${y})`).toBe(x < x0 + hotColumns ? hot : cold);
+      }
+    }
+    expect([x1 - x0, barHeight]).toEqual([48, 4]);
+    expect(hotColumns).toBe(6);
   });
 
   it('look scenes up by their registered name only', () => {

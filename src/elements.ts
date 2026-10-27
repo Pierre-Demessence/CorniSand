@@ -28,6 +28,10 @@ export interface ElementDef {
   flammable?: boolean;
   /** °C a painted cell starts at, and a cell of a scene loaded without temperatures; default `ROOM_TEMP`. */
   temperature?: number;
+  /** Share of the temperature difference to a neighbor that evens out per exchange, 0 to 1; default 0 (holds no heat unless it has a transition). Two cells exchange at the harmonic mean of their conductivities, 0 when either is 0. */
+  conductivity?: number;
+  /** Heat per °C of one cell, above 0; default 1. A cell of a high capacity changes temperature less for the same heat. */
+  heatCapacity?: number;
   /** `life` counts down by `decay` per dispatch from `start` and the cell becomes the element `becomes` (a key) at 0. */
   life?: { start: number; decay: number; becomes: string };
   /** Optional WGSL rule run for cells of this element: the name of a file in `src/shaders/rules/`. */
@@ -47,12 +51,30 @@ export function elementGravity(e: ElementDef): number {
   return e.gravity ?? (e.state === 'powder' || e.state === 'liquid' ? DEFAULT_GRAVITY : 0);
 }
 
+/** The conductivity of a row with its default applied. */
+export function elementConductivity(e: ElementDef): number {
+  return e.conductivity ?? 0;
+}
+
+/** The heat capacity of a row with its default applied. */
+export function elementHeatCapacity(e: ElementDef): number {
+  return e.heatCapacity ?? 1;
+}
+
 /**
- * Whether a cell of this element never changes by itself: empty or solid, with no lifetime and no rule. A block of
- * only such cells is a fixed point of every CA phase, so the CA skips it.
+ * Whether a cell of this element has a temperature that means something: it conducts heat. Empty space and walls do
+ * not; the `temp` word of such a cell is never read or changed by heat.
+ */
+export function elementHoldsHeat(e: ElementDef): boolean {
+  return elementConductivity(e) > 0;
+}
+
+/**
+ * Whether a cell of this element never changes by itself: empty or solid, with no lifetime, no rule and no heat. A block
+ * of only such cells is a fixed point of every CA phase, so the CA skips it.
  */
 export function elementInert(e: ElementDef): boolean {
-  return (e.state === 'empty' || e.state === 'solid') && !e.life && e.rule === undefined;
+  return (e.state === 'empty' || e.state === 'solid') && !e.life && e.rule === undefined && !elementHoldsHeat(e);
 }
 
 /** The drag of a row with its default applied. */
@@ -68,13 +90,22 @@ export function elementTemperature(e: ElementDef): number {
 // The table is a uniform array of this many rows, and the cell stores the ID in 8 bits.
 export const MAX_ELEMENTS = 256;
 
+// Conductivity and heat capacity are tuning grounded in physical ranks, not physical units: a cell is one unit of matter
+// whatever its state, so the capacity is per cell and the conductivity a share per exchange. Empty space holds no heat
+// until M6 gives it an air temperature.
 export const ELEMENTS = [
   { key: 'EMPTY', id: 0, label: 'Empty', color: [0.06, 0.06, 0.08], state: 'empty', density: 1.2 },
-  { key: 'SAND', id: 1, label: 'Sand', color: [0.80, 0.70, 0.48], state: 'powder', density: 1600, toolbar: 1 },
+  // Dry sand conducts poorly (about 0.3 W/m·K, rank 0.05); capacity from its volumetric 1.3 MJ/m³·K.
+  { key: 'SAND', id: 1, label: 'Sand', color: [0.80, 0.70, 0.48], state: 'powder', density: 1600, conductivity: 0.05, heatCapacity: 1.3, toolbar: 1 },
+  // The engine's invincible wall and the world's edge, not a real material: it never conducts, so heat never leaves the world.
   { key: 'WALL', id: 2, label: 'Wall', color: [0.43, 0.45, 0.47], state: 'solid', density: 2500, toolbar: 6 },
-  { key: 'WATER', id: 3, label: 'Water', color: [0.18, 0.42, 0.72], state: 'liquid', density: 1000, toolbar: 2 },
-  { key: 'SMOKE', id: 4, label: 'Smoke', color: [0.72, 0.72, 0.74], state: 'gas', density: 0.6, toolbar: 5 },
-  { key: 'OIL', id: 5, label: 'Oil', color: [0.22, 0.16, 0.10], state: 'liquid', density: 900, flammable: true, toolbar: 3 },
+  // Water conducts 0.6 W/m·K, which ranks 0.1; it gets 0.3 to stand in for the convection a resting CA liquid does not
+  // have. Capacity 4.2 from its 4.2 MJ/m³·K, the highest of the table.
+  { key: 'WATER', id: 3, label: 'Water', color: [0.18, 0.42, 0.72], state: 'liquid', density: 1000, conductivity: 0.3, heatCapacity: 4.2, toolbar: 2 },
+  // A placeholder for every fire's smoke (backlog I16): stand-in heat values, not tuned.
+  { key: 'SMOKE', id: 4, label: 'Smoke', color: [0.72, 0.72, 0.74], state: 'gas', density: 0.6, conductivity: 0.05, heatCapacity: 1, toolbar: 5 },
+  // Oil: 0.14 W/m·K (rank 0.1) and 1.7 MJ/m³·K.
+  { key: 'OIL', id: 5, label: 'Oil', color: [0.22, 0.16, 0.10], state: 'liquid', density: 900, flammable: true, conductivity: 0.1, heatCapacity: 1.7, toolbar: 3 },
   {
     key: 'FIRE',
     id: 6,
@@ -85,10 +116,17 @@ export const ELEMENTS = [
     life: { start: 200, decay: 4, becomes: 'SMOKE' },
     // About the temperature of an open flame.
     temperature: 1000,
+    // A hot gas that heats what it touches quickly and holds little heat itself: a high rank for a gas, a small capacity.
+    conductivity: 0.5,
+    heatCapacity: 1,
     rule: 'fire',
     graphics: 'fire',
     toolbar: 4,
   },
+  // Steel-like metal: the best conductor of the table (about 50 W/m·K, rank 1), 3.5 MJ/m³·K.
+  { key: 'METAL', id: 7, label: 'Metal', color: [0.70, 0.74, 0.80], state: 'solid', density: 7870, conductivity: 1, heatCapacity: 3.5, toolbar: 7 },
+  // Granite-like stone: about 2.5 W/m·K (rank 0.1), 2.2 MJ/m³·K.
+  { key: 'STONE', id: 8, label: 'Stone', color: [0.52, 0.46, 0.40], state: 'solid', density: 2700, conductivity: 0.1, heatCapacity: 2.2, toolbar: 8 },
 ] as const satisfies readonly ElementDef[];
 
 /** The IDs of the default table by key: the only way code outside the table names an element. */
@@ -113,6 +151,8 @@ export function validateElements(elements: readonly ElementDef[]): void {
     if (!STATES.includes(e.state)) throw new Error(`element ${e.key}: unknown state "${e.state}"`);
     if (!Number.isFinite(e.density)) throw new Error(`element ${e.key}: density must be a number`);
     if (!(elementGravity(e) >= 0 && elementGravity(e) < Infinity)) throw new Error(`element ${e.key}: gravity must be a finite number, 0 or more`);
+    if (!(elementConductivity(e) >= 0 && elementConductivity(e) <= 1)) throw new Error(`element ${e.key}: conductivity must be a number in 0..1`);
+    if (!(elementHeatCapacity(e) > 0 && elementHeatCapacity(e) < Infinity)) throw new Error(`element ${e.key}: heatCapacity must be a finite number above 0`);
     if (!(elementDrag(e) >= 0 && elementDrag(e) < 1)) throw new Error(`element ${e.key}: drag must be at least 0 and below 1`);
     if (!(elementTemperature(e) >= ABSOLUTE_ZERO && elementTemperature(e) <= MAX_TEMP)) {
       throw new Error(`element ${e.key}: temperature must be a number in ${ABSOLUTE_ZERO}..${MAX_TEMP}`);

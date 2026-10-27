@@ -1,6 +1,6 @@
 # M5 Heat and phase changes
 
-Status: M5.1 and M5.2 done; next is M5.3a.
+Status: M5.1, M5.2 and M5.3 done; next is M5.4a.
 
 ## Goal
 
@@ -251,9 +251,9 @@ Needs you: nothing.
 
 ### M5.3 Conduction (tasks)
 
-- [ ] M5.3a `conductivity`, `heatCapacity`, `elementHoldsHeat` and the `holdsHeat` word, the inert rule, validation and 64-byte packing; METAL (7) and STONE (8) rows; the test tables of `tests/elements.test.ts` and `tests/element-table.test.ts` moved to IDs from 200, their expectations updated; the M5.1 generator's stand-in `holdsHeat` (every element but EMPTY and WALL) replaced by `elementHoldsHeat`. Verify: lint, typecheck, `npm test`.
-- [ ] M5.3b Phase 7 in `ca.wgsl.ts` with `src/shaders/heat.wgsl.ts`; the `heatBars` scene, with the `Canvas` temperature fill it is the first user of; AC5–AC8 tests (`tests/heat.test.ts` exists from M5.2); AC1 still passes. Verify: lint, typecheck, `npm test`, build, bench into "M5.3 results".
-- [ ] M5.3c Docs: `docs/simulation.md` (columns, phase 7, Heat section), AGENTS.md (the inert rule).
+- [x] M5.3a `conductivity`, `heatCapacity`, `elementHoldsHeat` and the `holdsHeat` word, the inert rule, validation and 64-byte packing; METAL (7) and STONE (8) rows; the test tables of `tests/elements.test.ts` and `tests/element-table.test.ts` moved to IDs from 200, their expectations updated; the M5.1 generator's stand-in `holdsHeat` (every element but EMPTY and WALL) replaced by `elementHoldsHeat`. Verify: lint, typecheck, `npm test`.
+- [x] M5.3b Phase 7 in `ca.wgsl.ts` with `src/shaders/heat.wgsl.ts`; the `heatBars` scene, with the `Canvas` temperature fill it is the first user of; AC5–AC8 tests (`tests/heat.test.ts` exists from M5.2); AC1 still passes. Verify: lint, typecheck, `npm test`, build, bench into "M5.3 results".
+- [x] M5.3c Docs: `docs/simulation.md` (columns, phase 7, Heat section), AGENTS.md (the inert rule).
 
 Visible after: Metal and Stone buttons in the toolbar. Heat itself stays invisible until the heat view (M5.5).
 Needs you: nothing.
@@ -342,7 +342,22 @@ Same machine and conditions as the baseline (`nvidia-smi`: 4% utilization, deskt
 
 ## M5.3 results
 
-To be filled by M5.3b.
+Same machine as the baseline, but `nvidia-smi` showed 3–31% utilization from desktop apps (Chrome, Discord, Steam; no game or wallpaper) against the baseline's 1–4%; the 1x medians below are quantized to about 0.065 ms, so read the pass table for the change.
+
+- Lint, typecheck and build: clean. `npm test`: 12 files, 120 tests pass (the 104 of M5.2 plus 16 new: AC5 for METAL and STONE, AC6, AC7 three times (the third pins the metal-stone exchange to the harmonic mean of the two conductivities) and AC8 in `tests/heat.test.ts`; the conductivity and capacity rules, packing and the toolbar in `tests/elements.test.ts`; the `heatBars` layout in `tests/scenes.test.ts`). AC1 passes unchanged with conduction in the CA, both negative controls still fail the check.
+- Measured: AC5 variance growth over the formula's 0.99997 (METAL) and 1.0000006 (STONE); AC6 the far end passed 30 °C at superstep 180 (metal) and 3,280 (stone), ratio 18.2; AC7 the two blocks' worst cell is 95, 22, 5.1, 1.2, 0.27 and 0.06 °C from the mean after 500, 1,000, 1,500, 2,000, 2,500 and 3,000 supersteps (the test checks 2,500); AC8 relative drift 5.6e-8 over 2,000 supersteps while the metal and stone spread fell from 596 °C to 179 °C.
+- Choices made: the `exchangeHeat` function returns the pair's new stored temperatures and the generated code writes `.temp` of `blk0`–`blk3`; a pair whose κ is 0 or whose temperatures are equal returns its own words, so no `temp` word of a cell that holds no heat is ever written. Test rows moved to IDs 200+ and toolbar 50+. The AC4 falling-grains test now uses a powder row that holds no heat, because sand conducts and would even out the marks it must carry bit for bit; the flyer test is unchanged (one grain alone). `tests/scenes.test.ts`'s "every scene at its element temperature" skips `heatBars`, which sets its own hot columns and has a test of its own. `heatContent` (`tests/metrics.ts`) sums C × stored temperature; M5.4 adds the latent term.
+- `npm run bench`, GPU ms per frame, median of 60 frames (two runs, the second run within 0.07 ms):
+
+| Scene | 1x | 2x | 4x | 8x | 1x vs baseline |
+| --- | --- | --- | --- | --- | --- |
+| tank | 0.46 | 0.98 | 2.03 | 3.87 | +0.07 |
+| mix75 | 1.31 (1.38) | 2.56 | 4.39 | 5.96 | +0.26 (+0.33) |
+| full100 | 1.18 | 2.29 | 4.52 | 7.67 | +0.20 |
+| blast | 0.39 | 0.59 | 1.18 | 2.36 | +0.06 |
+
+- 1x by pass (mean of the frames, per run): the two CA dispatches went from 1.03 (M5.2) to 1.11–1.12 ms on `mix75` and from 0.95–1.00 to 1.02–1.05 ms on `full100`, so conduction costs about 0.05–0.09 ms there; the pass sum of `blast` went from 0.333 (baseline) to 0.372 ms. The flyer passes stayed within noise. Simulation creation: 660–1,050 ms for the first one of a size (the first run after a shader change compiles slowly), 3–19 ms after.
+- Every scene stays inside AC21's budget (tank ≤ 1.39, mix75 ≤ 2.05, full100 ≤ 1.98, blast ≤ 1.33 ms), with 0.6–0.9 ms left for phase changes (M5.4) and the rest.
 
 ## M5.4 results
 

@@ -4,8 +4,9 @@ import { Simulation } from '../src/simulation';
 import { cell, cellType, countTypes, createSim, device, loadScene, readCells, runMany } from './gpu';
 import { columnsWithAbove } from './metrics';
 
-// A table with one extra row and no other change: the CA reads the row's state and density, nothing else.
-const MUD = 7;
+// A table with one extra row and no other change: the CA reads the row's state and density, nothing else. Test rows sit
+// far from the game's IDs, which grow with the table.
+const MUD = 200;
 const MUD_ROW: ElementDef = {
   key: 'MUD',
   id: MUD,
@@ -14,7 +15,7 @@ const MUD_ROW: ElementDef = {
   state: 'powder',
   // Between water (1000) and sand (1600).
   density: 1300,
-  toolbar: 7,
+  toolbar: 50,
 };
 const withMud: ElementDef[] = [...ELEMENTS, MUD_ROW];
 
@@ -107,7 +108,7 @@ describe.skipIf(!device)('element table in the simulation', () => {
   });
 
   it('AC13: an element with a rule runs it for cells of that element only', async () => {
-    const GLOW = 8;
+    const GLOW = 201;
     const table: ElementDef[] = [
       ...ELEMENTS,
       { key: 'GLOW', id: GLOW, label: 'Glow', color: [1, 1, 0], state: 'solid', density: 2000, rule: 'count' },
@@ -135,7 +136,7 @@ describe.skipIf(!device)('element table in the simulation', () => {
   });
 
   it('ages a solid with a lifetime alone in empty space: the CA skips only blocks that cannot change', async () => {
-    const EMBER = 8;
+    const EMBER = 201;
     const table: ElementDef[] = [
       ...ELEMENTS,
       { key: 'EMBER', id: EMBER, label: 'Ember', color: [1, 0.4, 0], state: 'solid', density: 2000, life: { start: 6, decay: 1, becomes: 'EMPTY' } },

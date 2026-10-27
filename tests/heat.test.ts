@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { tempView } from '../src/cell-fields';
-import { ELEMENT as T, ELEMENTS, elementTemperature } from '../src/elements';
+import { ELEMENT as T, ELEMENTS, elementByKey, elementConductivity, elementHeatCapacity, elementTemperature, type ElementDef } from '../src/elements';
 import { ROOM_TEMP } from '../src/heat';
-import { SCENES } from '../src/scenes';
+import { HEAT_BARS, SCENES } from '../src/scenes';
 import type { Simulation } from '../src/simulation';
-import { cell, cellType, createSim, device, idleInput, readCells, run, runMany } from './gpu';
+import { cell, cellType, createSim, device, idleInput, mulberry32, readCells, run, runMany } from './gpu';
+import { heatContent } from './metrics';
 
 const FIRE_TEMP = 1000;
 
@@ -89,7 +90,10 @@ describe.skipIf(!device)('M5 heat', () => {
   it('AC4: falling grains carry their temperatures bit for bit, -0 included, and the empty cells keep theirs', async () => {
     const width = 40;
     const height = 60;
-    const sim = createSim(width, height, 5);
+    // Grains that conduct would even out their marks where they touch; this powder holds no heat, so it only carries them.
+    const DUST = 200;
+    const dust: ElementDef = { key: 'DUST', id: DUST, label: 'Dust', color: [0.5, 0.5, 0.5], state: 'powder', density: 1600 };
+    const sim = createSim(width, height, 5, { elements: [...ELEMENTS, dust] });
     const kind = new Uint32Array(width * height);
     // Empty cells at 0, as after Clear or the eraser: a grain at -0 moving into one must keep its sign bit.
     const temp = uniformTemps(width * height, 0);
@@ -98,7 +102,7 @@ describe.skipIf(!device)('M5 heat', () => {
     for (const y of [50, 51]) {
       for (let x = 1; x < width; x += 2) {
         const i = y * width + x;
-        kind[i] = cell(T.SAND);
+        kind[i] = cell(DUST);
         temps[i] = marked.length === 0 ? -0 : marked.length * 37.77 - 300;
         marked.push(temp[i]);
       }
@@ -111,7 +115,7 @@ describe.skipIf(!device)('M5 heat', () => {
     const tempAfter = await sim.fields.read('temp');
     const carried: number[] = [];
     for (let i = 0; i < kindAfter.length; i++) {
-      if (cellType(kindAfter[i]) === T.SAND) carried.push(tempAfter[i]);
+      if (cellType(kindAfter[i]) === DUST) carried.push(tempAfter[i]);
       else expect(tempAfter[i], `temp word of the empty cell ${i}`).toBe(0);
     }
     expect(kindAfter, 'the grains moved').not.toEqual(kind);
@@ -140,4 +144,190 @@ describe.skipIf(!device)('M5 heat', () => {
     expect(cellType((await readCells(sim))[4]), 'the grain rests on the floor').toBe(T.SAND);
     expect((await sim.fields.read('temp'))[4], 'its temp word came along').toBe(marked);
   });
+});
+
+// Variance along x of the heat above `base`, averaged over the rows of each column.
+function excessVariance(temps: Float32Array, width: number, height: number, base: number): number {
+  let weight = 0;
+  let first = 0;
+  let second = 0;
+  for (let x = 0; x < width; x++) {
+    let column = 0;
+    for (let y = 0; y < height; y++) column += (temps[y * width + x] - base) / height;
+    weight += column;
+    first += column * x;
+    second += column * x * x;
+  }
+  return second / weight - (first / weight) ** 2;
+}
+
+// The mean temperature of columns [x0, x1) and rows [y0, y1).
+function meanTemp(temps: Float32Array, width: number, x0: number, x1: number, y0: number, y1: number): number {
+  let sum = 0;
+  for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) sum += temps[y * width + x];
+  return sum / ((x1 - x0) * (y1 - y0));
+}
+
+describe.skipIf(!device)('M5.3 conduction', () => {
+  it.each(['METAL', 'STONE'])('AC5: the heat of a hot line in a %s slab spreads at the rate its conductivity gives', async (key) => {
+    const element = elementByKey(ELEMENTS, key);
+    const kappa = elementConductivity(element);
+    const width = 256;
+    const height = 8;
+    const kind = new Uint32Array(width * height).fill(cell(element.id));
+    const temp = uniformTemps(width * height, 20);
+    const temps = tempView({ temp });
+    for (let y = 0; y < height; y++) for (let x = 126; x < 130; x++) temps[y * width + x] = 500;
+    const sim = createSim(width, height);
+    sim.load({ kind, temp });
+
+    await runMany(sim, 100);
+    const before = excessVariance(await readTemps(sim), width, height, 20);
+    await runMany(sim, 300);
+    const after = excessVariance(await readTemps(sim), width, height, 20);
+
+    // 300 supersteps are 600 dispatches; each adds kappa / (2 - kappa) cells² along x.
+    const ratio = (after - before) / ((600 * kappa) / (2 - kappa));
+    expect(ratio, `variance growth over the formula's, ${key}`).toBeGreaterThan(0.95);
+    expect(ratio, `variance growth over the formula's, ${key}`).toBeLessThan(1.05);
+  }, 60_000);
+
+  it('AC6: heat crosses a metal bar at least 5 times faster than a stone bar of the same size', async () => {
+    const scene = SCENES.heatBars();
+    const { width, x1, cold, metalY0, stoneY0, barHeight } = HEAT_BARS;
+    const sim = createSim(scene.width, scene.height);
+    sim.load(scene.fields);
+
+    const reached: Record<string, number | undefined> = {};
+    const step = 10;
+    const cap = 6000;
+    for (let supersteps = step; supersteps <= cap && (reached.metal === undefined || reached.stone === undefined); supersteps += step) {
+      await runMany(sim, step);
+      const temps = await readTemps(sim);
+      for (const [name, y0] of [['metal', metalY0], ['stone', stoneY0]] as const) {
+        if (reached[name] === undefined && meanTemp(temps, width, x1 - 4, x1, y0, y0 + barHeight) > cold + 10) reached[name] = supersteps;
+      }
+    }
+
+    expect(reached.metal, 'superstep the far end of the metal bar passed 30 °C').toBeDefined();
+    expect(reached.stone, 'superstep the far end of the stone bar passed 30 °C (cap 6,000)').toBeDefined();
+    expect(reached.stone! / reached.metal!, `metal at ${reached.metal}, stone at ${reached.stone}`).toBeGreaterThanOrEqual(5);
+  }, 120_000);
+
+  it('AC7: hot cells touching only empty space and walls keep their temperatures, and so do the words of those empty and wall cells', async () => {
+    const width = 24;
+    const height = 16;
+    const sim = createSim(width, height);
+    const kind = new Uint32Array(width * height);
+    for (let i = 0; i < 2 * width; i++) kind[i] = cell(T.WALL);
+    for (let y = 2; y < 9; y++) for (let x = 8; x < 16; x++) kind[y * width + x] = cell(T.METAL);
+    // Distinct words everywhere, so a write of any kind shows: those of empty and wall cells mean nothing.
+    const temp = new Uint32Array(width * height);
+    const temps = tempView({ temp });
+    const next = mulberry32(7);
+    for (let i = 0; i < temp.length; i++) temps[i] = (next() / 2 ** 32) * 1000 - 100;
+    for (let y = 2; y < 9; y++) for (let x = 8; x < 16; x++) temps[y * width + x] = 500;
+    sim.load({ kind, temp });
+
+    await runMany(sim, 500);
+
+    expect(await readCells(sim), 'the cells').toEqual(kind);
+    expect(await sim.fields.read('temp'), 'the temp words').toEqual(temp);
+  });
+
+  it('AC7: two touching blocks settle at their capacity-weighted mean temperature', async () => {
+    const width = 20;
+    const height = 12;
+    const sim = createSim(width, height);
+    const kind = new Uint32Array(width * height);
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        if (y < 2 || y >= height - 2 || x < 2 || x >= width - 2) kind[y * width + x] = cell(T.WALL);
+        else kind[y * width + x] = cell(x < 10 ? T.METAL : T.STONE);
+      }
+    }
+    const temp = uniformTemps(width * height, 20);
+    const temps = tempView({ temp });
+    for (let y = 2; y < height - 2; y++) for (let x = 2; x < 10; x++) temps[y * width + x] = 500;
+    sim.load({ kind, temp });
+    const capacityMetal = elementHeatCapacity(elementByKey(ELEMENTS, 'METAL'));
+    const capacityStone = elementHeatCapacity(elementByKey(ELEMENTS, 'STONE'));
+    const mean = (capacityMetal * 500 + capacityStone * 20) / (capacityMetal + capacityStone);
+
+    await runMany(sim, 2500);
+
+    const after = await readTemps(sim);
+    for (let y = 2; y < height - 2; y++) {
+      for (let x = 2; x < width - 2; x++) {
+        expect(Math.abs(after[y * width + x] - mean), `cell (${x}, ${y}) at ${after[y * width + x]} °C, mean ${mean}`).toBeLessThan(0.5);
+      }
+    }
+  }, 60_000);
+
+  it('AC7: a metal and a stone cell meet at the harmonic mean of their conductivities', async () => {
+    // Two cells in a row: at offset 0 they are one pair, at offset 1 each is alone with the world's edge, so one
+    // superstep is exactly one exchange.
+    const sim = createSim(2, 1);
+    const kind = new Uint32Array([cell(T.METAL), cell(T.STONE)]);
+    const temp = uniformTemps(2, 20);
+    tempView({ temp })[0] = 500;
+    sim.load({ kind, temp });
+    const metal = elementByKey(ELEMENTS, 'METAL');
+    const stone = elementByKey(ELEMENTS, 'STONE');
+    const [km, ks] = [elementConductivity(metal), elementConductivity(stone)];
+    const [cm, cs] = [elementHeatCapacity(metal), elementHeatCapacity(stone)];
+    const flow = ((2 * km * ks) / (km + ks)) * 480 / (cm + cs);
+
+    await runMany(sim, 1);
+
+    const after = await readTemps(sim);
+    expect(after[0], 'metal').toBeCloseTo(500 - flow * cs, 3);
+    expect(after[1], 'stone').toBeCloseTo(20 + flow * cm, 3);
+  });
+
+  it('AC8: a sealed box of moving and fixed materials keeps its total heat over 2,000 supersteps', async () => {
+    const width = 48;
+    const height = 40;
+    const sim = createSim(width, height, 8);
+    const next = mulberry32(8);
+    const rand = (): number => next() / 2 ** 32;
+    const kinds = [T.METAL, T.STONE, T.SAND, T.WATER, T.OIL, T.EMPTY];
+    // Each element inside its own range, so no phase change can be due once M5.4 adds them.
+    const range: Record<number, [number, number]> = {
+      [T.METAL]: [0, 600], [T.STONE]: [0, 600], [T.SAND]: [0, 600], [T.WATER]: [1, 99], [T.OIL]: [0, 249],
+    };
+    const kind = new Uint32Array(width * height);
+    const temp = uniformTemps(width * height, 0);
+    const temps = tempView({ temp });
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const i = y * width + x;
+        if (y < 2 || x < 2 || x >= width - 2) {
+          kind[i] = cell(T.WALL);
+          continue;
+        }
+        const type = kinds[Math.floor(rand() * kinds.length)];
+        kind[i] = cell(type);
+        if (type !== T.EMPTY) temps[i] = range[type][0] + rand() * (range[type][1] - range[type][0]);
+      }
+    }
+    sim.load({ kind, temp });
+    const measure = async (): Promise<{ heat: number; spread: number }> => {
+      const grid = { kind: await readCells(sim), temp: await sim.fields.read('temp') };
+      const view = tempView(grid);
+      const solids: number[] = [];
+      grid.kind.forEach((k, i) => {
+        if (cellType(k) === T.METAL || cellType(k) === T.STONE) solids.push(view[i]);
+      });
+      return { heat: heatContent(ELEMENTS, grid, await sim.flyers.read()), spread: Math.max(...solids) - Math.min(...solids) };
+    };
+    const before = await measure();
+
+    await runMany(sim, 2000);
+    const after = await measure();
+
+    expect(Math.abs(after.heat - before.heat) / before.heat, `heat ${before.heat} before, ${after.heat} after`).toBeLessThan(1e-4);
+    // The heat did flow: the metal and stone ended much closer to each other than they started.
+    expect(after.spread, 'spread of the metal and stone temperatures').toBeLessThan(before.spread / 2);
+  }, 120_000);
 });

@@ -1,7 +1,10 @@
-import { MAX_ELEMENTS, STATES, elementByKey, elementDrag, elementGravity, elementInert, elementTemperature, validateElements, type ElementDef } from './elements';
+import {
+  MAX_ELEMENTS, STATES, elementByKey, elementConductivity, elementDrag, elementGravity, elementHeatCapacity, elementHoldsHeat, elementInert, elementTemperature,
+  validateElements, type ElementDef,
+} from './elements';
 
 // What the GPU reads of a row, in struct order: the WGSL `ElementProps` and `packElements` are both generated from this
-// list, so they cannot disagree. Twelve 32-bit words, 48 bytes, which is a legal stride for a uniform array.
+// list, so they cannot disagree. Sixteen 32-bit words, 64 bytes, which is a legal stride for a uniform array.
 interface PropField {
   name: string;
   wgslType: 'u32' | 'f32';
@@ -23,6 +26,12 @@ export const PROP_FIELDS: readonly PropField[] = [
   // Derived from the row (`elementInert`), for the CA's skip of blocks that cannot change.
   { name: 'inert', wgslType: 'u32', value: (e) => (elementInert(e) ? 1 : 0) },
   { name: 'temperature', wgslType: 'f32', value: (e) => elementTemperature(e) },
+  { name: 'conductivity', wgslType: 'f32', value: (e) => elementConductivity(e) },
+  { name: 'heatCapacity', wgslType: 'f32', value: (e) => elementHeatCapacity(e) },
+  // Derived from the row (`elementHoldsHeat`): whether the cell's `temp` word means anything.
+  { name: 'holdsHeat', wgslType: 'u32', value: (e) => (elementHoldsHeat(e) ? 1 : 0) },
+  // Rounds the row to 16 words; M5.4 puts the phase transitions' targets here.
+  { name: 'spare', wgslType: 'u32', value: () => 0 },
 ];
 
 const ROW_WORDS = PROP_FIELDS.length;

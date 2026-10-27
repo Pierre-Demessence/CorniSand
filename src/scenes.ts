@@ -55,6 +55,11 @@ class Canvas {
       this.temps.fill(temp, y * this.width + x0, y * this.width + x1);
     }
   }
+
+  /** Sets the temperature of columns [x0, x1) and rows [y0, y1), whatever the cells there are. */
+  fillTemp(temp: number, x0: number, x1: number, y0: number, y1: number): void {
+    for (let y = y0; y < y1; y++) this.temps.fill(temp, y * this.width + x0, y * this.width + x1);
+  }
 }
 
 const WALL = 2;
@@ -220,6 +225,34 @@ export function blast(): Scene {
   return { name: 'blast', width, height, fields: canvas.fields, floorY: WALL, chambers: [] };
 }
 
+/**
+ * A metal bar and a stone bar, each in a wall channel of its own, hot at the left end: the shape of the bars and the
+ * rows and columns a test samples.
+ */
+export const HEAT_BARS = {
+  width: 52,
+  height: 14,
+  x0: WALL,
+  x1: 50,
+  hotColumns: 6,
+  hot: 500,
+  cold: 20,
+  metalY0: WALL,
+  stoneY0: WALL + 4 + WALL,
+  barHeight: 4,
+};
+
+/** A metal bar above a stone bar, 48x4 each, the left 6 columns at 500 °C and the rest at 20 °C. Heat crosses the metal much faster. */
+export function heatBars(): Scene {
+  const { width, height, x0, x1, hotColumns, hot, metalY0, stoneY0, barHeight } = HEAT_BARS;
+  const canvas = new Canvas(width, height);
+  canvas.fill(T.WALL, 0, width, 0, height);
+  canvas.fill(T.METAL, x0, x1, metalY0, metalY0 + barHeight);
+  canvas.fill(T.STONE, x0, x1, stoneY0, stoneY0 + barHeight);
+  for (const y0 of [metalY0, stoneY0]) canvas.fillTemp(hot, x0, x0 + hotColumns, y0, y0 + barHeight);
+  return { name: 'heatBars', width, height, fields: canvas.fields, floorY: WALL, chambers: [] };
+}
+
 export const SCENES: Record<string, () => Scene> = {
   uTube,
   basin,
@@ -228,6 +261,7 @@ export const SCENES: Record<string, () => Scene> = {
   oilOnWater,
   pile,
   blast,
+  heatBars,
 };
 
 /** The scene registered under `name`; own keys only, so `?scene=constructor` does not match. */
