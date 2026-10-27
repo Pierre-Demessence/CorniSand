@@ -1,6 +1,6 @@
 # M5 Heat and phase changes
 
-Status: M5.1 to M5.4 and M5.5a to M5.5d done; M5.5e's browser check is done and its gate waits for the user's playtest. The user declined a Claude Design canvas for M5.5; the layout in its Design is the default.
+Status: M5.1 to M5.5 done, the M5.5 gate passed; next is M5.6 (budget; needs an idle RTX 4080). The user declined a Claude Design canvas for M5.5; the layout in its Design is the default.
 
 ## Goal
 
@@ -274,7 +274,7 @@ Needs you: nothing (the playtest is M5.5's gate).
 - [x] M5.5b Display: heat view, legend, glow, `HEAT_RAMP`; AC17 and AC19 render tests. Verify: lint, typecheck, `npm test`, build.
 - [x] M5.5c Readout: `probe`, `readProbe`, the info span; AC18 probe test. Verify: lint, typecheck, `npm test`.
 - [x] M5.5d Toolbar scroll (AC20).
-- [ ] M5.5e Browser check per Design, then the gate. Browser check done (1,280 px: H key and button toggle the heat view and legend, Ctrl+H ignored; readout refreshes about 9.5 times a second, shows the label alone over a wall and clears off the grid; toolbar scrolls; no console error but a missing favicon); the user's playtest remains.
+- [x] M5.5e Browser check per Design, then the gate. Browser check done (1,280 px: H key and button toggle the heat view and legend, Ctrl+H ignored; readout refreshes about 9.5 times a second, shows the label alone over a wall and clears off the grid; toolbar scrolls; no console error but a missing favicon); gate passed: the user's playtest found the readout and the heat dynamics fine, so heat speed needs no extra conduction-only dispatches and the Heat and Cool rate stays at HEAT_TOOL_RATE per frame.
 
 Visible after: Heat and Cool tools, a heat view (button or H) with a legend, the element and temperature under the pointer in the toolbar, and hot things glowing; on a narrow window the toolbar's buttons scroll.
 Needs you: the playtest gate (steps in the item's report): melt metal with the Heat tool, pour lava into water, watch heat cross the metal and the stone bar of `?scene=heatBars` in the heat view, and say whether heat moves fast enough and whether the heat view reads well.
