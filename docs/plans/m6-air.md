@@ -1,6 +1,6 @@
 # M6 Air
 
-Status: M6.1a and M6.1b done; next open item M6.1c.
+Status: M6.1a to M6.1c done; next open item M6.2a.
 
 ## Goal
 
@@ -173,7 +173,7 @@ Measured against "Baseline (M6.1)" per AC24. Levers in order: (1) the coupling p
 
 - [x] M6.1a Baseline: lint, typecheck, `npm test`, build; `nvidia-smi` idle, then `npm run bench`; all into "Baseline (M6.1)".
 - [x] M6.1b Field-subset bindings: `CellFields` gives a layout and bind group for a list of field names, `cellBindingsWGSL` takes the list (binding = field index, as now); flight and retry bind `kind` only; AC1. Verify: lint, typecheck, `npm test`.
-- [ ] M6.1c Backlog D31 updated (subset bindings exist; flight and retry use them).
+- [x] M6.1c Backlog D31 updated (subset bindings exist; flight and retry use them).
 
 Visible after: nothing: groundwork only.
 Needs you: nothing (an idle RTX 4080 for the bench is checked before the run starts).
