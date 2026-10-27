@@ -11,9 +11,11 @@ export interface DisplayOptions {
   showBrush: boolean;
   erasing: boolean;
   replacing: boolean;
+  /** Draw each cell that holds heat in its temperature's color instead of its own. */
+  heatView?: boolean;
 }
 
-// Uniform: 10 f32 + 2 padding = 12 f32 = 48 bytes
+// Uniform: 11 f32 + 1 padding = 12 f32 = 48 bytes
 const UNIFORM_FLOATS = 12;
 const UNIFORM_SIZE = UNIFORM_FLOATS * 4;
 
@@ -95,8 +97,8 @@ export class Display {
     d[7] = opts.showBrush ? 1.0 : 0.0; // showBrush
     d[8] = opts.erasing ? 1.0 : 0.0;   // erasing
     d[9] = opts.replacing ? 1.0 : 0.0; // replacing
-    d[10] = 0; // _pad.x
-    d[11] = 0; // _pad.y
+    d[10] = opts.heatView ? 1.0 : 0.0; // heatView
+    d[11] = 0; // _pad
 
     this.device.queue.writeBuffer(this.uniformBuffer, 0, this.uniformData);
 

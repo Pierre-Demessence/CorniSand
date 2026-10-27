@@ -5,7 +5,8 @@ import { Display } from './display';
 import { InputHandler, type Vec2 } from './input';
 import { ELEMENTS } from './elements';
 import { findScene, type Scene } from './scenes';
-import { TOOLS, renderTools, renderToolbar, toolbarEntries, type Tool } from './toolbar';
+import { HEAT_LEGEND_TEMPS, heatRampCSS } from './heat';
+import { TOOLS, renderHeatViewToggle, renderTools, renderToolbar, toolbarEntries, type Tool } from './toolbar';
 
 interface GpuState {
   gpu: GPUContext;
@@ -145,7 +146,29 @@ async function main(): Promise<void> {
     btn.addEventListener('click', () => selectHeatTool(btn, TOOLS[i]));
   });
 
+  // The heat view draws each cell that holds heat in its temperature's color; the legend explains the colors.
+  const heatViewButton = renderHeatViewToggle(toolbarEl);
+  const legend = document.getElementById('heat-legend')!;
+  document.getElementById('heat-legend-bar')!.style.background = heatRampCSS();
+  const legendLabels = document.getElementById('heat-legend-labels')!;
+  const legendFirst = HEAT_LEGEND_TEMPS[0];
+  const legendSpan = HEAT_LEGEND_TEMPS[HEAT_LEGEND_TEMPS.length - 1] - legendFirst;
+  for (const t of HEAT_LEGEND_TEMPS) {
+    const label = document.createElement('span');
+    label.textContent = String(t);
+    label.style.left = `${((t - legendFirst) / legendSpan) * 100}%`;
+    legendLabels.appendChild(label);
+  }
+  let heatView = false;
+  function toggleHeatView(): void {
+    heatView = !heatView;
+    heatViewButton.setAttribute('aria-pressed', String(heatView));
+    legend.hidden = !heatView;
+  }
+  heatViewButton.addEventListener('click', toggleHeatView);
+
   document.addEventListener('keydown', (e) => {
+    if (e.key.toLowerCase() === 'h' && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey) toggleHeatView();
     // Keys 1-9 pick the n-th element button.
     const button = toolButtons[Number(e.key) - 1] as HTMLButtonElement | undefined;
     if (button) selectElement(button);
@@ -256,6 +279,7 @@ async function main(): Promise<void> {
       showBrush: true,
       erasing,
       replacing,
+      heatView,
     });
     device.queue.submit([encoder.finish()]);
 

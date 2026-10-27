@@ -1,6 +1,7 @@
 import type { ElementDef } from '../elements';
 import { cellWGSL } from './cell.wgsl';
 import { elementsWGSL } from './elements.wgsl';
+import { heatDisplayWGSL, heatWGSL } from './heat.wgsl';
 
 // `graphics` maps a graphics name (`ElementDef.graphics`) to its WGSL color function.
 export const displayWGSL = (elements: readonly ElementDef[], graphics: Readonly<Record<string, string>>): string => {
@@ -11,6 +12,8 @@ export const displayWGSL = (elements: readonly ElementDef[], graphics: Readonly<
   return /* wgsl */`
 ${cellWGSL('read', elements)}
 ${elementsWGSL}
+${heatWGSL}
+${heatDisplayWGSL}
 ${graphicsNames.map((n) => graphics[n]).join('\n')}
 
 struct DisplayUniforms {
@@ -21,7 +24,8 @@ struct DisplayUniforms {
   showBrush: f32,
   erasing: f32,
   replacing: f32,
-  _pad: vec2f,
+  heatView: f32,
+  _pad: f32,
 };
 
 struct VertexOutput {
@@ -66,7 +70,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {
   let idx = cellY * w + cellX;
   var cell = loadCell(idx);
   // A flyer is drawn in the empty cell it is over; one over a filled cell (it lands there next step) is not.
-  if (cellType(cell) == EL_EMPTY) { cell.kind = flyerKinds[idx]; }
+  var overFlyer = false;
+  if (cellType(cell) == EL_EMPTY) {
+    cell.kind = flyerKinds[idx];
+    overFlyer = cellType(cell) != EL_EMPTY;
+  }
   let pType = cellType(cell);
 
   // Background gradient with dithering
@@ -74,11 +82,27 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {
   var color = mix(vec3f(0.06, 0.06, 0.08), vec3f(0.10, 0.10, 0.13), gy);
   color += (ditherNoise(in.position.xy) - 0.5) / 128.0;
 
+  // A flyer's cell is empty, so its temp word means nothing: the flyer is drawn in its element's color, with no glow or
+  // heat color.
   if (pType != EL_EMPTY) {
     color = elColor(pType);
-    switch (pType) {
-${styled.map((e) => `      case EL_${e.key}: { color = graphics_${e.graphics}(cell, color); }`).join('\n')}
-      default: {}
+    let holdsHeat = !overFlyer && elHoldsHeat(pType);
+    if (u.heatView > 0.5) {
+      if (holdsHeat) {
+        color = heatColor(cellTemp(cell));
+      } else if (!overFlyer) {
+        color *= 0.3;
+      }
+    } else {
+      var hasGraphics = false;
+      switch (pType) {
+${styled.map((e) => `        case EL_${e.key}: { color = graphics_${e.graphics}(cell, color); hasGraphics = true; }`).join('\n')}
+        default: {}
+      }
+      if (holdsHeat && !hasGraphics) {
+        let t = cellTemp(cell);
+        color += glowColor(t) * glowWeight(t);
+      }
     }
   }
 

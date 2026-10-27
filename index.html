@@ -61,7 +61,8 @@
             color: #d1d5db;
         }
 
-        .tool-btn.active {
+        .tool-btn.active,
+        .tool-btn[aria-pressed="true"] {
             background: rgba(255, 255, 255, 0.12);
             color: #f3f4f6;
             border-color: rgba(255, 255, 255, 0.3);
@@ -130,6 +131,50 @@
             background: rgba(239, 68, 68, 0.15);
         }
 
+        .heat-legend {
+            position: fixed;
+            bottom: 56px;
+            right: 16px;
+            width: 400px;
+            padding: 8px 20px 6px;
+            background: rgba(16, 16, 20, 0.90);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 6px;
+            z-index: 10;
+            pointer-events: none;
+        }
+
+        .heat-legend[hidden] {
+            display: none;
+        }
+
+        .heat-legend-title {
+            color: #9ca3af;
+            font-size: 11px;
+            margin-bottom: 4px;
+        }
+
+        .heat-legend-bar {
+            height: 14px;
+            border-radius: 3px;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+
+        .heat-legend-labels {
+            position: relative;
+            height: 16px;
+            margin-top: 3px;
+            color: #d1d5db;
+            font-size: 11px;
+            font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+        }
+
+        .heat-legend-labels span {
+            position: absolute;
+            transform: translateX(-50%);
+            white-space: nowrap;
+        }
+
         .help-hint {
             position: fixed;
             top: 12px;
@@ -153,6 +198,12 @@
         Left click: draw · Right click: erase<br>
         Scroll: brush size · <span id="tool-keys">1-6</span>: select tool · [/]: speed<br>
         Hold Shift: draw over existing particles (except walls)
+    </div>
+
+    <div class="heat-legend" id="heat-legend" hidden>
+        <div class="heat-legend-title">Temperature (°C)</div>
+        <div class="heat-legend-bar" id="heat-legend-bar"></div>
+        <div class="heat-legend-labels" id="heat-legend-labels"></div>
     </div>
 
     <div id="toolbar">

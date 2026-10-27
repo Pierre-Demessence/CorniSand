@@ -24,3 +24,49 @@ export const NO_THRESHOLD = 3e38;
 export function effectiveTemp(e: Pick<ElementDef, 'below' | 'above'>, stored: number): number {
   return Math.min(Math.max(stored, e.below?.temp ?? -NO_THRESHOLD), e.above?.temp ?? NO_THRESHOLD);
 }
+
+/** A color stop of a temperature ramp: display RGB (what the canvas shows), 0 to 1 per channel. */
+export interface RampKnot {
+  temp: number;
+  color: readonly [number, number, number];
+}
+
+/**
+ * The heat view's colors: dark blue when cold, through purple, red and orange to near white. Each knot is brighter than
+ * the one before (Rec. 709 luminance), so brightness alone orders the temperatures and the view does not rely on hue
+ * (the user is red-green colorblind). Between knots the color is linear; outside the first and last it stays flat.
+ * Generates the shader's `heatColor` and the legend's gradient.
+ */
+export const HEAT_RAMP: readonly RampKnot[] = [
+  { temp: -50, color: [0.02, 0.03, 0.30] },
+  { temp: 20, color: [0.35, 0.05, 0.45] },
+  { temp: 300, color: [0.85, 0.05, 0.10] },
+  { temp: 800, color: [1.0, 0.45, 0.05] },
+  { temp: 1500, color: [1.0, 0.90, 0.20] },
+  { temp: 2000, color: [1.0, 1.0, 0.90] },
+];
+
+/** The temperatures the legend labels: the ramp's ends and the steps between, spaced so the labels do not overlap. */
+export const HEAT_LEGEND_TEMPS: readonly number[] = [-50, 100, 500, 1000, 2000];
+
+/** Where things start to glow in the normal view (°C), and where the glow is at full weight. */
+export const GLOW_START = 525;
+export const GLOW_FULL = 2000;
+
+/** The color a glowing cell adds to its own: dull red where glow starts, orange, then yellow-white. Scaled by the glow weight. */
+export const GLOW_RAMP: readonly RampKnot[] = [
+  { temp: GLOW_START, color: [0.45, 0.08, 0.02] },
+  { temp: 1000, color: [0.90, 0.40, 0.05] },
+  { temp: 1600, color: [1.0, 0.90, 0.60] },
+];
+
+/** A CSS `linear-gradient` over the legend's range (`HEAT_LEGEND_TEMPS`' first to last) in the ramp's colors. */
+export function heatRampCSS(ramp: readonly RampKnot[] = HEAT_RAMP): string {
+  const first = ramp[0].temp;
+  const span = ramp[ramp.length - 1].temp - first;
+  const stops = ramp.map((k) => {
+    const [r, g, b] = k.color.map((c) => Math.round(c * 255));
+    return `rgb(${r} ${g} ${b}) ${(((k.temp - first) / span) * 100).toFixed(2)}%`;
+  });
+  return `linear-gradient(to right, ${stops.join(', ')})`;
+}

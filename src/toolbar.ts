@@ -66,3 +66,18 @@ export function renderTools(container: HTMLElement, tools: readonly Tool[]): HTM
     return button;
   });
 }
+
+/** Adds a separator and the heat view toggle to `container`; its `aria-pressed` says whether the view is on. */
+export function renderHeatViewToggle(container: HTMLElement): HTMLButtonElement {
+  const doc = container.ownerDocument;
+  const separator = doc.createElement('div');
+  separator.className = 'separator';
+  container.appendChild(separator);
+  const button = doc.createElement('button');
+  button.setAttribute('type', 'button');
+  button.setAttribute('class', 'tool-btn');
+  button.setAttribute('aria-pressed', 'false');
+  button.textContent = 'Heat view';
+  container.appendChild(button);
+  return button;
+}
