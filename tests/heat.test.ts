@@ -2,9 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { tempView } from '../src/cell-fields';
 import { ELEMENT as T, ELEMENTS, elementByKey, elementConductivity, elementHeatCapacity, elementTemperature, type ElementDef } from '../src/elements';
 import { packHalf2 } from '../src/half';
-import { ROOM_TEMP, effectiveTemp } from '../src/heat';
+import { ABSOLUTE_ZERO, HEAT_TOOL_RATE, MAX_TEMP, ROOM_TEMP, effectiveTemp } from '../src/heat';
 import { HEAT_BARS, ICE_LAVA, MOLTEN_METAL, STEAM_CEILING, SCENES } from '../src/scenes';
 import type { Simulation } from '../src/simulation';
+import { TOOLS } from '../src/toolbar';
 import { cell, cellType, countTypes, createSim, device, idleInput, mulberry32, readCells, run, runMany } from './gpu';
 import { heatContent } from './metrics';
 
@@ -743,4 +744,114 @@ describe.skipIf(!device)('M5.4c total heat', () => {
       expect(after.types.get(type) ?? 0, name).toBeLessThan(before.types.get(type)!);
     }
   }, 120_000);
+});
+
+describe.skipIf(!device)('M5.5a Heat and Cool tools', () => {
+  const width = 12;
+  const height = 4;
+  const stroke = { ...idleInput, mouseActive: true, brushSize: 2000, mousePos: { x: 6, y: 2 }, prevMousePos: { x: 6, y: 2 } };
+  const holders = [T.METAL, T.STONE, T.WATER, T.SAND];
+  // Stored temperatures that cross both clamps and, for water and metal, their thresholds.
+  const temps = [20, -270, 9990, 500, -100, 100];
+  const marker = 777.7;
+
+  // A grid mixing cells that hold heat with empty space and walls, whose `temp` words carry a mark that must survive.
+  function mixedGrid(): { kind: Uint32Array<ArrayBuffer>; temp: Uint32Array<ArrayBuffer>; floats: Float32Array } {
+    const kind = new Uint32Array(width * height);
+    const temp = uniformTemps(width * height, marker);
+    const floats = tempView({ temp });
+    for (let i = 0; i < kind.length; i++) {
+      if (i % 5 === 3) kind[i] = cell(T.EMPTY);
+      else if (i % 5 === 4) kind[i] = cell(T.WALL);
+      else {
+        kind[i] = cell(holders[i % holders.length]);
+        floats[i] = temps[i % temps.length];
+      }
+    }
+    return { kind, temp, floats };
+  }
+
+  it.each(TOOLS)('AC16: $label adds $heating °C to every cell that holds heat, within the clamps, and leaves empty space and walls alone', async (tool) => {
+    const { kind, temp, floats } = mixedGrid();
+    const before = Float32Array.from(floats);
+    const sim = createSim(width, height);
+    sim.load({ kind, temp });
+
+    await run(sim, 0, { ...stroke, heating: tool.heating });
+
+    expect(await readCells(sim), 'no cell changes element').toEqual(kind);
+    const after = await readTemps(sim);
+    const kindWords = await readCells(sim);
+    let heated = 0;
+    let clamped = 0;
+    for (let i = 0; i < kind.length; i++) {
+      const type = cellType(kindWords[i]);
+      if (type === T.EMPTY || type === T.WALL) {
+        expect(after[i], `temp word of cell ${i}`).toBe(Math.fround(marker));
+      } else {
+        heated++;
+        const raw = before[i] + tool.heating;
+        if (raw < ABSOLUTE_ZERO || raw > MAX_TEMP) clamped++;
+        expect(after[i], `cell ${i}`).toBe(Math.fround(Math.min(Math.max(raw, ABSOLUTE_ZERO), MAX_TEMP)));
+      }
+    }
+    expect(heated, 'cells heated').toBeGreaterThan(20);
+    expect(clamped, 'cells pushed against a clamp').toBeGreaterThan(0);
+  });
+
+  it('AC16: only the cells inside the stroke change', async () => {
+    const { kind, temp, floats } = mixedGrid();
+    const before = Float32Array.from(floats);
+    const sim = createSim(width, height);
+    sim.load({ kind, temp });
+
+    await run(sim, 0, { ...stroke, brushSize: 1.5, mousePos: { x: 0, y: 0 }, prevMousePos: { x: 0, y: 0 }, heating: HEAT_TOOL_RATE });
+
+    const after = await readTemps(sim);
+    const kindWords = await readCells(sim);
+    let inside = 0;
+    for (let i = 0; i < kind.length; i++) {
+      const type = cellType(kindWords[i]);
+      const reached = Math.hypot(i % width, Math.floor(i / width)) <= 1.5;
+      const holds = type !== T.EMPTY && type !== T.WALL;
+      if (reached && holds) inside++;
+      const expected = reached && holds ? Math.fround(Math.min(before[i] + HEAT_TOOL_RATE, MAX_TEMP)) : before[i];
+      expect(after[i], `cell ${i}`).toBe(expected);
+    }
+    expect(inside, 'cells in the stroke that hold heat').toBeGreaterThan(1);
+  });
+
+  it('AC16: the right button still erases', async () => {
+    const { kind, temp } = mixedGrid();
+    const sim = createSim(width, height);
+    sim.load({ kind, temp });
+
+    await run(sim, 0, { ...stroke, erasing: true, heating: HEAT_TOOL_RATE });
+
+    expect((await readCells(sim)).every((k) => cellType(k) === T.EMPTY), 'every cell erased').toBe(true);
+  });
+
+  it('AC16: a heating stroke leaves the flyers in the air, even with replacing set, while a replacing stroke removes them', async () => {
+    const flyerWidth = 9;
+    const flyerHeight = 200;
+    const sim = createSim(flyerWidth, flyerHeight);
+    const kind = new Uint32Array(flyerWidth * flyerHeight);
+    const temp = uniformTemps(flyerWidth * flyerHeight, 0);
+    const marked = tempWord(1234.5678);
+    kind[190 * flyerWidth + 4] = cell(T.SAND);
+    temp[190 * flyerWidth + 4] = marked;
+    sim.load({ kind, temp });
+    await runMany(sim, 30);
+    expect(await sim.flyers.read(), 'the grain is in the air').toHaveLength(1);
+
+    const everywhere = { ...idleInput, mouseActive: true, brushSize: 2000, mousePos: { x: 4, y: 100 }, prevMousePos: { x: 4, y: 100 } };
+    // One superstep: the compaction that drops a removed flyer runs inside it.
+    await run(sim, 1, { ...everywhere, replacing: true, heating: HEAT_TOOL_RATE });
+    const flyers = await sim.flyers.read();
+    expect(flyers, 'still in the air after Heat').toHaveLength(1);
+    expect(flyers[0].cell.temp, 'its temperature unchanged').toBe(marked);
+
+    await run(sim, 1, { ...everywhere, replacing: true });
+    expect(await sim.flyers.read(), 'removed by a replacing stroke').toHaveLength(0);
+  });
 });

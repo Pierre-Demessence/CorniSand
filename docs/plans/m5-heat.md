@@ -1,6 +1,6 @@
 # M5 Heat and phase changes
 
-Status: M5.1 to M5.4 done; next is M5.5 (Heat and Cool tools, heat view, readout, toolbar scroll). A Claude Design canvas is suggested before it (see M5.5).
+Status: M5.1 to M5.4 and M5.5a done; next is M5.5b (heat view, legend, glow). The user declined a Claude Design canvas for M5.5; the layout in its Design is the default.
 
 ## Goal
 
@@ -270,7 +270,7 @@ Needs you: nothing (the playtest is M5.5's gate).
 
 ### M5.5 Seeing and changing heat (tasks)
 
-- [ ] M5.5a Heat and Cool tools: `TOOLS`, `SimulationInput.heating`, the brush, `replacing` off for tools; AC16 tests. Verify: lint, typecheck, `npm test`.
+- [x] M5.5a Heat and Cool tools: `TOOLS`, `SimulationInput.heating`, the brush, `replacing` off for tools; AC16 tests. Verify: lint, typecheck, `npm test`.
 - [ ] M5.5b Display: heat view, legend, glow, `HEAT_RAMP`; AC17 and AC19 render tests. Verify: lint, typecheck, `npm test`, build.
 - [ ] M5.5c Readout: `probe`, `readProbe`, the info span; AC18 probe test. Verify: lint, typecheck, `npm test`.
 - [ ] M5.5d Toolbar scroll (AC20).

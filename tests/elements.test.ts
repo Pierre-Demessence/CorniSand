@@ -4,8 +4,8 @@ import {
   DEFAULT_DRAG, DEFAULT_GRAVITY, ELEMENT, ELEMENTS, MAX_ELEMENTS, STATES, elementByKey, elementConductivity, elementDrag, elementGravity, elementHeatCapacity, elementHoldsHeat, elementInert,
   elementTemperature, latentWidth, validateElements, type ElementDef,
 } from '../src/elements';
-import { ABSOLUTE_ZERO, MAX_TEMP, NO_THRESHOLD, ROOM_TEMP, effectiveTemp } from '../src/heat';
-import { buttonAttributes, toolbarEntries } from '../src/toolbar';
+import { ABSOLUTE_ZERO, HEAT_TOOL_RATE, MAX_TEMP, NO_THRESHOLD, ROOM_TEMP, effectiveTemp } from '../src/heat';
+import { TOOLS, buttonAttributes, toolAttributes, toolbarEntries } from '../src/toolbar';
 import { latentOffsets } from './metrics';
 
 // Test rows sit far from the game's IDs and toolbar positions, which grow with the table.
@@ -255,6 +255,17 @@ describe('toolbar', () => {
     const unpaintable = (ELEMENTS as readonly ElementDef[]).filter((e) => e.toolbar === undefined);
     expect(toolbarEntries([...unpaintable, ...table]).map((e) => e.key))
       .toEqual(['1', '2', '3', '4', '5', '6', '7', '8', '9', undefined, undefined]);
+  });
+});
+
+describe('M5.5a tools', () => {
+  it('Heat and Cool follow the elements, heating and cooling at the same rate, under labels the elements do not use', () => {
+    expect(TOOLS.map((t) => [t.id, t.label, t.heating])).toEqual([['heat', 'Heat', HEAT_TOOL_RATE], ['cool', 'Cool', -HEAT_TOOL_RATE]]);
+    expect(toolbarEntries(ELEMENTS).every((e) => TOOLS.every((t) => t.label !== e.label))).toBe(true);
+  });
+
+  it('gives each tool button data-tool instead of data-type', () => {
+    expect(toolAttributes(TOOLS[0])).toEqual({ type: 'button', class: 'tool-btn', 'data-tool': 'heat' });
   });
 });
 

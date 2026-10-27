@@ -10,6 +10,9 @@ export const ROOM_TEMP = 20;
 export const ABSOLUTE_ZERO = -273.15;
 export const MAX_TEMP = 9999;
 
+/** What the Heat and Cool tools add to or take from every cell of the stroke per frame: about 1,000 °C a second at 60 FPS. */
+export const HEAT_TOOL_RATE = 17;
+
 /** The threshold of a transition an element does not have: far enough out that no stored temperature reaches it, and still a finite f32. */
 export const NO_THRESHOLD = 3e38;
 

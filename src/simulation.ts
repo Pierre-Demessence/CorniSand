@@ -19,6 +19,8 @@ export interface SimulationInput {
   replacing: boolean;
   brushSize: number;
   particleType: number;
+  /** °C added to every cell that holds heat inside the stroke per frame, negative to cool; absent or 0 when painting. */
+  heating?: number;
 }
 
 export interface SimulationOptions {
@@ -241,8 +243,11 @@ export class Simulation {
     f[4] = input.brushSize;
     w[5] = input.particleType;
     w[6] = input.erasing ? 1 : 0;
-    w[7] = input.replacing ? 1 : 0;
+    const heating = input.heating ?? 0;
+    // A heating stroke never replaces: the flyer brush would remove the flyers it passes over.
+    w[7] = input.replacing && heating === 0 ? 1 : 0;
     w[8] = this.seedSource();
+    f[9] = heating;
     this.device.queue.writeBuffer(this.brushUniformBuffer, 0, this.brushUniformData);
 
     const pass = passes.pass('brush');

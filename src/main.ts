@@ -5,7 +5,7 @@ import { Display } from './display';
 import { InputHandler, type Vec2 } from './input';
 import { ELEMENTS } from './elements';
 import { findScene, type Scene } from './scenes';
-import { renderToolbar, toolbarEntries } from './toolbar';
+import { TOOLS, renderTools, renderToolbar, toolbarEntries, type Tool } from './toolbar';
 
 interface GpuState {
   gpu: GPUContext;
@@ -120,25 +120,40 @@ async function main(): Promise<void> {
   setTimeout(() => { helpHint.style.opacity = '0'; }, 4000);
 
   const entries = toolbarEntries(ELEMENTS);
-  const toolButtons = renderToolbar(document.getElementById('tool-buttons')!, entries);
+  const toolbarEl = document.getElementById('tool-buttons')!;
+  const toolButtons = renderToolbar(toolbarEl, entries);
+  const heatButtons = renderTools(toolbarEl, TOOLS);
   document.getElementById('tool-keys')!.textContent = `1-${Math.min(entries.length, 9)}`;
-  function selectTool(button: HTMLButtonElement): void {
-    toolButtons.forEach((b) => b.classList.toggle('active', b === button));
+  // Degrees per frame the held Heat or Cool tool applies; 0 while an element is selected.
+  let heating = 0;
+  function selectButton(button: HTMLButtonElement): void {
+    [...toolButtons, ...heatButtons].forEach((b) => b.classList.toggle('active', b === button));
+  }
+  function selectElement(button: HTMLButtonElement): void {
+    selectButton(button);
+    heating = 0;
     input.particleType = Number(button.dataset.type);
   }
+  function selectHeatTool(button: HTMLButtonElement, tool: Tool): void {
+    selectButton(button);
+    heating = tool.heating;
+  }
   toolButtons.forEach((btn) => {
-    btn.addEventListener('click', () => selectTool(btn));
+    btn.addEventListener('click', () => selectElement(btn));
+  });
+  heatButtons.forEach((btn, i) => {
+    btn.addEventListener('click', () => selectHeatTool(btn, TOOLS[i]));
   });
 
   document.addEventListener('keydown', (e) => {
-    // Keys 1-9 pick the n-th toolbar button.
+    // Keys 1-9 pick the n-th element button.
     const button = toolButtons[Number(e.key) - 1] as HTMLButtonElement | undefined;
-    if (button) selectTool(button);
+    if (button) selectElement(button);
     if (e.key === '[') changeSpeed(-1);
     if (e.key === ']') changeSpeed(1);
   });
 
-  if (toolButtons.length > 0) selectTool(toolButtons[0]);
+  if (toolButtons.length > 0) selectElement(toolButtons[0]);
 
   document.getElementById('speed-down')!.addEventListener('click', () => changeSpeed(-1));
   document.getElementById('speed-up')!.addEventListener('click', () => changeSpeed(1));
@@ -203,7 +218,8 @@ async function main(): Promise<void> {
 
     const mouseActive = input.mouseActive;
     const erasing = input.erasing;
-    const replacing = input.shiftDown && !erasing;
+    // The flyer brush removes flyers whenever `replacing` is set, so a heating stroke never sets it.
+    const replacing = input.shiftDown && !erasing && heating === 0;
 
     const prevMousePos = mouseActive && lastDrawPos.x >= 0
       ? lastDrawPos
@@ -231,6 +247,7 @@ async function main(): Promise<void> {
       replacing,
       brushSize: input.brushSize,
       particleType: input.particleType,
+      heating,
     });
     simulation.recordOverlay(encoder);
     display.render(encoder, context.getCurrentTexture().createView(), canvas.width, canvas.height, {
