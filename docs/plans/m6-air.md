@@ -1,6 +1,6 @@
 # M6 Air
 
-Status: M6.1a to M6.1c and M6.2a, M6.2b done; next open item M6.2c.
+Status: M6.1a to M6.1c and M6.2a to M6.2c done; next open item M6.3a.
 
 ## Goal
 
@@ -188,7 +188,7 @@ Needs you: nothing (an idle RTX 4080 for the bench is checked before the run sta
   Decided during the run: AC4's echo is measured against a free wave: the same pulse in a 512-cell grid whose wave has not reached its edge, compared air cell by air cell with the 128-cell grid, over cells at least 24 grid cells from the edge (nearer, the difference is the wave leaving, not an echo); the incident peak is the free wave's largest |pressure| in the small grid's outer ring. Measured: echo 29.0% of the incident peak at s 4 and 16.5% at s 2, so the 30% bar passes with little room at s 4 (the worst point is a slanted arrival near a corner; a wall along the edge, as control, gives 83% and 142%). Draining: under 5% of the start after 94 supersteps at s 4 and 89 at s 2; the test allows 100. Why: the plan names no way to separate echo from the incident wave. Alternative: look at normal incidence on the axis only (lower numbers), or a different band. Change: `EDGE_BAND` and `DRAINED` in `tests/air.test.ts`; a retune of `edgeDamping` or the edge faces would raise the margin.
   Decided during the run: AC2's clause "compile the CA and flight without air code" is not tested here: the CA and the flight pass have no air code until M6.3a and M6.3b, so the clause holds trivially; the test covers `air: false` recording no air pass and holding no buffer. Why: nothing to check yet. Alternative: a test on the generated source now (it would assert an absence). Change: M6.3a adds the check on the CA source when it adds the air code.
   Decided during the run: `BENCH_AIR` also takes `off` (air disabled), and the 1x breakdown has an `air` column (sum of the `air *` passes). Why: the same-session `off` run separates the air's cost from the drift between sessions (the M6.1 baseline and the `off` run differ by up to 0.13 ms on `mix75`). Alternative: only the sizes. Change: `airRuns` in `tests/bench.gpu.ts`.
-- [ ] M6.2c `docs/simulation.md`: an Air section (grid, step, walls and edges; intuition, example, formula).
+- [x] M6.2c `docs/simulation.md`: an Air section (grid, step, walls and edges; intuition, example, formula).
 
 Visible after: nothing: the air moves but nothing reads it and no view shows it yet.
 Needs you: nothing.

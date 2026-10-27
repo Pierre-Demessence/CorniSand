@@ -1,13 +1,13 @@
 # Simulation
 
-How a frame turns into particle movement. Code: `src/simulation.ts`, `src/elements.ts`, `src/element-table.ts`, `src/cell-fields.ts`, `src/cell-field-buffers.ts`, `src/shaders/cell.wgsl.ts`, `src/shaders/elements.wgsl.ts`, `src/shaders/ca.wgsl.ts`, `src/shaders/brush.wgsl.ts`, `src/movement.ts`, `src/flyers.ts`, `src/shaders/flyers.wgsl.ts`, `src/passes.ts`, `src/heat.ts`, `src/shaders/heat.wgsl.ts`, `src/display.ts`, `src/toolbar.ts`.
+How a frame turns into particle movement. Code: `src/simulation.ts`, `src/elements.ts`, `src/element-table.ts`, `src/cell-fields.ts`, `src/cell-field-buffers.ts`, `src/shaders/cell.wgsl.ts`, `src/shaders/elements.wgsl.ts`, `src/shaders/ca.wgsl.ts`, `src/shaders/brush.wgsl.ts`, `src/movement.ts`, `src/flyers.ts`, `src/shaders/flyers.wgsl.ts`, `src/passes.ts`, `src/heat.ts`, `src/shaders/heat.wgsl.ts`, `src/air.ts`, `src/air-grid.ts`, `src/shaders/air.wgsl.ts`, `src/display.ts`, `src/toolbar.ts`.
 
 ## Frame pipeline
 
 Each animation frame runs `stepsPerFrame` supersteps (1, 2, 4, 8, 16, 24 or 32; the speed labelled "1x" is 4), then one render pass. All of it is recorded into one command encoder and sent with one `submit()` (`main.ts`). A frame is:
 
-1. **Brush**: while a mouse button is down, the brush pass, one thread per cell (each thread touches only its own cell).
-2. **Supersteps**: `stepsPerFrame` of them, each two CA dispatches with Margolus offset 0, then 1, then the flyer passes (see Flyers). The dispatches update the cell buffers in place. The brush, every CA dispatch and the flyer passes share one compute pass, handed out by `PassRecorder` (`src/passes.ts`); the bench gives each group of dispatches a timed pass of its own instead.
+1. **Brush**: while a mouse button is down, the brush pass, one thread per cell (each thread touches only its own cell). Then the air's mask pass (see Air).
+2. **Supersteps**: `stepsPerFrame` of them, each two CA dispatches with Margolus offset 0, then 1, then the flyer passes (see Flyers), then the air steps (see Air). The dispatches update the cell buffers in place. The brush, every CA dispatch and the flyer passes share one compute pass, handed out by `PassRecorder` (`src/passes.ts`); the bench gives each group of dispatches a timed pass of its own instead.
 3. **Overlay and render**: the flyers are scattered into the overlay buffer, then the cell buffers and the overlay are drawn with the brush ring.
 
 Every CA dispatch needs its own `{ offset, seed }`. They live in 256-byte slots (`minUniformBufferOffsetAlignment`) of one uniform buffer sized for the 64 dispatches of a 32-superstep frame; one `writeBuffer` fills the used slots and each dispatch selects its slot with a dynamic offset. The grid size is a shader constant.
@@ -160,6 +160,42 @@ Three views of the same `temp` words (`src/heat.ts`, `src/shaders/heat.wgsl.ts`,
 - **Readout**: the toolbar shows the element and the whole-degree temperature of the cell under the pointer, or the element alone for a cell that holds no heat. `Simulation.probe` copies that cell's `kind` and `temp` words into a staging buffer at the end of the frame's encoder (no extra submit), and `main.ts` reads it about every 100 ms.
 
 A flyer is drawn over an empty cell from its `kind` word alone, so a flying cell has no glow and takes its element color in the heat view until it lands (backlog I17).
+
+## Air
+
+Intuition: empty space is air, and air is not nothing: squeeze it somewhere and the squeeze spreads out as a ring, like a ripple on a pond, and a wall stops the ripple. The air lives on its own coarse grid, much smaller than the cell grid (one air cell covers 4×4 cells by default), because a pressure wave does not need the detail of a grain of sand. It is stepped after the flyers of each superstep. So far nothing reads it: the CA, the flyers and the heat pass ignore the air (they start to in M6.3 and M6.4), and nothing but a test puts pressure into it. Code: `src/air.ts` (the constants `AIR`), `src/air-grid.ts` (`AirGrid`: buffers, passes, `load`, `clear`, `read`), `src/shaders/air.wgsl.ts` (the passes).
+
+### State
+
+An air cell is `cellSize × cellSize` cells (`airCellSize`: 1, 2, 4 or 8, default 4; `?air=<size>` in the URL, or the `airCellSize` option of `Simulation`), `ceil(W / s) × ceil(H / s)` of them. One `vec4f` per air cell holds the speed of the air through its right face (x) and its top face (y), its pressure at its center (z) and its temperature in °C (w). Putting the speeds on the faces and the pressure in the middle (a staggered grid) keeps the two from drifting apart cell by cell into a checkerboard. Pressure is dimensionless, 0 is ambient. Speeds and `AIR` constants are in cells and dispatches, not air cells, so a different `s` changes the detail of the air and not its speeds. Everything starts, and is reset by `Simulation.load` and `clear`, at rest: pressure 0, speed 0, `ROOM_TEMP`. With `air: false` no buffer is allocated and no pass recorded.
+
+The arrays hold one more column and row than there are air cells: position (a, b) is air cell (a − 1, b − 1), and column 0 and row 0 are ghost cells at pressure 0 and room temperature whose faces are the left and bottom faces of the first real cells, the edge of the world. Beyond the right and top edge the air is read as pressure 0 at room temperature.
+
+### The step
+
+The mask pass runs once per frame, after the brush: for each face it stores the face's openness, and for each air cell the share of powder and liquid cells and the count of cells that hold heat (nothing reads those two yet). Then, after the flyer passes of each superstep, `substeps` air steps run, each of five passes in the frame's one compute pass:
+
+1. **Coupling**: moves the pressure the CA released into the burst buffer (a fixed-point `atomic<i32>`, so the sum does not depend on thread order) into the air cell's pressure and clears it. Nothing releases any yet. M6.4 adds the heat exchange with the cells here.
+2. **Velocity**: each face gains the pressure difference across it, loses a share (`velocityLoss`), is clamped to `maxSpeed` and multiplied by the face's gate (see Walls). Per air step it gains `waveSpeed² · dt / s` per unit of pressure difference, with `dt = 2 / substeps` dispatches per step.
+3. **Pressure**: the pressure falls by the net flow out of the cell times `dt / s`, then loses a share (`pressureLoss`).
+4. **Advect**: the speeds are carried along with the air (semi-Lagrangian: a face takes the speed from where its air came from, bilinearly). The temperature crosses faces in flux form, so the heat the air carries is conserved exactly: what leaves a cell enters its neighbor, taken from the upwind side, as the excess over room temperature (so uniform room-temperature air stays put even where it is squeezed). The speed that carries heat is the air's up to `fluxCap = min(maxSpeed, s · substeps / 8)`, the speed at which a cell would hand over all its heat in one step; above it the upwind sum could overshoot.
+5. **Diffuse**: the temperature spreads across the open faces (`diffusion`, 2% of the difference per dispatch), and the speeds and pressures are copied back.
+
+Velocity and pressure update in place: the velocity pass writes only speeds and reads only pressures, the pressure pass the reverse. Advect writes the scratch buffer and diffuse copies it back, so every air step ends with the state in the buffer it started in and no buffer parity needs tracking.
+
+The pair of velocity and pressure passes is a wave equation: a pulse spreads as a ring at `waveSpeed` (1 cell per dispatch, measured 1.02 times that at s = 4 and 1.05 at s = 2, the same in the four directions). A wave may cross at most 0.7 air cells per air step and the fastest air at most one, which fixes `substeps = max(1, ceil(2 · waveSpeed / (0.7 · s)), ceil(2 · maxSpeed / s))`: 1 at s = 4 and 8, 2 at 2, 4 at 1.
+
+Example: at s = 4 one air step is one superstep, two dispatches, so the front of a pulse moves 2 cells, half an air cell, per step and reaches the next air cell after 2 steps (`tests/air.test.ts`, AC3 measures the ring's radius against `waveSpeed`).
+
+### Walls and edges
+
+A face is closed by solid cells. The mask pass scans the rows of cells between the centers of the face's two air cells (the columns, for a top face): a row holding a solid cell is closed, and the face's openness is the share of open rows. A wall one cell thick closes every row it crosses at any angle, which a share-of-solid-cells rule would not (a one-cell wall fills a quarter of a 4×4 air cell). A diagonal wall crossing the corner of an air cell still leaves two faces half open, so a face's speed is multiplied by `faceGate = max(0, 2 · openness − 1)` rather than by the openness: a face open on at least half its rows stays a passage, and one open on less is shut, so no path goes through a one-cell wall. In the tests the far side of a one-cell wall, vertical, horizontal or diagonal, stays under 0.03% of the pulse's peak, and a gap of 3 air cells lets 12 to 16% through. Cells outside the grid count as open in the scan, so a wall drawn along the edge seals it.
+
+The world's edge is open air: the faces on it carry no pressure gradient, and the air through them leaves at `waveSpeed` times the pressure inside, which lets a wave out instead of bouncing it back inverted. The outermost ring of air cells also loses `edgeDamping` (10% per dispatch) of its pressure and speed, which takes the echo of waves that arrive at a slant. The echo is under 30% of the wave that arrived at the worst point (a slanted arrival near a corner; 29% at s = 4, 17% at s = 2), and the pressure in the grid has fallen under 5% of a pulse's start within 94 supersteps (`tests/air.test.ts`, AC4). Heat leaves through the edge the same way: the ghost cells stay at room temperature.
+
+### Cost
+
+On the RTX 4080 at 2560×1340 the air passes at 1x cost 0.07 to 0.12 ms at s = 8, 0.11 to 0.20 ms at s = 4 (default), 0.8 to 0.95 ms at s = 2 and about 17 ms at s = 1 (four air steps per superstep over 3.4 million air cells), so 1×1 air is not usable at screen size. `BENCH_AIR=off,8,4,2,1 npm run bench` measures them.
 
 ## Boundaries
 
