@@ -1,6 +1,6 @@
 # M6 Air
 
-Status: M6.1a to M6.1c, M6.2a to M6.2c and M6.3a to M6.3c done; next open item M6.3d.
+Status: M6.1a to M6.1c, M6.2a to M6.2c and M6.3a to M6.3d done; next open item M6.4a.
 
 ## Goal
 
@@ -213,7 +213,7 @@ Needs you: nothing.
   Decided during the run: GUNPOWDER is 1,700 kg/m³ (grain density, specific gravity 1.70 to 1.82 in safety data sheets), so it sinks through sand and water; ignition 427 °C (sheets give 200 to 464 °C, ignition in 5 s at 427); conductivity 0.03 and capacity 1.4 are estimates, not read from a source (the Army Research Laboratory report ARL-TR-2033 measured them, its numbers were not reachable). Because it is denser than sand, the `explosion` scene's charge rests on a 12x2 wall shelf (a charge in the middle of the sand slumps into it), and the control "unlit moves no grain" tolerates up to 2 grains moving more than 2 cells (measured 1). Alternative: a bulk density near 1,000 (equal to water's, which neither sinks nor floats in the CA). Change: the GUNPOWDER row, `EXPLOSION.shelf`.
   Decided during the run: `explosion` starts its fire cell with the FIRE life (a cell with life 0 is smoke after one dispatch and never ignites anything), so `tests/scenes.test.ts` now expects life 0 everywhere except on FIRE cells, where it expects the element's start. Change: `Canvas.fire` in `src/scenes.ts`.
   Backlog I18: a lit charge burns only part of itself (16 of 48 in the open, about 24 under sand); the rest is thrown away unburnt.
-- [ ] M6.3d Docs: `docs/simulation.md` (drag, push, gas drift, bursts, the phases), the gunpowder row in its element table.
+- [x] M6.3d Docs: `docs/simulation.md` (drag, push, gas drift, bursts, the phases), the gunpowder row in its element table.
 
 Visible after: a Gunpowder button; lit gunpowder explodes and throws sand; water poured onto lava puffs outward; flames lean and drift with moving air; `?scene=explosion` shows it.
 Needs you: nothing (the playtest is M6.6's gate).
