@@ -236,6 +236,13 @@ export class AirGrid {
     this.device.queue.submit([encoder.finish()]);
   }
 
+  /** The byte offset in `state` of the pressure and temperature words (two f32 in a row) of the air cell that holds grid cell (cx, cy); the cell must be inside the grid. */
+  probeOffset(cx: number, cy: number): number {
+    const a = Math.floor(cx / this.cellSize) + 1;
+    const b = Math.floor(cy / this.cellSize) + 1;
+    return (b * this.arrayWidth + a) * 16 + 8;
+  }
+
   /** Everything at rest. */
   clear(): void {
     if (this.enabled) this.reset();

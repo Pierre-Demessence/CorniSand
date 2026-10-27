@@ -4,9 +4,10 @@ import { AIR_CELL_SIZES, AIR_LEGEND_PRESSURES, PRESSURE_RAMP } from './air';
 import { Simulation, type CellProbe } from './simulation';
 import { Display } from './display';
 import { InputHandler, type Vec2 } from './input';
-import { ELEMENTS, elementHoldsHeat, type ElementDef } from './elements';
+import { ELEMENTS, type ElementDef } from './elements';
 import { findScene, type Scene } from './scenes';
-import { HEAT_LEGEND_TEMPS, effectiveTemp, heatRampCSS } from './heat';
+import { HEAT_LEGEND_TEMPS, heatRampCSS } from './heat';
+import { formatProbe } from './readout';
 import { TOOLS, renderAirViewToggle, renderHeatViewToggle, renderTools, renderToolbar, toggleView, toolbarEntries, type Tool, type Views } from './toolbar';
 
 interface GpuState {
@@ -264,10 +265,7 @@ async function main(): Promise<void> {
   function updateProbeDisplay(probe: CellProbe | undefined): void {
     const element = elementById.get(probe?.type ?? -1);
     if (!probe || !element || !overGrid()) return;
-    // A cell that holds no heat (empty space, wall) has no temperature to show.
-    probeEl.textContent = elementHoldsHeat(element)
-      ? `${element.label} · ${Math.round(effectiveTemp(element, probe.temp))} °C`
-      : element.label;
+    probeEl.textContent = formatProbe(element, probe);
   }
 
   // --- Animation loop ---

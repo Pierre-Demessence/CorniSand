@@ -27,10 +27,15 @@ export interface SimulationInput {
   wind?: boolean;
 }
 
-/** What `Simulation.readProbe` returns for the cell under the probe: its element ID and stored temperature (°C). */
+/**
+ * What `Simulation.readProbe` returns for the cell under the probe: its element ID and stored temperature (°C), and,
+ * when the simulation has air, the pressure (0 ambient) and temperature (°C) of the air cell that holds the cell.
+ */
 export interface CellProbe {
   type: number;
   temp: number;
+  pressure?: number;
+  airTemp?: number;
 }
 
 export interface SimulationOptions {
@@ -89,7 +94,8 @@ export class Simulation {
   private mapping = false;
   private lastCount = 0;
 
-  // Probe: the `kind` and `temp` words of one cell, copied at the end of the frame's encoder
+  // Probe: the `kind` and `temp` words of one cell and the pressure and temperature words of its air cell, copied at
+  // the end of the frame's encoder
   private readonly probeStaging: GPUBuffer;
   private probePending = false;
 
@@ -198,7 +204,7 @@ export class Simulation {
       compute: { module: countShader, entryPoint: 'main' },
     });
 
-    this.probeStaging = device.createBuffer({ size: 8, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    this.probeStaging = device.createBuffer({ size: 16, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
   }
 
   // Replaces the world: each field of `data` (width x height words) goes into its buffer; a missing field is zero,
@@ -340,8 +346,8 @@ export class Simulation {
     return this.lastCount;
   }
 
-  // Appends copies of the `kind` and `temp` words of the grid cell at (x, y) to the caller's encoder, so a probe needs
-  // no submit of its own. False when it recorded nothing: one probe is in flight until `readProbe` returns, or the
+  // Appends copies of the `kind` and `temp` words of the grid cell at (x, y), and the pressure and temperature words of
+  // its air cell, to the caller's encoder, so a probe needs no submit of its own. False when it recorded nothing: one probe is in flight until `readProbe` returns, or the
   // point is outside the grid. A flyer in the air over the cell is not seen.
   probe(encoder: GPUCommandEncoder, x: number, y: number): boolean {
     const cx = Math.floor(x);
@@ -350,6 +356,9 @@ export class Simulation {
     const offset = (cy * this.width + cx) * FIELD_BYTES;
     encoder.copyBufferToBuffer(this.fields.buffers.kind, offset, this.probeStaging, 0, FIELD_BYTES);
     encoder.copyBufferToBuffer(this.fields.buffers.temp, offset, this.probeStaging, FIELD_BYTES, FIELD_BYTES);
+    if (this.air.state) {
+      encoder.copyBufferToBuffer(this.air.state, this.air.probeOffset(cx, cy), this.probeStaging, 2 * FIELD_BYTES, 2 * FIELD_BYTES);
+    }
     this.probePending = true;
     return true;
   }
@@ -360,7 +369,13 @@ export class Simulation {
     try {
       await this.probeStaging.mapAsync(GPUMapMode.READ);
       const words = new Uint32Array(this.probeStaging.getMappedRange().slice(0));
-      return { type: words[0] & 0xff, temp: tempView({ temp: words.subarray(1, 2) })[0] };
+      const probe: CellProbe = { type: words[0] & 0xff, temp: tempView({ temp: words.subarray(1, 2) })[0] };
+      if (this.air.enabled) {
+        const air = new Float32Array(words.buffer, 2 * FIELD_BYTES, 2);
+        probe.pressure = air[0];
+        probe.airTemp = air[1];
+      }
+      return probe;
     } finally {
       if (this.probeStaging.mapState === 'mapped') this.probeStaging.unmap();
       this.probePending = false;

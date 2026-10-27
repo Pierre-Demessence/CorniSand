@@ -890,7 +890,7 @@ describe.skipIf(!device)('M5.5c probe', () => {
   it('AC18: reads back the element and the stored temperature of the cell, whatever the cells around it hold', async () => {
     const sim = probeSim();
     // Any point inside the cell reads the cell: 3.9, 2.1 is in column 3, row 2.
-    expect(await probeAt(sim, 3.9, 2.1)).toEqual({ type: T.LAVA, temp: 1180.5 });
+    expect(await probeAt(sim, 3.9, 2.1)).toMatchObject({ type: T.LAVA, temp: 1180.5 });
     expect(await probeAt(sim, 7, 5), 'a wall').toMatchObject({ type: T.WALL });
     expect(await probeAt(sim, 0, 0), 'empty space').toMatchObject({ type: T.EMPTY });
   });
@@ -904,9 +904,43 @@ describe.skipIf(!device)('M5.5c probe', () => {
     expect(sim.probe(encoder, 3, 2), 'inside').toBe(true);
     expect(sim.probe(encoder, 3, 2), 'a second one while the first is in flight').toBe(false);
     device!.queue.submit([encoder.finish()]);
-    expect(await sim.readProbe()).toEqual({ type: T.LAVA, temp: 1180.5 });
-    expect(await probeAt(sim, 3, 2), 'free again once read').toEqual({ type: T.LAVA, temp: 1180.5 });
+    expect(await sim.readProbe()).toMatchObject({ type: T.LAVA, temp: 1180.5 });
+    expect(await probeAt(sim, 3, 2), 'free again once read').toMatchObject({ type: T.LAVA, temp: 1180.5 });
     expect(await sim.readProbe(), 'nothing to read').toBeUndefined();
+  });
+
+  it('M6 AC23: reads back the pressure and temperature of the air cell that holds the cell', async () => {
+    const sim = createSim(width, height, 1, { airCellSize: 2 });
+    const columns = width / 2;
+    const rows = height / 2;
+    const pressure = new Float32Array(columns * rows);
+    const temperature = new Float32Array(columns * rows).fill(20);
+    // Every air cell gets its own pair, so a probe in the wrong cell is told apart from the right one.
+    for (let i = 0; i < pressure.length; i++) {
+      pressure[i] = 0.25 * i - 1;
+      temperature[i] = 20 + 5 * i;
+    }
+    const kind = new Uint32Array(width * height);
+    kind[2 * width + 3] = cell(T.LAVA);
+    kind[5 * width + 7] = cell(T.WALL);
+    sim.load({ kind });
+    sim.air.load({ pressure, temperature });
+    // Grid cell (x, y) is in air cell (floor(x / 2), floor(y / 2)): row by row from the bottom.
+    const airCell = (x: number, y: number): number => Math.floor(y / 2) * columns + Math.floor(x / 2);
+    for (const [x, y, type] of [[3, 2, T.LAVA], [0, 0, T.EMPTY], [6, 1, T.EMPTY], [7, 5, T.WALL]] as const) {
+      const probe = await probeAt(sim, x + 0.5, y + 0.5);
+      expect(probe?.type, `(${x}, ${y})`).toBe(type);
+      expect(probe?.pressure, `pressure at (${x}, ${y})`).toBeCloseTo(pressure[airCell(x, y)], 5);
+      expect(probe?.airTemp, `air temperature at (${x}, ${y})`).toBeCloseTo(temperature[airCell(x, y)], 3);
+    }
+  });
+
+  it('M6 AC23: has no air values without air', async () => {
+    const sim = createSim(width, height, 1, NO_AIR);
+    const bare = await probeAt(sim, 3, 2);
+    expect(bare).toMatchObject({ type: T.EMPTY });
+    expect(bare).not.toHaveProperty('pressure');
+    expect(bare).not.toHaveProperty('airTemp');
   });
 
   it('AC18: follows the cell as the simulation runs', async () => {

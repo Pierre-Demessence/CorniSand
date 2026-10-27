@@ -1,6 +1,6 @@
 # M6 Air
 
-Status: M6.1a to M6.1c, M6.2a to M6.2c, M6.3a to M6.3d, M6.4a to M6.4b and M6.5a to M6.5b and M6.6a to M6.6b done; next open item M6.6c.
+Status: M6.1a to M6.1c, M6.2a to M6.2c, M6.3a to M6.3d, M6.4a to M6.4b and M6.5a to M6.5b and M6.6a to M6.6c done; next open item M6.6d.
 
 ## Goal
 
@@ -254,7 +254,10 @@ Needs you: nothing.
 - [x] M6.6b Air view, its legend, the A key, exclusive with the heat view; air temperature in the heat view; AC21–AC22 render tests. Verify: lint, typecheck, `npm test`, build.
   Decided during the run: the display gets the air state at binding 1 of group 0 (next to its uniform), not in group 3, and `Display` takes the `AirGrid` as an optional last argument; without it (or with `air: false`) the shader is generated with `HAS_AIR` false, the air view shows ambient pressure and no wind, and the heat view leaves empty space as the background. Why: group 3 is the flyer overlay's own bind group, and a fifth group exceeds the default limit of 4; the storage buffers stay at 7. Alternative: a combined group 3 layout with the overlay. Change: the `Display` constructor and `airDisplayWGSL`.
   Decided during the run: `AIR.viewRange` is 0.5 (the stone crush threshold 0.2 is 40% of the way out; a gunpowder charge saturates), and `PRESSURE_RAMP` has five knots (dark blue, blue, grey, khaki, pale yellow at -0.5, -0.25, 0, 0.25, 0.5) with rising luminance; it reuses `RampKnot`, whose `temp` field holds the pressure. The wind marks are in `AIR_VIEW`: one arrow per 16x16 screen pixels, centered on its tile, `11 * (speed / maxSpeed)^0.4` pixels long (so a 0.08 plume shows 3 pixels and a 0.5 wind 6), none under 2 pixels, light with a dark outline. The views are one `Views` state (`toggleView` in `src/toolbar.ts`) so turning one on turns the other off; the shader gives the air view priority if both are set. Why: the plan leaves the values open; the exponent keeps weak wind visible beside the Wind tool's strong one. Alternative: a linear length (weak wind invisible), or a wider range. Change: `AIR.viewRange`, `PRESSURE_RAMP`, `AIR_VIEW` in `src/air.ts`.
-- [ ] M6.6c Readout with pressure and air temperature; AC23. Verify: lint, typecheck, `npm test`.
+- [x] M6.6c Readout with pressure and air temperature; AC23. Verify: lint, typecheck, `npm test`.
+  Decided during the run: the pressure is written with two decimals and a sign (`pressure +0.20`, a zero as `0.00`), not the Design's one decimal (`+1.2`). Why: pressures run from 0 to about 0.5 (the stone crush is 0.2, `AIR.viewRange` 0.5), so one decimal would show 0.0 or +0.2 only. Alternative: one decimal. Change: `formatPressure` in `src/readout.ts`.
+  Decided during the run: a wall shows its label alone, with no temperature or pressure; empty space shows its air's temperature and pressure, a material that holds heat its own temperature and then the pressure. Why: AC23 names empty space and materials; the air cell around a wall cell is a closed pocket whose values mean nothing. Alternative: pressure on walls too. Change: `formatProbe` in `src/readout.ts`.
+  Decided during the run: `CellProbe.pressure` and `airTemp` are absent (not zero) when the simulation has no air, and the line then ends after the temperature. The probe's air cell is the one that holds the grid cell (`AirGrid.probeOffset`), the same lookup as the CA's pressure transition.
 - [ ] M6.6d Browser check on the user's dev server (or one started for it): the Wind tool, the A key and button, the legend, the readout, `?air=2` and `?air=4`, no WebGPU error. Then the gate.
 
 Visible after: a Wind tool, an Air view (button or A) with a legend, warm air in the heat view, and pressure and air temperature under the pointer.
