@@ -1,6 +1,6 @@
 # M5 Heat and phase changes
 
-Status: M5.1 to M5.3, M5.4a to M5.4c done; next is M5.4d (docs).
+Status: M5.1 to M5.4 done; next is M5.5 (Heat and Cool tools, heat view, readout, toolbar scroll). A Claude Design canvas is suggested before it (see M5.5).
 
 ## Goal
 
@@ -263,7 +263,7 @@ Needs you: nothing.
 - [x] M5.4a `below` and `above` with latent heat, `cellTemp` and `effectiveTemp`, 80-byte packing, validation; AC15 unit tests. Verify: lint, typecheck, `npm test`.
 - [x] M5.4b Phase 8; the ICE (9), STEAM (10), LAVA (11) and MOLTEN_METAL (12) rows and the changed rows; oil ignited by heat; fire's flame temperature; the cell-level transition tests and AC12. Verify: lint, typecheck, `npm test`.
 - [x] M5.4c The `iceLava`, `steamCeiling` and `moltenMetal` scenes; AC9–AC11, AC13 and AC14 tests; latent heats tuned and recorded in the rows. Verify: lint, typecheck, `npm test`, build, bench into "M5.4 results".
-- [ ] M5.4d Docs: `docs/simulation.md` (rows, phase 8, latent heat, fire and smoke), AGENTS.md (the phase order).
+- [x] M5.4d Docs: `docs/simulation.md` (rows, phase 8, latent heat, fire and smoke), AGENTS.md (the phase order).
 
 Visible after: Ice, Lava and Steam buttons. Ice melts, water boils and freezes, steam turns to water on cold metal, lava sets into stone, metal melts, and oil catches fire from hot metal, lava or hot smoke; `?scene=iceLava`, `?scene=steamCeiling` and `?scene=moltenMetal` show it. Temperatures themselves stay invisible until M5.5.
 Needs you: nothing (the playtest is M5.5's gate).
