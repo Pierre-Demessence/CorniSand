@@ -317,8 +317,12 @@ describe('toolbar', () => {
 });
 
 describe('M5.5a tools', () => {
-  it('Heat and Cool follow the elements, heating and cooling at the same rate, under labels the elements do not use', () => {
-    expect(TOOLS.map((t) => [t.id, t.label, t.heating])).toEqual([['heat', 'Heat', HEAT_TOOL_RATE], ['cool', 'Cool', -HEAT_TOOL_RATE]]);
+  it('Heat, Cool and Wind follow the elements, heating and cooling at the same rate, under labels the elements do not use', () => {
+    expect(TOOLS.map((t) => [t.id, t.label, t.heating, t.air])).toEqual([
+      ['heat', 'Heat', HEAT_TOOL_RATE, undefined],
+      ['cool', 'Cool', -HEAT_TOOL_RATE, undefined],
+      ['wind', 'Wind', 0, 'wind'],
+    ]);
     expect(toolbarEntries(ELEMENTS).every((e) => TOOLS.every((t) => t.label !== e.label))).toBe(true);
   });
 

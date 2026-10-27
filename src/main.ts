@@ -135,17 +135,21 @@ async function main(): Promise<void> {
   document.getElementById('tool-keys')!.textContent = `1-${Math.min(entries.length, 9)}`;
   // Degrees per frame the held Heat or Cool tool applies; 0 while an element is selected.
   let heating = 0;
+  // Whether the Wind tool is selected.
+  let wind = false;
   function selectButton(button: HTMLButtonElement): void {
     [...toolButtons, ...heatButtons].forEach((b) => b.classList.toggle('active', b === button));
   }
   function selectElement(button: HTMLButtonElement): void {
     selectButton(button);
     heating = 0;
+    wind = false;
     input.particleType = Number(button.dataset.type);
   }
   function selectHeatTool(button: HTMLButtonElement, tool: Tool): void {
     selectButton(button);
     heating = tool.heating;
+    wind = tool.air === 'wind';
   }
   toolButtons.forEach((btn) => {
     btn.addEventListener('click', () => selectElement(btn));
@@ -266,8 +270,8 @@ async function main(): Promise<void> {
 
     const mouseActive = input.mouseActive;
     const erasing = input.erasing;
-    // The flyer brush removes flyers whenever `replacing` is set, so a heating stroke never sets it.
-    const replacing = input.shiftDown && !erasing && heating === 0;
+    // The flyer brush removes flyers whenever `replacing` is set, so a heating or wind stroke never sets it.
+    const replacing = input.shiftDown && !erasing && heating === 0 && !wind;
 
     const prevMousePos = mouseActive && lastDrawPos.x >= 0
       ? lastDrawPos
@@ -296,6 +300,7 @@ async function main(): Promise<void> {
       brushSize: input.brushSize,
       particleType: input.particleType,
       heating,
+      wind,
     });
     simulation.recordOverlay(encoder);
     display.render(encoder, context.getCurrentTexture().createView(), canvas.width, canvas.height, {

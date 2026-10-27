@@ -23,12 +23,15 @@ export interface Tool {
   label: string;
   /** °C per frame the tool adds to the cells of a stroke (`SimulationInput.heating`). */
   heating: number;
+  /** `'wind'`: the tool blows the air under the stroke instead of changing cells (`SimulationInput.wind`). */
+  air?: 'wind';
 }
 
-/** The tools after the elements: they change the cells under the brush instead of painting. */
+/** The tools after the elements: they change the cells (Heat, Cool) or the air (Wind) under the brush instead of painting. */
 export const TOOLS: readonly Tool[] = [
   { id: 'heat', label: 'Heat', heating: HEAT_TOOL_RATE },
   { id: 'cool', label: 'Cool', heating: -HEAT_TOOL_RATE },
+  { id: 'wind', label: 'Wind', heating: 0, air: 'wind' },
 ];
 
 /** The attributes of an entry's button. */

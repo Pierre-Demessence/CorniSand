@@ -1,6 +1,6 @@
 # M6 Air
 
-Status: M6.1a to M6.1c, M6.2a to M6.2c, M6.3a to M6.3d, M6.4a to M6.4b and M6.5a to M6.5b done; next open item M6.6a.
+Status: M6.1a to M6.1c, M6.2a to M6.2c, M6.3a to M6.3d, M6.4a to M6.4b and M6.5a to M6.5b and M6.6a done; next open item M6.6b.
 
 ## Goal
 
@@ -247,7 +247,10 @@ Needs you: nothing.
 
 ### M6.6 Tools and views (tasks)
 
-- [ ] M6.6a Wind tool: `TOOLS`, `SimulationInput.wind`, the air uniform; AC20. Verify: lint, typecheck, `npm test`.
+- [x] M6.6a Wind tool: `TOOLS`, `SimulationInput.wind`, the air uniform; AC20. Verify: lint, typecheck, `npm test`.
+  Decided during the run: the Wind tool has its own compute pass, `air wind` (`airWindWGSL`), recorded once per frame after the mask pass and before the CA, with its own small uniform (group 1); the Design put it in the coupling pass of the frame's first air step. Why: the coupling pass is recorded once per air step and shares no per-step uniform, so applying a stroke in the first step only would need a dynamic-offset slot per step; a separate pass needs none, costs nothing when no stroke is made (not recorded), and lets the CA's first dispatches already feel the wind. It reads the mask pass's openness, so a closed face stays at 0. Alternative: the coupling pass with a slot per air step. Change: `AirGrid.recordWind` and `airWindWGSL`.
+  Decided during the run: `AIR.windToolGain` is 0.5 and `AIR.windToolBlend` 0.5: a stroke of `d` cells over a frame of `n` dispatches sets the target air speed to 0.5 d / n cells per dispatch (capped at `maxSpeed` 2), and each face under the brush closes half the gap to it per frame; the faces reached are those whose center lies within the brush radius, at least one air cell, of the stroke segment. Why: at 1x (8 dispatches a frame) a 10-cell-a-frame drag gives about 0.6 cells per dispatch and the cap is reached at 32 cells a frame, so the speed grows over the whole range of a normal drag; measured, 8 frames of 10 cells through a smoke cloud (radius 40) move its centroid 27 cells in the stroke's direction against 0.06 with no stroke. Alternative: any other pair; the M6.6 playtest gate judges the feel. Change: `AIR` in `src/air.ts` and `MEASURED_SMOKE_SHIFT` in `tests/air-wind.test.ts`.
+  Decided during the run: a pointer that did not move records no wind pass (the air is untouched, bit for bit), a slow drag pulls the air under it toward that slow speed, and a wind stroke does not call the brush pass (it paints nothing, with or without `replacing`); with the right button (`erasing`) the brush erases and the wind is not recorded. `TOOLS` gains `{ id: 'wind', label: 'Wind', heating: 0, air: 'wind' }`; `tests/heat.test.ts` AC16 now loops over the tools with a non-zero `heating`. Why: Heat, Cool and Wind are one kind of tool in the toolbar, and the brush has no use for a stroke that paints nothing. Alternative: let the still pointer brake the air. Change: `blowing` in `Simulation.simulate`.
 - [ ] M6.6b Air view, its legend, the A key, exclusive with the heat view; air temperature in the heat view; AC21–AC22 render tests. Verify: lint, typecheck, `npm test`, build.
 - [ ] M6.6c Readout with pressure and air temperature; AC23. Verify: lint, typecheck, `npm test`.
 - [ ] M6.6d Browser check on the user's dev server (or one started for it): the Wind tool, the A key and button, the legend, the readout, `?air=2` and `?air=4`, no WebGPU error. Then the gate.

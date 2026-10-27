@@ -778,7 +778,7 @@ describe.skipIf(!device)('M5.5a Heat and Cool tools', () => {
     return { kind, temp, floats };
   }
 
-  it.each(TOOLS)('AC16: $label adds $heating °C to every cell that holds heat, within the clamps, and leaves empty space and walls alone', async (tool) => {
+  it.each(TOOLS.filter((t) => t.heating !== 0))('AC16: $label adds $heating °C to every cell that holds heat, within the clamps, and leaves empty space and walls alone', async (tool) => {
     const { kind, temp, floats } = mixedGrid();
     const before = Float32Array.from(floats);
     const sim = createSim(width, height);

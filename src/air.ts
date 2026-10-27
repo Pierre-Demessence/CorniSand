@@ -51,7 +51,27 @@ export const AIR = {
   // Fixed-point scale of the burst buffer: pressure released by a cell is added as an integer, so the sum is the same
   // whatever order the threads add in.
   burstScale: 1024,
+  // The Wind tool's air speed per unit of pointer speed: a stroke that moves the pointer `d` grid cells over a frame of `n`
+  // dispatches blows at gain x d / n cells per dispatch, capped at maxSpeed.
+  windToolGain: 0.5,
+  // Share of the gap between the air's speed and the stroke's that a frame's stroke closes at the faces it reaches.
+  windToolBlend: 0.5,
 } as const;
+
+/**
+ * The speed the Wind tool gives the air for a stroke from `from` to `to` (grid cells) over a frame of `dispatches`
+ * dispatches, in grid cells per dispatch: along the stroke, growing with its speed, never above `AIR.maxSpeed`; zero
+ * for a pointer that did not move.
+ */
+export function windVelocity(from: { x: number; y: number }, to: { x: number; y: number }, dispatches: number): { x: number; y: number } {
+  if (dispatches <= 0) return { x: 0, y: 0 };
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const length = Math.hypot(dx, dy);
+  if (length === 0) return { x: 0, y: 0 };
+  const speed = Math.min(AIR.windToolGain * length / dispatches, AIR.maxSpeed);
+  return { x: dx / length * speed, y: dy / length * speed };
+}
 
 /** The air cell sizes: grid cells per air cell along each axis. */
 export const AIR_CELL_SIZES = [1, 2, 4, 8] as const;

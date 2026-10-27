@@ -294,6 +294,59 @@ ${ENTRY} {
 }
 `;
 
+/** Floats in the Wind tool's uniform (`airWindWGSL`): prev (2), cur (2), velocity (2), radius, 1 pad = 32 bytes. */
+export const WIND_UNIFORM_WORDS = 8;
+
+/**
+ * The Wind tool, one thread per air cell, once per frame after the mask pass and before the CA: every interior face whose
+ * center lies within `radius` of the stroke's segment moves toward the stroke's velocity by `windToolBlend` of the gap
+ * (the right faces toward its x, the top faces toward its y). A closed face stays at 0, so wind does not cross a wall.
+ * Writes only the thread's own two speeds, so it runs in place. The edge faces are the open boundary's, as in the
+ * velocity pass, and are left alone.
+ */
+export const airWindWGSL = (width: number, height: number, cellSize: number, substeps: number, nx: number, ny: number): string => /* wgsl */`
+${prelude(width, height, cellSize, substeps, nx, ny)}
+
+struct Wind {
+  prev: vec2f,
+  cur: vec2f,
+  velocity: vec2f,
+  radius: f32,
+  _pad: f32,
+};
+@group(1) @binding(0) var<uniform> wind: Wind;
+
+const BLEND: f32 = ${wgslFloat(AIR.windToolBlend)};
+
+// Whether the stroke along prev -> cur reaches the point (in grid cells).
+fn reaches(pos: vec2f) -> bool {
+  let ab = wind.cur - wind.prev;
+  let segLen2 = dot(ab, ab);
+  var t: f32 = 0.0;
+  if (segLen2 > 0.001) {
+    t = clamp(dot(pos - wind.prev, ab) / segLen2, 0.0, 1.0);
+  }
+  return length(pos - (wind.prev + t * ab)) <= wind.radius;
+}
+
+${ENTRY} {
+  ${GROUP}
+  let k = airIndex(a, b);
+  let m = mask[k];
+  // The right face of (a, b) sits on the right edge of the air cell, halfway up it; the top face on its top edge.
+  if (b >= 1 && a >= 1 && a < NX && b <= NY) {
+    if (reaches(vec2f(f32(a * S), f32((b - 1) * S) + 0.5 * f32(S)))) {
+      air[k].x += (wind.velocity.x * faceGate(m.x) - air[k].x) * BLEND;
+    }
+  }
+  if (a >= 1 && a <= NX && b >= 1 && b < NY) {
+    if (reaches(vec2f(f32((a - 1) * S) + 0.5 * f32(S), f32(b * S)))) {
+      air[k].y += (wind.velocity.y * faceGate(m.y) - air[k].y) * BLEND;
+    }
+  }
+}
+`;
+
 /**
  * The speed of every face: the pressure difference across it accelerates the air (and, on a top face, the warmth of the
  * air makes it rise), friction slows it, the edge ring is damped, the speed is capped and a closed face is held at 0. The edge faces let the air out at the speed a wave of the

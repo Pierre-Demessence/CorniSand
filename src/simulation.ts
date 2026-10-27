@@ -1,5 +1,5 @@
 import { AirGrid, defaultAirOptions } from './air-grid';
-import type { AirCellSize } from './air';
+import { windVelocity, type AirCellSize } from './air';
 import { cellWGSL } from './shaders/cell.wgsl';
 import { BRUSH_UNIFORM_WORDS, brushWGSL } from './shaders/brush.wgsl';
 import { caWGSL } from './shaders/ca.wgsl';
@@ -23,6 +23,8 @@ export interface SimulationInput {
   particleType: number;
   /** °C added to every cell that holds heat inside the stroke per frame, negative to cool; absent or 0 when painting. */
   heating?: number;
+  /** The Wind tool: the stroke blows the air under the brush along the pointer's movement and paints nothing; the right button still erases. */
+  wind?: boolean;
 }
 
 /** What `Simulation.readProbe` returns for the cell under the probe: its element ID and stored temperature (°C). */
@@ -239,8 +241,18 @@ export class Simulation {
 
     const passes = new PassRecorder(encoder, timer);
 
-    if (input.mouseActive) this.recordBrush(passes, input);
+    // A wind stroke paints nothing; the right button erases as with any tool.
+    const blowing = input.mouseActive && input.wind === true && !input.erasing;
+    if (input.mouseActive && !blowing) this.recordBrush(passes, input);
     if (dispatches > 0) this.air.recordMask(passes);
+    if (blowing && dispatches > 0) {
+      this.air.recordWind(passes, {
+        prev: input.prevMousePos,
+        cur: input.mousePos,
+        radius: input.brushSize,
+        velocity: windVelocity(input.prevMousePos, input.mousePos, dispatches),
+      });
+    }
 
     for (let i = 0; i < dispatches; i++) {
       const offset = i % 2;

@@ -4,7 +4,7 @@ import type { ElementTable } from './element-table';
 import { ROOM_TEMP } from './heat';
 import type { PassRecorder } from './passes';
 import {
-  airAdvectWGSL, airCouplingWGSL, airDiffuseWGSL, airMaskWGSL, airPressureWGSL, airVelocityWGSL,
+  WIND_UNIFORM_WORDS, airAdvectWGSL, airCouplingWGSL, airDiffuseWGSL, airMaskWGSL, airPressureWGSL, airVelocityWGSL, airWindWGSL,
 } from './shaders/air.wgsl';
 
 /**
@@ -28,6 +28,14 @@ export interface AirOptions {
 export const defaultAirOptions: AirOptions = { enabled: true, cellSize: DEFAULT_AIR_CELL_SIZE };
 
 const WORKGROUP = 8;
+
+/** A stroke of the Wind tool for one frame: the segment the pointer moved along, the brush radius and the air speed it gives, in grid cells and cells per dispatch. */
+export interface WindStroke {
+  prev: { x: number; y: number };
+  cur: { x: number; y: number };
+  radius: number;
+  velocity: { x: number; y: number };
+}
 
 interface AirPass {
   pipeline: GPUComputePipeline;
@@ -61,6 +69,10 @@ export class AirGrid {
   private readonly kindBindGroup?: GPUBindGroup;
   private readonly elementBindGroup?: GPUBindGroup;
   private readonly maskPass?: AirPass;
+  private readonly windPass?: AirPass;
+  private readonly windBindGroup?: GPUBindGroup;
+  private readonly windUniform?: GPUBuffer;
+  private readonly windData = new Float32Array(WIND_UNIFORM_WORDS);
   private readonly stepPasses: AirPass[] = [];
   private readonly mask?: GPUBuffer;
   private readonly rest?: Float32Array<ArrayBuffer>;
@@ -109,6 +121,13 @@ export class AirGrid {
       label: 'air mask',
       pipeline: pipeline(airMaskWGSL(elements.elements, ...shape), [layout, kind.layout, elements.layout]),
     };
+    // The Wind tool's uniform: written once per frame that has a stroke, before the pass that reads it is recorded.
+    const windLayout = device.createBindGroupLayout({
+      entries: [{ binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } }],
+    });
+    this.windUniform = device.createBuffer({ label: 'air wind', size: WIND_UNIFORM_WORDS * 4, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.windBindGroup = device.createBindGroup({ layout: windLayout, entries: [{ binding: 0, resource: { buffer: this.windUniform } }] });
+    this.windPass = { label: 'air wind', pipeline: pipeline(airWindWGSL(...shape), [layout, windLayout]) };
     this.stepPasses = [
       { label: 'air coupling', pipeline: pipeline(airCouplingWGSL(elements.elements, ...shape), [layout, heat.layout, elements.layout]), cells: heat.bindGroup },
       { label: 'air velocity', pipeline: pipeline(airVelocityWGSL(...shape), [layout]) },
@@ -131,6 +150,30 @@ export class AirGrid {
     pass.setBindGroup(0, this.bindGroup);
     pass.setBindGroup(1, this.kindBindGroup);
     pass.setBindGroup(2, this.elementBindGroup);
+    this.dispatch(pass);
+  }
+
+  /**
+   * Records the Wind tool's pass: once per frame, after the mask pass (the closed faces) and before the CA. Writes the
+   * stroke into the pass's uniform first, so call it at most once per frame. A stroke that gives the air no speed records
+   * nothing.
+   */
+  recordWind(passes: PassRecorder, stroke: WindStroke): void {
+    if (!this.windPass || (stroke.velocity.x === 0 && stroke.velocity.y === 0)) return;
+    const w = this.windData;
+    w[0] = stroke.prev.x;
+    w[1] = stroke.prev.y;
+    w[2] = stroke.cur.x;
+    w[3] = stroke.cur.y;
+    w[4] = stroke.velocity.x;
+    w[5] = stroke.velocity.y;
+    // A stroke thinner than an air cell would reach no face: the pass reaches at least one air cell around its line.
+    w[6] = Math.max(stroke.radius, this.cellSize);
+    this.device.queue.writeBuffer(this.windUniform!, 0, w);
+    const pass = passes.pass(this.windPass.label);
+    pass.setPipeline(this.windPass.pipeline);
+    pass.setBindGroup(0, this.bindGroup);
+    pass.setBindGroup(1, this.windBindGroup);
     this.dispatch(pass);
   }
 
