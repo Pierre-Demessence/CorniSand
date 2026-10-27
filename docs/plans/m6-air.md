@@ -1,6 +1,6 @@
 # M6 Air
 
-Status: M6.1a to M6.1c, M6.2a to M6.2c and M6.3a to M6.3d done; next open item M6.4a.
+Status: M6.1a to M6.1c, M6.2a to M6.2c, M6.3a to M6.3d and M6.4a done; next open item M6.4b.
 
 ## Goal
 
@@ -220,7 +220,13 @@ Needs you: nothing (the playtest is M6.6's gate).
 
 ### M6.4 Ambient heat (tasks)
 
-- [ ] M6.4a Exchange in the coupling pass, buoyancy, heat advection and diffusion, the edge at room temperature; `heatContent` with the air; M5 heat tests triaged per Design; AC14–AC17; the `plume` scene; constants tuned to the Design's targets. Verify: lint, typecheck, `npm test`, build, bench into "M6.4 results".
+- [x] M6.4a Exchange in the coupling pass, buoyancy, heat advection and diffusion, the edge at room temperature; `heatContent` with the air; M5 heat tests triaged per Design; AC14–AC17; the `plume` scene; constants tuned to the Design's targets. Verify: lint, typecheck, `npm test`, build, bench into "M6.4 results".
+  Decided during the run: a solid cell trades heat with the air cell of its first open neighbor (up, left, right, then down; open means empty space, a gas or fire), not with the air cell it is in; a solid with no open neighbor trades none; any other cell that holds heat trades with its own air cell. The coupling thread of an air cell reads the one-cell ring around its cells to find the solids that belong to it (`airOf` in `src/shaders/air.wgsl.ts`), so no cell belongs to two threads. Why: the plan says each cell exchanges with its air cell, but the mask closes every face of an air cell that holds only solid (no row between the centers is free of solid), so the air over an aligned 16x16 block of metal could never take its heat; an exchange with the neighbor air is also what an exposed surface does. Alternative: the own air cell plus a thermal diffusion that ignores the solids that hold heat (slower: diffusion carries about a tenth of the heat), or a scatter pass with atomics (floating-point sums that depend on thread order). Change: `airOf` and the ring loop in `airCouplingWGSL`.
+  Decided during the run: the buoyancy of a face is scaled by one less the powder-or-liquid share of the two air cells it joins (`airVelocityWGSL`). Why: hot air inside a pile cannot rise freely, and without it the burning charge's hot air in the `explosion` scene drew the sand inward (M6.3c's AC13 growth fell from 2.5 to 1.7 cells of mean distance, below its bar). Alternative: buoyancy everywhere and a larger burst. Change: that factor.
+  Decided during the run: `AIR.conductivity` 0.5, `AIR.heatCapacity` 0.04 per grid cell (33 times the physical 0.0012, which is 1/3,500 of water's) and `AIR.buoyancy` 2e-6 (cells per dispatch squared per degree). Why: with the physical capacity a 16x16 metal block at 1,000 degrees only reaches 820 after 30,000 supersteps (125 s), because each air cell carries almost no heat out; at 0.04 it falls below 200 after about 19,500 supersteps (81 s at 1x, the plan's 30 to 120 s) and 64 steam cells condense in 840 supersteps (3.5 s; the plan's "about 10 s" is not reached: the two targets scale together with the capacity, and the block's bar was judged first). A buoyancy of 4e-6 makes a stronger plume but pushes sand next to a large plate harder (backlog I19); 1.5e-6 needs a capacity of about 0.1 for the block. Alternative: any other pair on that trade; the M6.6 gate judges the feel. Change: `AIR` in `src/air.ts` and the `MEASURED` values in `tests/air-heat.test.ts`.
+  Decided during the run: the exchange runs once per air step with the capacity `heatCapacity * s * s`, with no scaling by the number of steps per superstep, as the Design says; so at `?air=2` (2 steps per superstep, a quarter of the capacity per air cell) heat moves between cells and air at another rate than at 4. Why: the Design's formula; a scaling would be a second tuning. Alternative: scale the exchange share by the step length and the cells per air cell. Change: `airCouplingWGSL`.
+  Decided during the run: M5's heat tests that measure a cell's own temperature, or a sealed box's total without the air, run with `air: false` (`NO_AIR` in `tests/heat.test.ts`: the flyer test AC4, AC7 empty space and walls, AC8, AC14, the phase-change tests through `oneSuperstep`, AC9 and the freeze test, the Heat tool's flyer test AC16 and the probe test AC18), as the Design expects; M6 AC14 to AC17 in `tests/air-heat.test.ts` replace them with the air counted (`heatContent` takes the air). Change: `NO_AIR`.
+  Decided during the run: the tuning target "a fire's plume lifts smoke faster than smoke beside it" is not met and has no test: a gas cell that rose this dispatch (every dispatch in open air) drifts sideways only (the M6.3a decision), and it already rises at the top speed of 1 cell per dispatch, so the air cannot lift it faster; the plume carries smoke sideways (inflow toward the base) and lifts what would otherwise sit under a ceiling. The `plume` scene keeps its two smoke blocks for the gate to watch. Alternative: let a rising gas also drift upward with the air. Change: `driftCell`.
 - [ ] M6.4b Docs: `docs/simulation.md` (Heat: empty space now holds the air's temperature, heat leaves through the edge).
 
 Visible after: hot things cool down in open air; fire, lava and hot metal send up a plume of hot air that carries smoke; steam clouds turn back into water; `?scene=plume` shows it.
@@ -311,7 +317,27 @@ Tests: AC3 ring speed 1.024 times `waveSpeed` at size 4 and 1.049 at size 2, the
 
 ## M6.4 results
 
-To be filled by M6.4a.
+Taken at `eccd132` plus M6.4a, same machine and method as the baseline (`BENCH_AIR=off,4 npm run bench`, one run). Wallpaper Engine closed, `nvidia-smi` 7% desktop load (browser, Discord, Steam open), no game.
+
+Measurements for the constants in `AIR` (conductivity 0.5, heatCapacity 0.04, buoyancy 2e-6; tests in `tests/air-heat.test.ts`; 1x is 240 supersteps a second):
+
+- A 16x16 metal block at 1,000 °C in a 96x128 box open at the top: mean 830 to 840 °C after 1,200 supersteps, below 200 °C after about 19,500 supersteps (81 s), 160 to 170 °C after 24,000, for the block aligned with the air cells and shifted by 2. The air just above it is 466 to 482 °C warmer than the air at the box's side after 1,200 supersteps.
+- The `plume` scene after 960 supersteps: the mean upward air speed over the plate's middle half, 12 to 60 cells above it, is 0.077 cells per dispatch and the air there is 509 °C above room temperature. With the plate at 20 °C the air stays at rest, every word. Pressure stays within 0.04 of ambient over 4,800 supersteps (a deficit of 0.03 to 0.05 above the plate).
+- 64 steam cells at 110 °C released 20 cells above the floor of a box open at the top: all condensed after 840 supersteps (3.5 s); with `air: false` none.
+- The sealed wall box of AC15 (4.2 million of heat): total within 1e-4 over 2,000 supersteps with the air counted; 80,000 of that heat went into the air.
+- Sand piles 4 cells from the plate of the `plume` scene keep creeping for thousands of supersteps (cells changed against a plate at 20 °C: 640 against 228 after 3,600 supersteps): backlog I19.
+
+Median GPU ms per 1x frame at 2560x1340, air cell size 4, against the baseline and the same session with the air off (AC24 is judged in M6.7):
+
+| Scene | Baseline | off | 4 (default) | Above baseline |
+| --- | --- | --- | --- | --- |
+| `tank` | 0.46 | 0.46 | 0.72 | 0.26 |
+| `mix75` | 1.44 | 1.57 | 2.16 | 0.72 |
+| `full100` | 1.31 | 1.38 | 1.90 | 0.59 |
+| `blast` | 0.39 | 0.39 | 0.59 | 0.20 |
+| `thermal` | 1.05 | 1.11 | 2.29 | 1.24 |
+
+`thermal` is over AC24's 1 ms. The air passes at 1x (mean of the frames): `tank` 0.18, `mix75` 0.31, `full100` 0.30, `blast` 0.18, `thermal` 0.47 ms, of which the coupling pass is 0.07, 0.18, 0.15, 0.07 and 0.32 (M6.2: 0.025 on `mix75`). The CA also grew with its air reads (`thermal`: ca0 and ca1 0.52 and 0.55 to 0.79 and 0.84). The levers of M6.7 apply: the coupling pass can skip air cells whose mask counts no heat-holding cell in them or in the ring around.
 
 ## M6.7 results
 

@@ -1,3 +1,5 @@
+import { AIR } from '../src/air';
+import type { AirData } from '../src/air-grid';
 import { ELEMENT as T, elementHeatCapacity, elementHoldsHeat, transitionLatent, type ElementDef } from '../src/elements';
 import type { Chamber } from '../src/scenes';
 
@@ -127,12 +129,15 @@ export function latentOffsets(table: readonly ElementDef[]): Map<number, number>
 
 /**
  * The heat of the cells that hold heat: the sum of heat capacity times stored temperature plus the latent offset of the
- * element (see `latentOffsets`) over the cells of the grid and the flyers in the air (`kind` and `temp` words).
+ * element (see `latentOffsets`) over the cells of the grid and the flyers in the air (`kind` and `temp` words), and, when
+ * `air` is given (`Simulation.air.read()` and the air cell size), the air's heat capacity times its temperature over
+ * every air cell.
  */
 export function heatContent(
   table: readonly ElementDef[],
   grid: { kind: Uint32Array; temp: Uint32Array },
   flyers: readonly { cell: { kind: number; temp: number } }[] = [],
+  air?: { data: AirData; cellSize: number },
 ): number {
   const capacity = new Map<number, number>();
   for (const e of table) if (elementHoldsHeat(e)) capacity.set(e.id, elementHeatCapacity(e));
@@ -148,5 +153,9 @@ export function heatContent(
   let total = 0;
   for (let i = 0; i < grid.kind.length; i++) total += heat(grid.kind[i], grid.temp[i]);
   for (const f of flyers) total += heat(f.cell.kind, f.cell.temp);
+  if (air) {
+    const capacity = AIR.heatCapacity * air.cellSize * air.cellSize;
+    for (const t of air.data.temperature) total += capacity * t;
+  }
   return total;
 }

@@ -25,6 +25,19 @@ export const AIR = {
   edgeDamping: 0.1,
   // Share of the temperature difference to a neighbor an air cell closes per dispatch, across a fully open face.
   diffusion: 0.02,
+  // Share of the temperature difference that evens out when a cell that holds heat exchanges with its air: the pair
+  // meets at the harmonic mean of this and the cell's own conductivity (`exchangeHeat`'s rule). Tuned in M6.4a against
+  // the cooling targets of docs/plans/m6-air.md.
+  conductivity: 0.5,
+  // Heat per degree of the air over one grid cell, in the units of the elements' heat capacity (a cell is one unit of
+  // matter, water 4.2): air's volumetric heat capacity is about 1/3,500 of water's, so about 0.0012. An air cell holds
+  // this times `cellSize` squared. Tuned in M6.4a.
+  heatCapacity: 0.04,
+  // Upward acceleration of the air per degree it is above room temperature, in cells per dispatch squared: hot air rises,
+  // cold air sinks. Friction (`velocityLoss`) limits the speed hot air reaches to `buoyancy` x degrees / `velocityLoss`.
+  // Tuned in M6.4a: small enough that the pressure the rising air builds does not push sand, large enough that a
+  // plume lifts smoke faster than it rises alone.
+  buoyancy: 0.000002,
   // Acceleration of powders and liquids by the pressure gradient, in (cells per dispatch squared) x density per unit of
   // pressure per cell: a cell of density d gains push x gradient / d each dispatch, so lighter matter is thrown harder.
   // Tuned against the pulse tests (tests/air-matter.test.ts): a pulse of peak pressure 2 and sigma 6 inside a layer of
@@ -85,6 +98,11 @@ const KEEP_VELOCITY: f32 = ${wgslFloat(keep(AIR.velocityLoss))};
 const KEEP_MATTER: f32 = ${wgslFloat(keep(AIR.matterLoss))};
 const KEEP_EDGE: f32 = ${wgslFloat(keep(AIR.edgeDamping))};
 const DIFFUSION: f32 = ${wgslFloat(diffusion)};
+const AIR_CONDUCTIVITY: f32 = ${wgslFloat(AIR.conductivity)};
+// The heat an air cell takes per degree: its \`S x S\` grid cells' worth.
+const AIR_CAPACITY: f32 = ${wgslFloat(AIR.heatCapacity * cellSize * cellSize)};
+// Velocity gain per degree above room temperature over one step.
+const BUOYANCY: f32 = ${wgslFloat(AIR.buoyancy * dt)};
 const BURST_SCALE: f32 = ${wgslFloat(AIR.burstScale)};
 `;
 }

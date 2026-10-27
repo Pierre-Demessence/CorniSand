@@ -340,6 +340,30 @@ export function explosion(): Scene {
   return { name: 'explosion', width, height, fields: canvas.fields, floorY: WALL, chambers: [] };
 }
 
+/**
+ * `plume`: rectangles are [x0, x1) by [y0, y1). A metal plate on the floor of a tall box with an open top, at `plate.temp`,
+ * and a block of smoke on the floor to each side of it.
+ */
+export const PLUME = {
+  width: 256,
+  height: 192,
+  plate: { x0: 96, x1: 160, y0: WALL, y1: WALL + 4, temp: 1000 },
+  smoke: [
+    { x0: 40, x1: 48, y0: WALL, y1: WALL + 8 },
+    { x0: 208, x1: 216, y0: WALL, y1: WALL + 8 },
+  ],
+};
+
+/** A 64x4 metal plate at 1,000 °C on the floor of a 256x192 box open at the top, with a block of smoke on the floor at each side. The plate warms the air above it, which rises in a plume. */
+export function plume(): Scene {
+  const { width, height, plate, smoke } = PLUME;
+  const canvas = tank(width, height);
+  canvas.fill(T.METAL, plate.x0, plate.x1, plate.y0, plate.y1);
+  canvas.fillTemp(plate.temp, plate.x0, plate.x1, plate.y0, plate.y1);
+  for (const s of smoke) canvas.fill(T.SMOKE, s.x0, s.x1, s.y0, s.y1);
+  return { name: 'plume', width, height, fields: canvas.fields, floorY: WALL, chambers: [] };
+}
+
 export const SCENES: Record<string, () => Scene> = {
   uTube,
   basin,
@@ -353,6 +377,7 @@ export const SCENES: Record<string, () => Scene> = {
   steamCeiling,
   moltenMetal,
   explosion,
+  plume,
 };
 
 /** The scene registered under `name`; own keys only, so `?scene=constructor` does not match. */

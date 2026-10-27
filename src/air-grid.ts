@@ -32,6 +32,8 @@ const WORKGROUP = 8;
 interface AirPass {
   pipeline: GPUComputePipeline;
   label: string;
+  // The pass also binds the cell fields it reads and writes (group 1) and the element table (group 2).
+  cells?: GPUBindGroup;
 }
 
 // The air grid: its buffers, the passes that step it and the readback for tests (`src/shaders/air.wgsl.ts` has the
@@ -95,6 +97,7 @@ export class AirGrid {
     });
 
     const kind = fields.subset(['kind']);
+    const heat = fields.subset(['kind', 'temp'], 'read_write');
     this.kindBindGroup = kind.bindGroup;
     this.elementBindGroup = elements.bindGroup;
     const pipeline = (code: string, layouts: GPUBindGroupLayout[]): GPUComputePipeline => device.createComputePipeline({
@@ -107,7 +110,7 @@ export class AirGrid {
       pipeline: pipeline(airMaskWGSL(elements.elements, ...shape), [layout, kind.layout, elements.layout]),
     };
     this.stepPasses = [
-      { label: 'air coupling', pipeline: pipeline(airCouplingWGSL(...shape), [layout]) },
+      { label: 'air coupling', pipeline: pipeline(airCouplingWGSL(elements.elements, ...shape), [layout, heat.layout, elements.layout]), cells: heat.bindGroup },
       { label: 'air velocity', pipeline: pipeline(airVelocityWGSL(...shape), [layout]) },
       { label: 'air pressure', pipeline: pipeline(airPressureWGSL(...shape), [layout]) },
       { label: 'air advect', pipeline: pipeline(airAdvectWGSL(...shape), [layout]) },
@@ -135,10 +138,14 @@ export class AirGrid {
   recordSuperstep(passes: PassRecorder): void {
     if (!this.enabled) return;
     for (let step = 0; step < this.substeps; step++) {
-      for (const { pipeline, label } of this.stepPasses) {
+      for (const { pipeline, label, cells } of this.stepPasses) {
         const pass = passes.pass(label);
         pass.setPipeline(pipeline);
         pass.setBindGroup(0, this.bindGroup);
+        if (cells) {
+          pass.setBindGroup(1, cells);
+          pass.setBindGroup(2, this.elementBindGroup);
+        }
         this.dispatch(pass);
       }
     }

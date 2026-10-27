@@ -3,7 +3,7 @@ import { CELL_FIELDS, tempView } from '../src/cell-fields';
 import { ELEMENT as T, ELEMENTS, elementByKey, elementTemperature } from '../src/elements';
 import { unpackHalf2 } from '../src/half';
 import {
-  BLAST, BLAST_CENTER, BLAST_MARK, EXPLOSION, explosion, findScene, HEAT_BARS, heatBars, ICE_LAVA, iceLava, MOLTEN_METAL, moltenMetal, packCell, SCENES, STEAM_CEILING, steamCeiling, uTube,
+  BLAST, BLAST_CENTER, BLAST_MARK, EXPLOSION, explosion, findScene, HEAT_BARS, heatBars, ICE_LAVA, iceLava, MOLTEN_METAL, moltenMetal, packCell, PLUME, plume, SCENES, STEAM_CEILING, steamCeiling, uTube,
 } from '../src/scenes';
 import { cell } from './gpu';
 import { chamberLevel, liquidVolume } from './metrics';
@@ -35,6 +35,8 @@ describe('scenes', () => {
       for (let i = 0; i < temp.length; i++) {
         // The cold ceiling is the one place `steamCeiling` sets its own temperatures.
         if (name === 'steamCeiling' && (fields.kind[i] & 0xff) === T.METAL) continue;
+        // The hot plate is the one place `plume` does.
+        if (name === 'plume' && (fields.kind[i] & 0xff) === T.METAL) continue;
         if (temp[i] !== temps.get(fields.kind[i] & 0xff)) {
           expect.fail(`${name}: cell ${i} (element ${fields.kind[i] & 0xff}) at ${temp[i]} °C`);
         }
@@ -125,6 +127,23 @@ describe('scenes', () => {
     expect(at(stone.x0, stone.y1 - 1), 'the stone stands taller than the sand').toBe(T.STONE);
     expect(stone.y1, 'taller than the sand').toBeGreaterThan(depth + 2);
     expect(height).toBeGreaterThan(stone.y1);
+  });
+
+  it('M6.4a: lay out the plume scene as a hot metal plate on the floor of a box open at the top, with smoke beside it', () => {
+    const { fields, width, height } = plume();
+    const { plate, smoke } = PLUME;
+    const temp = tempView(fields);
+    const counts = new Map<number, number>();
+    for (const c of fields.kind) counts.set(c & 0xff, (counts.get(c & 0xff) ?? 0) + 1);
+    expect(counts.get(T.METAL), 'plate cells').toBe((plate.x1 - plate.x0) * (plate.y1 - plate.y0));
+    expect(counts.get(T.SMOKE), 'smoke cells').toBe(smoke.reduce((n, s) => n + (s.x1 - s.x0) * (s.y1 - s.y0), 0));
+    for (let y = plate.y0; y < plate.y1; y++) {
+      for (let x = plate.x0; x < plate.x1; x++) expect([fields.kind[y * width + x] & 0xff, temp[y * width + x]], `plate cell (${x}, ${y})`).toEqual([T.METAL, plate.temp]);
+    }
+    const at = (x: number, y: number): number => fields.kind[y * width + x] & 0xff;
+    expect([at(0, height - 1), at(width - 1, height - 1), at(width / 2, height - 1)], 'walls at the sides, open at the top').toEqual([T.WALL, T.WALL, T.EMPTY]);
+    expect(at(width / 2, 0), 'a floor').toBe(T.WALL);
+    for (const s of smoke) expect(at(s.x0, s.y0), 'smoke rests on the floor').toBe(T.SMOKE);
   });
 
   it('look scenes up by their registered name only', () => {

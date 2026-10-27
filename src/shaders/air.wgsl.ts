@@ -214,22 +214,89 @@ ${ENTRY} {
 }
 `;
 
-/** Adds the bursts the CA released to the pressure and clears them. */
-export const airCouplingWGSL = (width: number, height: number, cellSize: number, substeps: number, nx: number, ny: number): string => /* wgsl */`
+/**
+ * The coupling pass, one thread per air cell: adds the bursts the CA released to the pressure and clears them, and
+ * exchanges heat between the air cell and the cells that hold heat and belong to it, one after the other in row-major
+ * order (every cell at its own turn sees the air as the cells before it left it, so the exchange conserves heat and
+ * never overshoots). A cell that is not solid belongs to the air cell it is in. A solid cell belongs to the air cell of
+ * its first neighbor (up, left, right, down) that is empty space, a gas or fire: the air cells inside a block of metal are
+ * closed off, and its surface must reach the open air next to it. A solid with no such neighbor belongs to none and a cell
+ * on the grid's edge counts the outside as no neighbor. The thread reads the one-cell ring around its cells to find the
+ * solids that belong to it, so no cell belongs to two threads. Cells hold their temperature in `temp`, which this
+ * pass writes; it runs between CA dispatches, so nothing else touches it.
+ */
+export const airCouplingWGSL = (elements: readonly ElementDef[], width: number, height: number, cellSize: number, substeps: number, nx: number, ny: number): string => /* wgsl */`
+${cellTypesWGSL(elements)}
+${cellBindingsWGSL('read_write', ['kind', 'temp'])}
+${elementsWGSL}
 ${prelude(width, height, cellSize, substeps, nx, ny)}
+
+const NONE: u32 = 0xffffffffu;
+
+fn inGrid(x: i32, y: i32) -> bool { return x >= 0 && x < W && y >= 0 && y < H; }
+fn kindAt(x: i32, y: i32) -> u32 { return loadKind(u32(y * W + x)) & 0xffu; }
+// The array position of the air cell over grid cell (x, y).
+fn airOver(x: i32, y: i32) -> u32 { return airIndex(x / S + 1, y / S + 1); }
+
+fn opensToAir(x: i32, y: i32) -> bool {
+  if (!inGrid(x, y)) { return false; }
+  let s = elState(kindAt(x, y));
+  return s == ST_EMPTY || s == ST_GAS || s == ST_PLASMA;
+}
+
+// The array position of the air cell the heat-holding cell (x, y) of element t exchanges with, or NONE.
+fn airOf(x: i32, y: i32, t: u32) -> u32 {
+  if (elState(t) != ST_SOLID) { return airOver(x, y); }
+  if (opensToAir(x, y + 1)) { return airOver(x, y + 1); }
+  if (opensToAir(x - 1, y)) { return airOver(x - 1, y); }
+  if (opensToAir(x + 1, y)) { return airOver(x + 1, y); }
+  if (opensToAir(x, y - 1)) { return airOver(x, y - 1); }
+  return NONE;
+}
 
 ${ENTRY} {
   ${GROUP}
   let k = airIndex(a, b);
-  if (atomicLoad(&burst[k]) == 0) { return; }
-  let released = atomicExchange(&burst[k], 0);
-  if (isCell(a, b)) { air[k].z += f32(released) / BURST_SCALE; }
+  if (atomicLoad(&burst[k]) != 0) {
+    let released = atomicExchange(&burst[k], 0);
+    if (isCell(a, b)) { air[k].z += f32(released) / BURST_SCALE; }
+  }
+  if (!isCell(a, b)) { return; }
+
+  var airTemp = air[k].w;
+  let x0 = (a - 1) * S;
+  let y0 = (b - 1) * S;
+  for (var y = y0 - 1; y <= y0 + S; y++) {
+    for (var x = x0 - 1; x <= x0 + S; x++) {
+      let insideX = x >= x0 && x < x0 + S;
+      let insideY = y >= y0 && y < y0 + S;
+      // The ring's corners touch this air cell only diagonally.
+      if (!insideX && !insideY) { continue; }
+      if (!inGrid(x, y)) { continue; }
+      let i = u32(y * W + x);
+      let t = loadKind(i) & 0xffu;
+      if (!elHoldsHeat(t)) { continue; }
+      let inside = insideX && insideY;
+      if (!inside && elState(t) != ST_SOLID) { continue; }
+      if (airOf(x, y, t) != k) { continue; }
+      // The pair's exchange, as \`exchangeHeat\`: the cell's temperature is its stored one clamped to its thresholds.
+      let kc = elConductivity(t);
+      if (kc <= 0.0) { continue; }
+      let d = clamp(field_temp[i], elBelowTemp(t), elAboveTemp(t)) - airTemp;
+      if (d == 0.0) { continue; }
+      let c = elHeatCapacity(t);
+      let flow = (2.0 * kc * AIR_CONDUCTIVITY / (kc + AIR_CONDUCTIVITY)) * d / (c + AIR_CAPACITY);
+      field_temp[i] -= flow * AIR_CAPACITY;
+      airTemp += flow * c;
+    }
+  }
+  air[k].w = airTemp;
 }
 `;
 
 /**
- * The speed of every face: the pressure difference across it accelerates the air, friction slows it, the edge ring is
- * damped, the speed is capped and a closed face is held at 0. The edge faces let the air out at the speed a wave of the
+ * The speed of every face: the pressure difference across it accelerates the air (and, on a top face, the warmth of the
+ * air makes it rise), friction slows it, the edge ring is damped, the speed is capped and a closed face is held at 0. The edge faces let the air out at the speed a wave of the
  * pressure inside travels at. Writes only speeds and reads only pressures, so it runs in place.
  */
 export const airVelocityWGSL = (width: number, height: number, cellSize: number, substeps: number, nx: number, ny: number): string => /* wgsl */`
@@ -261,7 +328,11 @@ ${ENTRY} {
     } else if (b == NY) {
       air[k].y = (WAVE_SPEED * air[k].z) * faceGate(m.y);
     } else if (b < NY) {
-      let v = (air[k].y - GRADIENT * (air[airIndex(a, b + 1)].z - air[k].z)) * KEEP_VELOCITY * edge * matterKeep(0.5 * (m.z + mask[airIndex(a, b + 1)].z));
+      // Hot air rises: the face gains BUOYANCY per degree the mean of the two air cells it joins is above room temperature,
+      // less the share of them that powder or liquid fills (the hot air in a pile or a pool is not free to rise).
+      let matter = 0.5 * (m.z + mask[airIndex(a, b + 1)].z);
+      let warmth = 0.5 * ((air[k].w - ROOM) + (air[airIndex(a, b + 1)].w - ROOM));
+      let v = (air[k].y - GRADIENT * (air[airIndex(a, b + 1)].z - air[k].z) + BUOYANCY * warmth * (1.0 - matter)) * KEEP_VELOCITY * edge * matterKeep(matter);
       air[k].y = clamp(v, -MAX_AIR_SPEED, MAX_AIR_SPEED) * faceGate(m.y);
     }
   }

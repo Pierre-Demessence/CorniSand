@@ -46,11 +46,12 @@ export class CellFields {
 
   // The read-only layout and bind group (group 1) of a pass that reads only some fields, with the same bindings as the
   // full group (binding = field index): the shader declares them with `cellBindingsWGSL('read', names)`. The compute
-  // stage only.
-  subset(names: readonly CellFieldName[]): { layout: GPUBindGroupLayout; bindGroup: GPUBindGroup } {
+  // stage only. With `access` 'read_write' every field of the subset is writable (the shader declares them with
+  // `cellBindingsWGSL('read_write', names)`).
+  subset(names: readonly CellFieldName[], access: 'read' | 'read_write' = 'read'): { layout: GPUBindGroupLayout; bindGroup: GPUBindGroup } {
     const bound = CELL_FIELDS.flatMap(({ name }, binding) => (names.includes(name) ? [{ name, binding }] : []));
     const layout = this.device.createBindGroupLayout({
-      entries: bound.map(({ binding }) => ({ binding, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } })),
+      entries: bound.map(({ binding }) => ({ binding, visibility: GPUShaderStage.COMPUTE, buffer: { type: access === 'read' ? 'read-only-storage' as const : 'storage' as const } })),
     });
     const bindGroup = this.device.createBindGroup({
       layout,

@@ -11,6 +11,12 @@ import { heatContent } from './metrics';
 
 const FIRE_TEMP = 1000;
 
+// These tests are about the heat of the cells themselves (conduction between cells, their phase changes, the tools).
+// With the air on, a cell in open space also trades heat with it and a sealed box loses the air's share, which the
+// ambient heat tests of tests/air-heat.test.ts cover, so the tests that measure a cell's own temperature or the box's
+// total without the air run in the mode they were written for.
+const NO_AIR = { air: false };
+
 // The `temp` words of a grid where every cell holds `temp` °C.
 function uniformTemps(cellCount: number, temp: number): Uint32Array<ArrayBuffer> {
   const data = { temp: new Uint32Array(cellCount) };
@@ -128,7 +134,7 @@ describe.skipIf(!device)('M5 heat', () => {
   it('AC4: a flyer carries its temperature through the air and lands with it', async () => {
     const width = 9;
     const height = 200;
-    const sim = createSim(width, height);
+    const sim = createSim(width, height, 1, NO_AIR);
     const kind = new Uint32Array(width * height);
     const temp = uniformTemps(width * height, 0);
     const marked = tempWord(1234.5678);
@@ -220,7 +226,7 @@ describe.skipIf(!device)('M5.3 conduction', () => {
   it('AC7: hot cells touching only empty space and walls keep their temperatures, and so do the words of those empty and wall cells', async () => {
     const width = 24;
     const height = 16;
-    const sim = createSim(width, height);
+    const sim = createSim(width, height, 1, NO_AIR);
     const kind = new Uint32Array(width * height);
     for (let i = 0; i < 2 * width; i++) kind[i] = cell(T.WALL);
     for (let y = 2; y < 9; y++) for (let x = 8; x < 16; x++) kind[y * width + x] = cell(T.METAL);
@@ -291,7 +297,7 @@ describe.skipIf(!device)('M5.3 conduction', () => {
   it('AC8: a sealed box of moving and fixed materials keeps its total heat over 2,000 supersteps', async () => {
     const width = 48;
     const height = 40;
-    const sim = createSim(width, height, 8);
+    const sim = createSim(width, height, 8, NO_AIR);
     const next = mulberry32(8);
     const rand = (): number => next() / 2 ** 32;
     const kinds = [T.METAL, T.STONE, T.SAND, T.WATER, T.OIL, T.EMPTY];
@@ -372,7 +378,7 @@ async function oneSuperstep(
   supersteps = 1,
 ): Promise<{ kinds: number[]; temps: Float32Array; lives: Uint32Array }> {
   const width = cells.length;
-  const sim = createSim(width, 1);
+  const sim = createSim(width, 1, 1, NO_AIR);
   const kind = new Uint32Array(cells.map((c) => cell(c.type)));
   const temp = uniformTemps(width, 0);
   const life = new Uint32Array(cells.map((c) => c.life ?? 0));
@@ -436,7 +442,7 @@ describe.skipIf(!device)('M5.4b phase changes', () => {
   });
 
   it('a cell that freezes or condenses keeps no motion, and a liquid starts with no sideways direction', async () => {
-    const sim = createSim(2, 1);
+    const sim = createSim(2, 1, 1, NO_AIR);
     const kind = new Uint32Array([cell(T.WATER), cell(T.WALL)]);
     const temp = uniformTemps(2, 0);
     tempView({ temp })[0] = lower(water) - 5;
@@ -529,7 +535,7 @@ describe.skipIf(!device)('M5.4c phase changes in scenes', () => {
     const scene = SCENES.iceLava();
     const { ice } = ICE_LAVA;
     const iceCells = (ice.x1 - ice.x0) * (ice.y1 - ice.y0);
-    const sim = createSim(scene.width, scene.height);
+    const sim = createSim(scene.width, scene.height, 1, NO_AIR);
     sim.load(scene.fields);
 
     let firstWater = 0;
@@ -700,7 +706,7 @@ describe.skipIf(!device)('M5.4c total heat', () => {
   it('AC14: a sealed box across all thresholds keeps its total heat, latent heat included, over 2,000 supersteps', async () => {
     const width = 48;
     const height = 40;
-    const sim = createSim(width, height, 14);
+    const sim = createSim(width, height, 14, NO_AIR);
     const next = mulberry32(14);
     const rand = (): number => next() / 2 ** 32;
     // Start temperatures straddle each element's thresholds (and the latent ends beyond them), so phases change both ways.
@@ -835,7 +841,7 @@ describe.skipIf(!device)('M5.5a Heat and Cool tools', () => {
   it('AC16: a heating stroke leaves the flyers in the air, even with replacing set, while a replacing stroke removes them', async () => {
     const flyerWidth = 9;
     const flyerHeight = 200;
-    const sim = createSim(flyerWidth, flyerHeight);
+    const sim = createSim(flyerWidth, flyerHeight, 1, NO_AIR);
     const kind = new Uint32Array(flyerWidth * flyerHeight);
     const temp = uniformTemps(flyerWidth * flyerHeight, 0);
     const marked = tempWord(1234.5678);
@@ -904,7 +910,7 @@ describe.skipIf(!device)('M5.5c probe', () => {
   });
 
   it('AC18: follows the cell as the simulation runs', async () => {
-    const sim = createSim(4, 8);
+    const sim = createSim(4, 8, 1, NO_AIR);
     const kind = new Uint32Array(4 * 8);
     kind[7 * 4 + 1] = cell(T.SAND);
     sim.load({ kind, temp: uniformTemps(4 * 8, 77) });
