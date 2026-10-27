@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { CELL_FIELDS, tempView } from '../src/cell-fields';
-import { ELEMENT as T, ELEMENTS, elementTemperature } from '../src/elements';
+import { ELEMENT as T, ELEMENTS, elementByKey, elementTemperature } from '../src/elements';
 import { unpackHalf2 } from '../src/half';
 import {
-  BLAST, BLAST_CENTER, BLAST_MARK, findScene, HEAT_BARS, heatBars, ICE_LAVA, iceLava, MOLTEN_METAL, moltenMetal, packCell, SCENES, STEAM_CEILING, steamCeiling, uTube,
+  BLAST, BLAST_CENTER, BLAST_MARK, EXPLOSION, explosion, findScene, HEAT_BARS, heatBars, ICE_LAVA, iceLava, MOLTEN_METAL, moltenMetal, packCell, SCENES, STEAM_CEILING, steamCeiling, uTube,
 } from '../src/scenes';
 import { cell } from './gpu';
 import { chamberLevel, liquidVolume } from './metrics';
@@ -21,7 +21,8 @@ describe('scenes', () => {
       for (const field of CELL_FIELDS) expect(scene.fields[field.name], `${name} ${field.name}`).toHaveLength(scene.width * scene.height);
       for (const c of scene.fields.kind) expect(c >>> 16, name).toBe(0);
       for (const c of scene.fields.kind) expect(Object.values(T), name).toContain(c & 0xff);
-      for (const life of scene.fields.life) expect(life, name).toBe(0);
+      // Only a lit fire cell starts with a life.
+      scene.fields.life.forEach((life, i) => expect(life, name).toBe(scene.fields.kind[i] === packCell(T.FIRE) ? elementByKey(ELEMENTS, 'FIRE').life!.start : 0));
     }
   });
 
@@ -106,6 +107,24 @@ describe('scenes', () => {
       }
     }
     expect([floor.y1 - floor.y0, pool.y0], 'the floor is 8 rows and the pool rests on it').toEqual([8, floor.y1]);
+  });
+
+  it('M6.3c: lay out the explosion scene as a 48-cell gunpowder charge on a shelf in a sand layer, lit by one fire cell, beside a stone wall', () => {
+    const { fields, width, height } = explosion();
+    const { depth, shelf, charge, fire, stone } = EXPLOSION;
+    const counts = new Map<number, number>();
+    for (const c of fields.kind) counts.set(c & 0xff, (counts.get(c & 0xff) ?? 0) + 1);
+    expect([counts.get(T.GUNPOWDER), counts.get(T.FIRE), counts.get(T.STONE)]).toEqual([48, 1, 256]);
+    const at = (x: number, y: number): number => fields.kind[y * width + x] & 0xff;
+    expect([at(fire.x, fire.y), at(charge.x0, charge.y0), at(charge.x1 - 1, charge.y1 - 1)]).toEqual([T.FIRE, T.GUNPOWDER, T.GUNPOWDER]);
+    expect(fire.x, 'the fire touches the left side of the charge').toBe(charge.x0 - 1);
+    expect(at(charge.x0, shelf.y1 - 1), 'the charge rests on the shelf').toBe(T.WALL);
+    expect(shelf.y1, 'the charge starts at the shelf').toBe(charge.y0);
+    expect(at(charge.x0, charge.y1), 'sand over the charge').toBe(T.SAND);
+    expect(at(width / 2, depth + 2 + 1), 'open air above the sand').toBe(T.EMPTY);
+    expect(at(stone.x0, stone.y1 - 1), 'the stone stands taller than the sand').toBe(T.STONE);
+    expect(stone.y1, 'taller than the sand').toBeGreaterThan(depth + 2);
+    expect(height).toBeGreaterThan(stone.y1);
   });
 
   it('look scenes up by their registered name only', () => {

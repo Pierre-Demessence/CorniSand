@@ -43,7 +43,7 @@ interface ComputePass {
 
 export class Flyers {
   readonly maxFlyers: number;
-  /** Group 3 of the CA: the launch counts it writes and, with air, the air state it reads. */
+  /** Group 3 of the CA: the launch counts it writes and, with air, the air state it reads and the burst buffer it adds to. */
   readonly launchLayout: GPUBindGroupLayout;
   readonly launchBindGroup: GPUBindGroup;
   readonly overlay: FlyerOverlay;
@@ -80,7 +80,7 @@ export class Flyers {
     elements: ElementTable,
     brushUniforms: GPUBuffer,
     maxFlyers: number,
-    air?: { state: GPUBuffer; shape: AirShape },
+    air?: { state: GPUBuffer; burst: GPUBuffer; shape: AirShape },
   ) {
     if (!Number.isInteger(maxFlyers) || maxFlyers < 1 || maxFlyers > MAX_FLYER_SLOTS) {
       throw new RangeError(`maxFlyers must be an integer in 1..${MAX_FLYER_SLOTS}, got ${maxFlyers}`);
@@ -114,11 +114,15 @@ export class Flyers {
       entries: types.map((type, binding) => ({ binding, visibility, buffer: { type } })),
     });
 
-    // Binding 0 is the launch counts the CA writes; binding 1 the air state the CA and the flight pass read, when there is air.
-    this.launchLayout = layoutOf(air ? ['storage', 'read-only-storage'] : ['storage']);
+    // Binding 0 is the launch counts the CA writes; with air, binding 1 is the air state the CA and the flight pass read and
+    // binding 2 the burst buffer the CA adds to.
+    this.launchLayout = layoutOf(air ? ['storage', 'read-only-storage', 'storage'] : ['storage']);
     this.launchBindGroup = device.createBindGroup({
       layout: this.launchLayout,
-      entries: [{ binding: 0, resource: { buffer: this.launch } }, ...(air ? [{ binding: 1, resource: { buffer: air.state } }] : [])],
+      entries: [
+        { binding: 0, resource: { buffer: this.launch } },
+        ...(air ? [{ binding: 1, resource: { buffer: air.state } }, { binding: 2, resource: { buffer: air.burst } }] : []),
+      ],
     });
     const overlayLayout = layoutOf(['read-only-storage'], GPUShaderStage.FRAGMENT);
     this.overlay = {

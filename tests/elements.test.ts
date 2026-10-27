@@ -32,7 +32,7 @@ const withRow = (key: string, change: Partial<ElementDef>): ElementDef[] => [...
 describe('element table', () => {
   it('AC11: describes every current material, the IDs the cells already store', () => {
     expect(ELEMENT).toEqual({ EMPTY: 0, SAND: 1, WALL: 2, WATER: 3, SMOKE: 4, OIL: 5, FIRE: 6, METAL: 7, STONE: 8,
-      ICE: 9, STEAM: 10, LAVA: 11, MOLTEN_METAL: 12,
+      ICE: 9, STEAM: 10, LAVA: 11, MOLTEN_METAL: 12, GUNPOWDER: 13,
     });
     expect(() => validateElements(ELEMENTS)).not.toThrow();
     expect(elementByKey(ELEMENTS, 'FIRE').life).toEqual({ start: 200, decay: 4, becomes: 'SMOKE' });
@@ -45,8 +45,8 @@ describe('element table', () => {
     expect(density('WATER')).toBeLessThan(density('SAND'));
   });
 
-  it('packs one 80-byte row per element ID, at the offset the ID gives', () => {
-    expect(ROW_BYTES).toBe(80);
+  it('packs one 96-byte row per element ID, at the offset the ID gives', () => {
+    expect(ROW_BYTES).toBe(96);
     expect(ROW_BYTES % 16, 'a uniform array stride').toBe(0);
     const buffer = packElements(ELEMENTS);
     const words = new Uint32Array(buffer);
@@ -62,6 +62,9 @@ describe('element table', () => {
     expect(words[at(ELEMENT.FIRE, 'lifeRule')]).toBe(4 | (ELEMENT.SMOKE << 8));
     expect(floats[at(ELEMENT.SAND, 'gravity')]).toBe(DEFAULT_GRAVITY);
     expect(floats[at(ELEMENT.WATER, 'drag')]).toBe(DEFAULT_DRAG);
+    expect(floats[at(ELEMENT.GUNPOWDER, 'aboveBurst')]).toBe(Math.fround(elementByKey(ELEMENTS, 'GUNPOWDER').above!.burst!));
+    expect(floats[at(ELEMENT.WATER, 'aboveBurst')]).toBe(Math.fround(elementByKey(ELEMENTS, 'WATER').above!.burst!));
+    expect(floats[at(ELEMENT.SAND, 'aboveBurst')], 'no burst by default').toBe(0);
     expect(words[at(ELEMENT.WALL, 'inert')]).toBe(1);
     expect(words[at(ELEMENT.SAND, 'inert')]).toBe(0);
     expect(words[at(ELEMENT.METAL, 'inert')], 'a solid that holds heat is not inert').toBe(0);
@@ -177,6 +180,8 @@ describe('element table', () => {
     expect(() => validateElements([...ELEMENTS, ...PHASES])).not.toThrow();
     const oneWay: ElementDef = { ...MUD, above: { temp: 250, becomes: 'FIRE' } };
     expect(() => validateElements([...ELEMENTS, oneWay])).not.toThrow();
+    expect(() => validateElements(withRow('SLUSH', { above: { temp: 0, becomes: 'BROTH', latent: 300, burst: 2 } })), 'a burst on an above transition').not.toThrow();
+    expect(() => validateElements([...ELEMENTS, { ...oneWay, above: { temp: 250, becomes: 'FIRE', burst: 0 } }]), 'a burst of 0').not.toThrow();
   });
 
   it.each<[string, ElementDef[], RegExp]>([
@@ -195,6 +200,10 @@ describe('element table', () => {
     ],
     ['an above threshold whose latent width passes the hottest temperature', withRow('SLUSH', { above: { temp: 0, becomes: 'BROTH', latent: 1e5 } }), /SLUSH: above\.temp 0 and its latent width 50000 must stay within/],
     ['a below threshold whose latent width passes absolute zero', withRow('BROTH', { below: { temp: 0, becomes: 'SLUSH', latent: 2000 } }), /BROTH: below\.temp 0 and its latent width 500 must stay within/],
+    ['a negative burst', withRow('SLUSH', { above: { temp: 0, becomes: 'BROTH', latent: 300, burst: -1 } }), /SLUSH: above\.burst must be a finite number/],
+    ['an infinite burst', withRow('SLUSH', { above: { temp: 0, becomes: 'BROTH', latent: 300, burst: Infinity } }), /SLUSH: above\.burst must be a finite number/],
+    ['a burst that is not a number', withRow('SLUSH', { above: { temp: 0, becomes: 'BROTH', latent: 300, burst: NaN } }), /SLUSH: above\.burst must be a finite number/],
+    ['a burst on a below transition', withRow('BROTH', { below: { temp: 0, becomes: 'SLUSH', latent: 300, burst: 1 } }), /BROTH: below\.burst is not allowed/],
     ['a threshold that is not a number', withRow('SLUSH', { above: { temp: NaN, becomes: 'BROTH', latent: 300 } }), /SLUSH: above\.temp NaN/],
   ])('M5: rejects %s', (_name, table, message) => {
     expect(() => validateElements(table)).toThrow(message);
@@ -237,13 +246,14 @@ describe('toolbar', () => {
       { id: ELEMENT.ICE, label: 'Ice', key: '9' },
       { id: ELEMENT.LAVA, label: 'Lava', key: undefined },
       { id: ELEMENT.STEAM, label: 'Steam', key: undefined },
+      { id: ELEMENT.GUNPOWDER, label: 'Gunpowder', key: undefined },
     ]);
   });
 
   it('follows a table: an extra row appears at its position, an element without one does not', () => {
     const table: ElementDef[] = [...ELEMENTS, { ...MUD, toolbar: 3 }].map((e) => (e.key === 'OIL' ? { ...e, toolbar: 70 } : e));
-    expect(toolbarEntries(table).map((e) => e.label)).toEqual(['Sand', 'Water', 'Mud', 'Fire', 'Smoke', 'Wall', 'Metal', 'Stone', 'Ice', 'Lava', 'Steam', 'Oil']);
-    expect(toolbarEntries([...ELEMENTS, { ...MUD, toolbar: undefined }])).toHaveLength(11);
+    expect(toolbarEntries(table).map((e) => e.label)).toEqual(['Sand', 'Water', 'Mud', 'Fire', 'Smoke', 'Wall', 'Metal', 'Stone', 'Ice', 'Lava', 'Steam', 'Gunpowder', 'Oil']);
+    expect(toolbarEntries([...ELEMENTS, { ...MUD, toolbar: undefined }])).toHaveLength(12);
   });
 
   it('gives each button the element ID in data-type and the tool-btn class', () => {

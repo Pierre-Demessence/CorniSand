@@ -1,11 +1,11 @@
 import {
   MAX_ELEMENTS, STATES, elementByKey, elementConductivity, elementDrag, elementGravity, elementHeatCapacity, elementHoldsHeat, elementInert, elementTemperature,
-  latentWidth, validateElements, type ElementDef,
+  latentWidth, transitionBurst, validateElements, type ElementDef,
 } from './elements';
 import { NO_THRESHOLD } from './heat';
 
 // What the GPU reads of a row, in struct order: the WGSL `ElementProps` and `packElements` are both generated from this
-// list, so they cannot disagree. Twenty 32-bit words, 80 bytes, which is a legal stride for a uniform array.
+// list, so they cannot disagree. A multiple of four 32-bit words (16 bytes), the stride a uniform array needs.
 interface PropField {
   name: string;
   wgslType: 'u32' | 'f32';
@@ -44,6 +44,12 @@ export const PROP_FIELDS: readonly PropField[] = [
     wgslType: 'u32',
     value: (e, all) => (e.below ? elementByKey(all, e.below.becomes).id : 0) | ((e.above ? elementByKey(all, e.above.becomes).id : 0) << 8),
   },
+  // The pressure the cell releases into the air as it passes the above threshold, or ignites into FIRE.
+  { name: 'aboveBurst', wgslType: 'f32', value: (e) => (e.above ? transitionBurst(e.above) : 0) },
+  // Padding up to the next multiple of four words.
+  { name: 'pad0', wgslType: 'u32', value: () => 0 },
+  { name: 'pad1', wgslType: 'u32', value: () => 0 },
+  { name: 'pad2', wgslType: 'u32', value: () => 0 },
 ];
 
 const ROW_WORDS = PROP_FIELDS.length;

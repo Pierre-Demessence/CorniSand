@@ -53,7 +53,8 @@ export class AirGrid {
   private readonly arrayHeight: number;
   /** The air state, one vec4f per array position (speed through the right face, through the top face, pressure, temperature); what the CA and the flight pass bind read-only. Absent without air. */
   readonly state?: GPUBuffer;
-  private readonly burst?: GPUBuffer;
+  /** Pressure the CA released this superstep, per array position, in fixed point (`AIR.burstScale`); the coupling pass moves it into the pressure. What the CA binds read-write. Absent without air. */
+  readonly burst?: GPUBuffer;
   private readonly bindGroup?: GPUBindGroup;
   private readonly kindBindGroup?: GPUBindGroup;
   private readonly elementBindGroup?: GPUBindGroup;

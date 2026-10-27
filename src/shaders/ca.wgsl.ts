@@ -1,6 +1,6 @@
-import type { AirShape } from '../air';
+import { AIR, type AirShape } from '../air';
 import type { ElementDef } from '../elements';
-import { launchGroups, movementWGSL } from '../movement';
+import { launchGroups, movementWGSL, wgslFloat } from '../movement';
 import { airReadWGSL } from './air.wgsl';
 import { cellWGSL } from './cell.wgsl';
 import { elementsWGSL } from './elements.wgsl';
@@ -22,7 +22,9 @@ const SLOTS = [0, 1, 2, 3] as const;
 // the launching cells of each workgroup (group 3).
 // With `air` (the shape of the air grid) the CA also reads the air state (group 3, binding 1) once per block, at the
 // block's center: powders and liquids lose `drag` of their speed relative to the air and are pushed by its pressure
-// gradient, and gases and fire drift with the air after the sideways dispersion. Without it none of that code exists.
+// gradient, and gases and fire drift with the air after the sideways dispersion. A cell that passes an `above` threshold
+// with a burst, or ignites into FIRE (phase 6) from an element whose `above` is FIRE, adds the burst to its air cell's
+// entry of the burst buffer (group 3, binding 2) by an integer atomic add. Without air none of that code exists.
 // `rules` maps a rule name (`ElementDef.rule`) to its WGSL.
 export const caWGSL = (
   width: number,
@@ -45,7 +47,7 @@ export const caWGSL = (
     return `  let ignite_${n} = elFlammable(cellType(blk${n})) && (${others});`;
   }).join('\n');
   const ignitionApplied = SLOTS.map((n) =>
-    `  if (ignite_${n} && elFlammable(cellType(blk${n}))) { blk${n} = retype(blk${n}, EL_FIRE, cellVariant(blk${n}), elLifeStart(EL_FIRE)); }`,
+    `  if (ignite_${n} && elFlammable(cellType(blk${n}))) { ${air ? `igniteBurst(cellType(blk${n}), ox + ${n & 1}, oy + ${n >> 1}); ` : ''}blk${n} = retype(blk${n}, EL_FIRE, cellVariant(blk${n}), elLifeStart(EL_FIRE)); }`,
   ).join('\n');
 
   // Phase 7: the four pairs of a block, rows then columns at offset 0 and columns then rows at offset 1, so neither axis
@@ -111,6 +113,11 @@ ${air ? `
 ${airReadWGSL(air)}
 // The air at the center of the block being processed (zero when the block holds nothing that moves).
 var<private> around: AirAround;
+
+const AIR_SI: i32 = ${air.cellSize};
+const BURST_SCALE: f32 = ${wgslFloat(AIR.burstScale)};
+// Pressure released by the CA, per array position of the air state; the coupling pass moves it into the pressure.
+@group(3) @binding(2) var<storage, read_write> airBurst: array<atomic<i32>>;
 ` : ''}
 const W: u32 = ${width}u;
 const H: u32 = ${height}u;
@@ -345,18 +352,30 @@ fn ageCell(c: Cell) -> Cell {
   return withLife(c, life - decay);
 }
 
-// Phase 8 for one cell: once its stored temperature has run past a threshold by the whole latent width, the cell becomes
+${air ? `// Adds pressure to the air cell over the grid cell (x, y). The amount is rounded to a whole number of 1 / BURST_SCALE:
+// integer additions commute, so the sum does not depend on the order the threads add in.
+fn releaseBurst(x: i32, y: i32, amount: f32) {
+  let fixed = i32(amount * BURST_SCALE + 0.5);
+  if (fixed != 0) { atomicAdd(&airBurst[airIndex(x / AIR_SI + 1, y / AIR_SI + 1)], fixed); }
+}
+
+// A cell of an element whose \`above\` is FIRE that ignites by touching fire releases that transition's burst.
+fn igniteBurst(t: u32, x: i32, y: i32) {
+  if (elAboveBecomes(t) == EL_FIRE) { releaseBurst(x, y, elAboveBurst(t)); }
+}
+
+` : ''}// Phase 8 for one cell: once its stored temperature has run past a threshold by the whole latent width, the cell becomes
 // the element beyond it. It starts there at the threshold plus the overshoot scaled by the two heat capacities, so the
 // heat it holds is the heat it had; it starts with the new element's life. A large overshoot can carry it through the
 // next change in the same direction on the next dispatch. Cells that hold no heat have thresholds out of reach.
-fn transitionCell(c: Cell) -> Cell {
+fn transitionCell(c: Cell, x: i32, y: i32) -> Cell {
   let t = cellType(c);
   let s = cellStoredTemp(c);
   let upper = elAboveTemp(t) + elAboveWidth(t);
   let lower = elBelowTemp(t) - elBelowWidth(t);
   if (s > upper) {
     let next = elAboveBecomes(t);
-    let start = elAboveTemp(t) + (s - upper) * elHeatCapacity(t) / elHeatCapacity(next);
+${air ? '    releaseBurst(x, y, elAboveBurst(t));\n' : ''}    let start = elAboveTemp(t) + (s - upper) * elHeatCapacity(t) / elHeatCapacity(next);
     return retype(withTemp(c, start), next, cellVariant(c), elLifeStart(next));
   }
   if (s < lower) {
@@ -485,7 +504,7 @@ ${ignitionApplied}` : ''}
 ${conduction}
 ${transitions ? `
     // Phase 8: Phase changes
-${SLOTS.map((n) => `    blk${n} = transitionCell(blk${n});`).join('\n')}` : ''}
+${SLOTS.map((n) => `    blk${n} = transitionCell(blk${n}, ox + ${n & 1}, oy + ${n >> 1});`).join('\n')}` : ''}
 
 ${storeBlock}
   }

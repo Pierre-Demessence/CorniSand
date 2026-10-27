@@ -57,6 +57,12 @@ export interface Transition {
   /** The key of the element the cell becomes. */
   becomes: string;
   latent?: number;
+  /**
+   * Pressure the cell releases into its air cell when it passes this threshold, 0 or more; `above` only (a table with
+   * one on a `below` is rejected). It is released when the cell changes by heat and, when the cell becomes FIRE, also when
+   * it ignites by touching fire. Default 0. Dimensionless, like the air's pressure.
+   */
+  burst?: number;
 }
 
 // A grain reaches the CA's top speed (1 cell per dispatch) after falling 16 cells.
@@ -91,6 +97,11 @@ export function transitionLatent(t: Transition): number {
   return t.latent ?? 0;
 }
 
+/** The burst of a transition with its default applied. */
+export function transitionBurst(t: Transition): number {
+  return t.burst ?? 0;
+}
+
 /** How far past its threshold a cell of this element runs while it takes in or gives out the latent heat of `t`. */
 export function latentWidth(e: ElementDef, t: Transition): number {
   return transitionLatent(t) / elementHeatCapacity(e);
@@ -117,6 +128,11 @@ export function elementTemperature(e: ElementDef): number {
 // The table is a uniform array of this many rows, and the cell stores the ID in 8 bits.
 export const MAX_ELEMENTS = 256;
 
+// The pressure a cell of water releases when it flashes into steam (`Transition.burst`).
+const WATER_BURST = 0.1;
+// The pressure a cell of gunpowder releases as it burns.
+const GUNPOWDER_BURST = 3;
+
 // Conductivity and heat capacity are tuning grounded in physical ranks, not physical units: a cell is one unit of matter
 // whatever its state, so the capacity is per cell and the conductivity a share per exchange. Empty space holds no heat
 // until M6 gives it an air temperature. The latent heats are tuned too, not physical: a cell of steam with water's 2,257 J/g
@@ -140,7 +156,9 @@ export const ELEMENTS = [
     conductivity: 0.3,
     heatCapacity: 4.2,
     below: { temp: 0, becomes: 'ICE', latent: 300 },
-    above: { temp: 100, becomes: 'STEAM', latent: 400 },
+    // The burst is a flash into steam pushing the air out; tuned in the M6.3c tests (tests/air-burst.test.ts): one cell
+    // flashing barely stirs the air, a layer poured onto lava visibly pushes it.
+    above: { temp: 100, becomes: 'STEAM', latent: 400, burst: WATER_BURST },
     toolbar: 2,
   },
   // A placeholder for every fire's smoke (backlog I16): stand-in heat values, not tuned.
@@ -260,6 +278,25 @@ export const ELEMENTS = [
     heatCapacity: 4,
     below: { temp: 1538, becomes: 'METAL', latent: 600 },
   },
+  // Black powder: grains of 1.7 to 1.82 g/cm³ (safety data sheets; 1,700 kg/m³ here, so it sinks through sand and water),
+  // catches fire at about 427 °C (the safety data sheets give 200 to 464 °C, ignition in 5 s at 427). Its conductivity and
+  // capacity are estimates, not read from a source: a loose powder conducts like dry sand or a little less (rank 0.03,
+  // 0.2 W/m·K), and a capacity of about 0.8 J/g·K at 1,700 kg/m³ gives 1.4 MJ/m³·K. It burns into FIRE, by heat or by
+  // touching fire (flammable), and releases `burst` into the air as each cell goes: a charge of about 50 cells is a blast
+  // that throws the sand over it (tuned against the `explosion` scene, tests/air-burst.test.ts).
+  {
+    key: 'GUNPOWDER',
+    id: 13,
+    label: 'Gunpowder',
+    color: [0.24, 0.24, 0.27],
+    state: 'powder',
+    density: 1700,
+    flammable: true,
+    conductivity: 0.03,
+    heatCapacity: 1.4,
+    above: { temp: 427, becomes: 'FIRE', burst: GUNPOWDER_BURST },
+    toolbar: 12,
+  },
 ] as const satisfies readonly ElementDef[];
 
 /** The IDs of the default table by key: the only way code outside the table names an element. */
@@ -336,6 +373,10 @@ function validateTransitions(elements: readonly ElementDef[]): void {
       const [low, high] = side === 'above' ? [t.temp, t.temp + width] : [t.temp - width, t.temp];
       if (!(low >= ABSOLUTE_ZERO && high <= MAX_TEMP)) {
         throw new Error(`${name}.temp ${t.temp} and its latent width ${width} must stay within ${ABSOLUTE_ZERO}..${MAX_TEMP}`);
+      }
+      if (t.burst !== undefined) {
+        if (side === 'below') throw new Error(`${name}.burst is not allowed: only an above transition releases pressure`);
+        if (!(t.burst >= 0 && t.burst < Infinity)) throw new Error(`${name}.burst must be a finite number, 0 or more`);
       }
       const target = byKey.get(t.becomes);
       if (!target) throw new Error(`${name}.becomes "${t.becomes}" is not in the table`);

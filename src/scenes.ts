@@ -1,5 +1,5 @@
 import { emptyCellData, tempView, type CellData } from './cell-fields';
-import { ELEMENT as T, ELEMENTS, elementTemperature, type ElementDef } from './elements';
+import { ELEMENT as T, ELEMENTS, elementByKey, elementTemperature, type ElementDef } from './elements';
 import { packHalf2 } from './half';
 
 // Columns [x0, x1) whose liquid is expected to settle at one shared level.
@@ -54,6 +54,12 @@ class Canvas {
       this.fields.kind.fill(c, y * this.width + x0, y * this.width + x1);
       this.temps.fill(temp, y * this.width + x0, y * this.width + x1);
     }
+  }
+
+  /** Fills the cell at (x, y) with a lit FIRE cell: it starts with the element's life, as the brush paints it. */
+  fire(x: number, y: number): void {
+    this.fill(T.FIRE, x, x + 1, y, y + 1);
+    this.fields.life[y * this.width + x] = elementByKey(ELEMENTS, 'FIRE').life!.start;
   }
 
   /** Sets the temperature of columns [x0, x1) and rows [y0, y1), whatever the cells there are. */
@@ -307,6 +313,33 @@ export function moltenMetal(): Scene {
   return { name: 'moltenMetal', width, height, fields: canvas.fields, floorY: floor.y1, chambers: [] };
 }
 
+/**
+ * `explosion`: rectangles are [x0, x1) by [y0, y1). A layer of sand fills the tank to `depth`; the gunpowder pocket sits
+ * inside it on a wall shelf (gunpowder is denser than sand, so a charge in the middle of the sand would sink) with a fire
+ * cell against its left side, and a stone wall stands to its right, taller than the sand.
+ */
+export const EXPLOSION = {
+  width: 256,
+  height: 160,
+  depth: 48,
+  shelf: { x0: 94, x1: 106, y0: WALL + 28, y1: WALL + 30 },
+  charge: { x0: 96, x1: 104, y0: WALL + 30, y1: WALL + 36 },
+  fire: { x: 95, y: WALL + 33 },
+  stone: { x0: 140, x1: 144, y0: WALL, y1: WALL + 64 },
+};
+
+/** A 48-cell gunpowder charge buried 12 cells deep in a 48-deep layer of sand in a 256x160 tank, lit by a fire cell, with a 4x64 stone wall 40 cells to its right. */
+export function explosion(): Scene {
+  const { width, height, depth, shelf, charge, fire, stone } = EXPLOSION;
+  const canvas = tank(width, height);
+  canvas.fill(T.SAND, WALL, width - WALL, WALL, WALL + depth);
+  canvas.fill(T.WALL, shelf.x0, shelf.x1, shelf.y0, shelf.y1);
+  canvas.fill(T.GUNPOWDER, charge.x0, charge.x1, charge.y0, charge.y1);
+  canvas.fill(T.STONE, stone.x0, stone.x1, stone.y0, stone.y1);
+  canvas.fire(fire.x, fire.y);
+  return { name: 'explosion', width, height, fields: canvas.fields, floorY: WALL, chambers: [] };
+}
+
 export const SCENES: Record<string, () => Scene> = {
   uTube,
   basin,
@@ -319,6 +352,7 @@ export const SCENES: Record<string, () => Scene> = {
   iceLava,
   steamCeiling,
   moltenMetal,
+  explosion,
 };
 
 /** The scene registered under `name`; own keys only, so `?scene=constructor` does not match. */

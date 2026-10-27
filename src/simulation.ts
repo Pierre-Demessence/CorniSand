@@ -127,7 +127,7 @@ export class Simulation {
       this.elements,
     );
 
-    this.flyers = new Flyers(device, width, height, this.fields, this.elements, this.brushUniformBuffer, options.maxFlyers ?? MOVEMENT.maxFlyers, this.air.state && this.air.shape ? { state: this.air.state, shape: this.air.shape } : undefined);
+    this.flyers = new Flyers(device, width, height, this.fields, this.elements, this.brushUniformBuffer, options.maxFlyers ?? MOVEMENT.maxFlyers, this.air.state && this.air.burst && this.air.shape ? { state: this.air.state, burst: this.air.burst, shape: this.air.shape } : undefined);
 
     // -- CA setup --
     this.slotWords = device.limits.minUniformBufferOffsetAlignment / 4;
