@@ -1,6 +1,6 @@
 # M6 Air
 
-Status: M6.1a to M6.1c, M6.2a to M6.2c, M6.3a to M6.3d, M6.4a to M6.4b and M6.5a done; next open item M6.5b.
+Status: M6.1a to M6.1c, M6.2a to M6.2c, M6.3a to M6.3d, M6.4a to M6.4b and M6.5a to M6.5b done; next open item M6.6a.
 
 ## Goal
 
@@ -240,7 +240,7 @@ Needs you: nothing.
   Decided during the run: an element without a pressure transition packs `NO_PRESSURE` (3e38, a finite float) in `pressureAbove`, and `pressureAbove` took the first padding word (the row stays 24 words); the target is in bits 16 to 23 of `transitions`. The CA reads the pressure of the air cell that holds the grid cell (the same one the burst is added to), only when the table has a pressure transition and the sim has air. Why: infinity compares differently across GPUs; a target of 0 cannot mean "none" since EMPTY is a valid target. Alternative: a flag bit. Change: `PROP_FIELDS`, `transitionCell`.
   Decided during the run: a crush keeps the heat, not the temperature: the sand starts at `stored temperature * C_stone / C_sand` (stone 500 degrees becomes sand at 846), as phase 8 does at a threshold change. The user chose this (2026-10-28) over keeping the temperature and amending AC15, because AC15 is the invariant the rest of M6 builds on; a crushed cell can look hotter than the stone it came from for a moment. Why: stone and sand hold different heat per degree (2.2 against 1.3), so the same temperature changes the box's total (7% in the AC15 box). AC15 now runs on the real table (the test asserts sand appeared, so the crush is in it) and holds within 1e-4. Alternative: keep the temperature and amend AC15 to exclude crushes. Change: `transitionCell` in `src/shaders/ca.wgsl.ts`; M6.5b records the rule in `docs/simulation.md`.
   Backlog I20: a stone mass is crushed from its exposed surface only, because an air cell that is half solid or more is closed to the air (visible at the gate with thick walls).
-- [ ] M6.5b Docs: `docs/simulation.md` (phase 8, the table's columns).
+- [x] M6.5b Docs: `docs/simulation.md` (phase 8, the table's columns).
 
 Visible after: a gunpowder blast crushes nearby stone into sand.
 Needs you: nothing.
