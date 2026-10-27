@@ -32,4 +32,6 @@ fn elTemperature(t: u32) -> f32 { return elements[t].temperature; }
 fn elConductivity(t: u32) -> f32 { return elements[t].conductivity; }
 fn elHeatCapacity(t: u32) -> f32 { return elements[t].heatCapacity; }
 fn elHoldsHeat(t: u32) -> bool { return elements[t].holdsHeat != 0u; }
+fn elBelowTemp(t: u32) -> f32 { return elements[t].belowTemp; }
+fn elAboveTemp(t: u32) -> f32 { return elements[t].aboveTemp; }
 `;

@@ -1,10 +1,11 @@
 import {
   MAX_ELEMENTS, STATES, elementByKey, elementConductivity, elementDrag, elementGravity, elementHeatCapacity, elementHoldsHeat, elementInert, elementTemperature,
-  validateElements, type ElementDef,
+  latentWidth, validateElements, type ElementDef,
 } from './elements';
+import { NO_THRESHOLD } from './heat';
 
 // What the GPU reads of a row, in struct order: the WGSL `ElementProps` and `packElements` are both generated from this
-// list, so they cannot disagree. Sixteen 32-bit words, 64 bytes, which is a legal stride for a uniform array.
+// list, so they cannot disagree. Twenty 32-bit words, 80 bytes, which is a legal stride for a uniform array.
 interface PropField {
   name: string;
   wgslType: 'u32' | 'f32';
@@ -30,8 +31,19 @@ export const PROP_FIELDS: readonly PropField[] = [
   { name: 'heatCapacity', wgslType: 'f32', value: (e) => elementHeatCapacity(e) },
   // Derived from the row (`elementHoldsHeat`): whether the cell's `temp` word means anything.
   { name: 'holdsHeat', wgslType: 'u32', value: (e) => (elementHoldsHeat(e) ? 1 : 0) },
-  // Rounds the row to 16 words; M5.4 puts the phase transitions' targets here.
-  { name: 'spare', wgslType: 'u32', value: () => 0 },
+  // The transitions: the temperature of each threshold (NO_THRESHOLD past the range when the element has none, so the
+  // clamp to them needs no branch) and the latent width past it, in °C.
+  { name: 'belowTemp', wgslType: 'f32', value: (e) => e.below?.temp ?? -NO_THRESHOLD },
+  { name: 'belowWidth', wgslType: 'f32', value: (e) => (e.below ? latentWidth(e, e.below) : 0) },
+  { name: 'aboveTemp', wgslType: 'f32', value: (e) => e.above?.temp ?? NO_THRESHOLD },
+  { name: 'aboveWidth', wgslType: 'f32', value: (e) => (e.above ? latentWidth(e, e.above) : 0) },
+  // The ID of the element a cell becomes: below in bits 0-7, above in bits 8-15. 0 (EMPTY) when absent, which no cell
+  // reaches since the threshold is out of range.
+  {
+    name: 'transitions',
+    wgslType: 'u32',
+    value: (e, all) => (e.below ? elementByKey(all, e.below.becomes).id : 0) | ((e.above ? elementByKey(all, e.above.becomes).id : 0) << 8),
+  },
 ];
 
 const ROW_WORDS = PROP_FIELDS.length;

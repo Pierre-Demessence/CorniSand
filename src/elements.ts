@@ -32,6 +32,10 @@ export interface ElementDef {
   conductivity?: number;
   /** Heat per °C of one cell, above 0; default 1. A cell of a high capacity changes temperature less for the same heat. */
   heatCapacity?: number;
+  /** Becomes the element `becomes` (a key) when its stored temperature drops below `temp` minus the latent width. */
+  below?: Transition;
+  /** Becomes the element `becomes` (a key) when its stored temperature rises above `temp` plus the latent width. */
+  above?: Transition;
   /** `life` counts down by `decay` per dispatch from `start` and the cell becomes the element `becomes` (a key) at 0. */
   life?: { start: number; decay: number; becomes: string };
   /** Optional WGSL rule run for cells of this element: the name of a file in `src/shaders/rules/`. */
@@ -40,6 +44,19 @@ export interface ElementDef {
   graphics?: string;
   /** Order in the toolbar (lowest first; the n-th button is selected by number key n); absent: not paintable. */
   toolbar?: number;
+}
+
+/**
+ * A change of element at a temperature. The cell takes in (or gives out) `latent` heat, in heat-capacity × °C units, at
+ * the threshold before it changes: while it does, its stored temperature runs past `temp` by up to `latent` / the heat
+ * capacity of the element (the latent width) and its temperature stays at `temp`. 0 by default.
+ */
+export interface Transition {
+  /** °C. */
+  temp: number;
+  /** The key of the element the cell becomes. */
+  becomes: string;
+  latent?: number;
 }
 
 // A grain reaches the CA's top speed (1 cell per dispatch) after falling 16 cells.
@@ -62,11 +79,21 @@ export function elementHeatCapacity(e: ElementDef): number {
 }
 
 /**
- * Whether a cell of this element has a temperature that means something: it conducts heat. Empty space and walls do
- * not; the `temp` word of such a cell is never read or changed by heat.
+ * Whether a cell of this element has a temperature that means something: it conducts heat or has a transition. Empty
+ * space and walls do not; the `temp` word of such a cell is never read or changed by heat.
  */
 export function elementHoldsHeat(e: ElementDef): boolean {
-  return elementConductivity(e) > 0;
+  return elementConductivity(e) > 0 || e.below !== undefined || e.above !== undefined;
+}
+
+/** The latent heat of a transition with its default applied. */
+export function transitionLatent(t: Transition): number {
+  return t.latent ?? 0;
+}
+
+/** How far past its threshold a cell of this element runs while it takes in or gives out the latent heat of `t`. */
+export function latentWidth(e: ElementDef, t: Transition): number {
+  return transitionLatent(t) / elementHeatCapacity(e);
 }
 
 /**
@@ -182,8 +209,49 @@ export function validateElements(elements: readonly ElementDef[]): void {
       positions.add(e.toolbar);
     }
   }
+  validateTransitions(elements);
   if (elements.some((e) => e.flammable) && !keys.has('FIRE')) throw new Error('a flammable element needs a FIRE element to become');
   if (keys.has('FIRE') && !elements.find((e) => e.key === 'FIRE')?.life) throw new Error('FIRE needs a life: that is what a burning cell starts with');
+}
+
+// A threshold, its target and its latent heat must leave every stored temperature a cell can have inside the range the
+// tools keep it in, and no pair of transitions may undo itself on the next dispatch.
+function validateTransitions(elements: readonly ElementDef[]): void {
+  const byKey = new Map(elements.map((e) => [e.key, e]));
+  const range = (e: ElementDef): [number, number] => [e.below?.temp ?? -Infinity, e.above?.temp ?? Infinity];
+  for (const e of elements) {
+    for (const side of ['below', 'above'] as const) {
+      const t = e[side];
+      if (!t) continue;
+      const name = `element ${e.key}: ${side}`;
+      const latent = transitionLatent(t);
+      if (!(latent >= 0 && latent < Infinity)) throw new Error(`${name}.latent must be a finite number, 0 or more`);
+      const width = latentWidth(e, t);
+      const [low, high] = side === 'above' ? [t.temp, t.temp + width] : [t.temp - width, t.temp];
+      if (!(low >= ABSOLUTE_ZERO && high <= MAX_TEMP)) {
+        throw new Error(`${name}.temp ${t.temp} and its latent width ${width} must stay within ${ABSOLUTE_ZERO}..${MAX_TEMP}`);
+      }
+      const target = byKey.get(t.becomes);
+      if (!target) throw new Error(`${name}.becomes "${t.becomes}" is not in the table`);
+      const [targetLow, targetHigh] = range(target);
+      if (!(t.temp >= targetLow && t.temp <= targetHigh)) throw new Error(`${name}.temp ${t.temp} is outside the range ${targetLow}..${targetHigh} of ${target.key}`);
+    }
+    if (e.below && e.above && !(e.below.temp < e.above.temp)) throw new Error(`element ${e.key}: below.temp must be under above.temp`);
+    const [low, high] = range(e);
+    if (!(elementTemperature(e) >= low && elementTemperature(e) <= high)) {
+      throw new Error(`element ${e.key}: temperature ${elementTemperature(e)} is outside its own range ${low}..${high}`);
+    }
+  }
+  // A pair that turns into each other must meet at one threshold and cost one latent heat each way, and the latent heat
+  // must be above 0: without it a cell at the threshold would flip every dispatch.
+  for (const a of elements) {
+    const b = a.above && byKey.get(a.above.becomes);
+    if (!a.above || !b || b.below?.becomes !== a.key) continue;
+    if (a.above.temp !== b.below.temp || transitionLatent(a.above) !== transitionLatent(b.below)) {
+      throw new Error(`element ${a.key}: above and the below of ${b.key} must share their temp and latent`);
+    }
+    if (!(transitionLatent(a.above) > 0)) throw new Error(`element ${a.key}: the pair with ${b.key} needs a latent above 0`);
+  }
 }
 
 /** The row with this key; throws when the table has none. */

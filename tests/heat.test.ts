@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { tempView } from '../src/cell-fields';
 import { ELEMENT as T, ELEMENTS, elementByKey, elementConductivity, elementHeatCapacity, elementTemperature, type ElementDef } from '../src/elements';
-import { ROOM_TEMP } from '../src/heat';
+import { ROOM_TEMP, effectiveTemp } from '../src/heat';
 import { HEAT_BARS, SCENES } from '../src/scenes';
 import type { Simulation } from '../src/simulation';
 import { cell, cellType, createSim, device, idleInput, mulberry32, readCells, run, runMany } from './gpu';
@@ -330,4 +330,33 @@ describe.skipIf(!device)('M5.3 conduction', () => {
     // The heat did flow: the metal and stone ended much closer to each other than they started.
     expect(after.spread, 'spread of the metal and stone temperatures').toBeLessThan(before.spread / 2);
   }, 120_000);
+});
+
+describe.skipIf(!device)('M5.4 temperature', () => {
+  it('a cell conducts at its stored temperature clamped to its thresholds', async () => {
+    // SLUSH stores 40 °C but has taken in only part of the latent heat it needs to melt at 0 °C: it is at 0 °C and must
+    // draw heat from the 20 °C metal beside it. Unclamped, it would give heat to the metal instead.
+    const slush: ElementDef = {
+      key: 'SLUSH', id: 201, label: 'Slush', color: [0.8, 0.9, 1], state: 'solid', density: 917, temperature: -20, conductivity: 0.2, heatCapacity: 2,
+      above: { temp: 0, becomes: 'METAL', latent: 300 },
+    };
+    const table = [...ELEMENTS, slush];
+    // Two cells in a row: one superstep is exactly one exchange (see the metal and stone test above).
+    const sim = createSim(2, 1, 1, { elements: table });
+    const temp = uniformTemps(2, 20);
+    tempView({ temp })[0] = 40;
+    sim.load({ kind: new Uint32Array([cell(201), cell(T.METAL)]), temp });
+    const metal = elementByKey(ELEMENTS, 'METAL');
+    const [ks, km] = [elementConductivity(slush), elementConductivity(metal)];
+    const [cs, cm] = [elementHeatCapacity(slush), elementHeatCapacity(metal)];
+    const flow = ((2 * ks * km) / (ks + km)) * (effectiveTemp(slush, 40) - 20) / (cs + cm);
+
+    await runMany(sim, 1);
+
+    const after = await readTemps(sim);
+    expect(flow, 'the slush is colder than the metal').toBeLessThan(0);
+    expect(after[0], 'slush').toBeCloseTo(40 - flow * cm, 3);
+    expect(after[1], 'metal').toBeCloseTo(20 + flow * cs, 3);
+    expect((await readCells(sim)).map(cellType), 'no phase change yet').toEqual(new Uint32Array([201, T.METAL]));
+  });
 });

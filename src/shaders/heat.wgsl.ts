@@ -1,8 +1,13 @@
 // Heat in the CA: the WGSL for conduction between the cells of a block. Needs the `Cell` type and the element table.
 
 export const heatWGSL = /* wgsl */`
-// The temperature a cell conducts at: its stored temperature.
-fn cellTemp(c: Cell) -> f32 { return cellStoredTemp(c); }
+// The temperature a cell conducts at: its stored temperature clamped to its element's thresholds. The two differ only
+// while the cell takes in or gives out the latent heat of a transition; an element without a threshold has one at
+// +-3e38, so the clamp changes nothing for it.
+fn cellTemp(c: Cell) -> f32 {
+  let t = cellType(c);
+  return clamp(cellStoredTemp(c), elBelowTemp(t), elAboveTemp(t));
+}
 
 // One heat exchange between two cells of a block; returns their new stored temperatures. The pair meets at the
 // harmonic mean of their conductivities, 2 ka kb / (ka + kb), which is 0 when either is 0 (the plain formula is 0/0 for
