@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { tempView } from '../src/cell-fields';
 import { Display } from '../src/display';
 import { ELEMENT as T } from '../src/elements';
+import { AIR, AIR_VIEW, PRESSURE_RAMP } from '../src/air';
 import { GLOW_RAMP, HEAT_LEGEND_TEMPS, HEAT_RAMP, heatRampCSS, type RampKnot } from '../src/heat';
 import type { Simulation } from '../src/simulation';
+import { toggleView } from '../src/toolbar';
 import { cell, createSim, device, runMany } from './gpu';
 
 // One grid cell per pixel: 64 pixels of 4 bytes are one 256-byte row, the alignment a texture copy needs.
@@ -16,9 +18,9 @@ interface RowOptions {
 }
 
 // Renders a sim `WIDTH` columns wide, one pixel per cell, flyers included; 64 pixels are one 256-byte row, the alignment a copy needs.
-async function renderSim(sim: Simulation, height: number, heatView = false): Promise<Uint8Array> {
+async function renderSim(sim: Simulation, height: number, heatView = false, airView = false): Promise<Uint8Array> {
   const dev = device!;
-  const display = new Display(dev, 'rgba8unorm', WIDTH, height, sim.fields, sim.elements, sim.flyers.overlay);
+  const display = new Display(dev, 'rgba8unorm', WIDTH, height, sim.fields, sim.elements, sim.flyers.overlay, sim.air);
   const target = dev.createTexture({
     size: [WIDTH, height],
     format: 'rgba8unorm',
@@ -34,6 +36,7 @@ async function renderSim(sim: Simulation, height: number, heatView = false): Pro
     erasing: false,
     replacing: false,
     heatView,
+    airView,
   });
   encoder.copyTextureToBuffer({ texture: target }, { buffer: staging, bytesPerRow: WIDTH * 4 }, [WIDTH, height]);
   dev.queue.submit([encoder.finish()]);
@@ -213,5 +216,161 @@ describe('M5.5b heat ramp', () => {
     for (let i = 1; i < HEAT_LEGEND_TEMPS.length; i++) {
       expect((HEAT_LEGEND_TEMPS[i] - HEAT_LEGEND_TEMPS[i - 1]) / span, `labels ${HEAT_LEGEND_TEMPS[i - 1]} and ${HEAT_LEGEND_TEMPS[i]}`).toBeGreaterThanOrEqual(0.07);
     }
+  });
+});
+
+// The ramp's color at position t: linear between knots, flat beyond the first and last.
+function rampColor(ramp: readonly RampKnot[], t: number): number[] {
+  if (t <= ramp[0].temp) return [...ramp[0].color];
+  for (let i = 1; i < ramp.length; i++) {
+    if (t <= ramp[i].temp) {
+      const f = (t - ramp[i - 1].temp) / (ramp[i].temp - ramp[i - 1].temp);
+      return ramp[i].color.map((c, k) => ramp[i - 1].color[k] + (c - ramp[i - 1].color[k]) * f);
+    }
+  }
+  return [...ramp[ramp.length - 1].color];
+}
+
+// An empty sim of `WIDTH` columns and `height` rows with the default air (cells of 4 x 4).
+function airSim(height: number): { sim: Simulation; columns: number; rows: number } {
+  const sim = createSim(WIDTH, height);
+  return { sim, columns: sim.air.columns, rows: sim.air.rows };
+}
+
+// The pixel (RGB) of the picture at column x of the world row y (the picture's first row is the world's top).
+const pixelAt = (pixels: Uint8Array, height: number, x: number, y: number): number[] => pixel(pixels, (height - 1 - y) * WIDTH + x);
+
+const luminanceOf = ([r, g, b]: number[]): number => 0.2126 * r + 0.7152 * g + 0.0722 * b;
+
+describe.skipIf(!device)('M6.6b air view', () => {
+  it('M6 AC21: the luminance of empty space strictly increases with the pressure, from -viewRange to +viewRange', async () => {
+    const height = 8;
+    const { sim, columns, rows } = airSim(height);
+    const pressure = new Float32Array(columns * rows);
+    for (let j = 0; j < rows; j++) {
+      for (let i = 0; i < columns; i++) pressure[j * columns + i] = -AIR.viewRange + (2 * AIR.viewRange * i) / (columns - 1);
+    }
+    sim.air.load({ pressure });
+    const pixels = await renderSim(sim, height, false, true);
+    const lum = (i: number): number => luminanceOf(pixelAt(pixels, height, 4 * i + 2, 4));
+    // The last air cell is left out: its right half blends toward the ghost air beyond the edge.
+    for (let i = 1; i < columns - 1; i++) expect(lum(i), `air cell ${i} against ${i - 1}`).toBeGreaterThan(lum(i - 1));
+  });
+
+  it('M6 AC21: air at rest is the ramp\'s middle, and a material is drawn at 30% over it', async () => {
+    const height = 8;
+    const { sim } = airSim(height);
+    const kind = new Uint32Array(WIDTH * height);
+    kind[3 * WIDTH + 20] = cell(T.SAND);
+    sim.load({ kind });
+    const pixels = await renderSim(sim, height, false, true);
+    const grey = rampColor(PRESSURE_RAMP, 0);
+    const sand = [0.80, 0.70, 0.48];
+    pixelAt(pixels, height, 40, 5).forEach((channel, c) => expect(Math.abs(channel - grey[c] * 255), `empty, channel ${c}`).toBeLessThanOrEqual(2));
+    pixelAt(pixels, height, 20, 3).forEach((channel, c) => {
+      expect(Math.abs(channel - (0.7 * grey[c] + 0.3 * sand[c]) * 255), `sand, channel ${c}`).toBeLessThanOrEqual(2);
+    });
+  });
+
+  // The light pixels (luminance above 200) of the wind mark in the bottom left tile, as the [x, y] of their centers.
+  async function lightPixels(velocityX: number): Promise<number[][]> {
+    const height = 32;
+    const { sim, columns, rows } = airSim(height);
+    sim.air.load({ velocityX: new Float32Array(columns * rows).fill(velocityX) });
+    const pixels = await renderSim(sim, height, false, true);
+    const lit: number[][] = [];
+    for (let y = 0; y < AIR_VIEW.spacing; y++) {
+      for (let x = 0; x < AIR_VIEW.spacing; x++) {
+        if (luminanceOf(pixelAt(pixels, height, x, y)) > 200) lit.push([x + 0.5, y + 0.5]);
+      }
+    }
+    return lit;
+  }
+
+  it('M6 AC21: wind is drawn as marks that grow with its speed and are absent in still air', async () => {
+    const counts: number[] = [];
+    for (const v of [0, 0.02, 0.2, 1, 2]) counts.push((await lightPixels(v)).length);
+    expect(counts[0], 'still air').toBe(0);
+    expect(counts[1], 'a breath of wind is below the shortest mark').toBe(0);
+    expect(counts[2], 'wind 0.2').toBeGreaterThan(0);
+    expect(counts[3], 'wind 1').toBeGreaterThan(counts[2]);
+    expect(counts[4], 'wind 2').toBeGreaterThan(counts[3]);
+  });
+
+  it('M6 AC21: the arrowhead of a mark is on its downwind end', async () => {
+    const center = AIR_VIEW.spacing / 2;
+    for (const [v, sign] of [[1, 1], [-1, -1]]) {
+      const lit = await lightPixels(v);
+      const head = lit.filter(([, y]) => Math.abs(y - center) > 1);
+      expect(head.length, `wind ${v}: pixels off the line`).toBeGreaterThan(0);
+      for (const [x] of head) expect((x - center) * sign, `wind ${v}, pixel at ${x}`).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe.skipIf(!device)('M6.6b heat view of the air', () => {
+  it('M6 AC22: in the heat view empty space is the heat ramp\'s color of its air temperature at half brightness', async () => {
+    const height = 8;
+    for (const temperature of [20, 300, 1200]) {
+      const { sim, columns, rows } = airSim(height);
+      sim.air.load({ temperature: new Float32Array(columns * rows).fill(temperature) });
+      const pixels = await renderSim(sim, height, true);
+      const expected = rampColor(HEAT_RAMP, temperature);
+      pixelAt(pixels, height, 30, 4).forEach((channel, c) => {
+        expect(Math.abs(channel - expected[c] * 0.5 * 255), `${temperature} °C, channel ${c}`).toBeLessThanOrEqual(2);
+      });
+    }
+  });
+
+  it('M6 AC22: the luminance of empty space strictly increases with its air temperature', async () => {
+    const height = 8;
+    const { sim, columns, rows } = airSim(height);
+    const temperature = new Float32Array(columns * rows);
+    for (let j = 0; j < rows; j++) {
+      for (let i = 0; i < columns; i++) temperature[j * columns + i] = -50 + (2050 * i) / (columns - 1);
+    }
+    sim.air.load({ temperature });
+    const pixels = await renderSim(sim, height, true);
+    const lum = (i: number): number => luminanceOf(pixelAt(pixels, height, 4 * i + 2, 4));
+    // The last air cell is left out: its right half blends toward the ghost air beyond the edge.
+    for (let i = 1; i < columns - 1; i++) expect(lum(i), `air cell ${i} against ${i - 1}`).toBeGreaterThan(lum(i - 1));
+  });
+
+  it('M6 AC22: without air the heat view leaves empty space as the background', async () => {
+    const sim = createSim(WIDTH, 1, 1, { air: false });
+    const pixels = await renderSim(sim, 1, true);
+    // The heat color of room temperature at half brightness has a green channel of 6; the background's is about 20.
+    expect(pixels[1]).toBeGreaterThan(14);
+  });
+});
+
+describe('M6.6b air view ramp and toggle', () => {
+  const lum = (k: RampKnot): number => 0.2126 * k.color[0] + 0.7152 * k.color[1] + 0.0722 * k.color[2];
+
+  it('M6 AC21: the pressure ramp runs from -viewRange to +viewRange through 0 with strictly rising luminance', () => {
+    expect(PRESSURE_RAMP[0].temp).toBe(-AIR.viewRange);
+    expect(PRESSURE_RAMP[PRESSURE_RAMP.length - 1].temp).toBe(AIR.viewRange);
+    expect(PRESSURE_RAMP.map((k) => k.temp)).toContain(0);
+    for (let i = 1; i < PRESSURE_RAMP.length; i++) {
+      expect(PRESSURE_RAMP[i].temp, `knot ${i}`).toBeGreaterThan(PRESSURE_RAMP[i - 1].temp);
+      expect(lum(PRESSURE_RAMP[i]), `knot ${i}`).toBeGreaterThan(lum(PRESSURE_RAMP[i - 1]));
+    }
+  });
+
+  it('M6 AC21: the legend gradient has one stop per knot, from 0% to 100%', () => {
+    const css = heatRampCSS(PRESSURE_RAMP);
+    expect(css.match(/rgb\(/g)).toHaveLength(PRESSURE_RAMP.length);
+    expect(css).toMatch(/ 0\.00%/);
+    expect(css).toMatch(/ 100\.00%\)$/);
+  });
+
+  it('M6 AC21: turning a view on turns the other off, and toggling it again turns it off', () => {
+    const off = { heat: false, air: false };
+    const heat = toggleView(off, 'heat');
+    expect(heat).toEqual({ heat: true, air: false });
+    const air = toggleView(heat, 'air');
+    expect(air).toEqual({ heat: false, air: true });
+    expect(toggleView(air, 'heat')).toEqual({ heat: true, air: false });
+    expect(toggleView(air, 'air')).toEqual(off);
   });
 });

@@ -35,7 +35,7 @@ const vec3Literal = (c: readonly number[]): string => `vec3f(${c.map(f32Literal)
 // `fn <name>(t: f32) -> vec3f`: the ramp's color at temperature t, linear between knots and flat beyond the first and
 // last. Each knot mixes in by a factor clamped to [0, 1], so the mixes of the knots below t have finished and those above
 // have not started.
-function rampWGSL(name: string, ramp: readonly RampKnot[]): string {
+export function rampWGSL(name: string, ramp: readonly RampKnot[]): string {
   const steps = ramp.slice(1).map((k, i) => {
     const from = ramp[i].temp;
     return `  c = mix(c, ${vec3Literal(k.color)}, clamp((t - ${f32Literal(from)}) / ${f32Literal(k.temp - from)}, 0.0, 1.0));`;

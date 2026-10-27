@@ -1,5 +1,6 @@
 import { displayWGSL } from './shaders/display.wgsl';
 import { GRAPHICS } from './shaders/graphics.wgsl';
+import type { AirGrid } from './air-grid';
 import type { CellFields } from './cell-field-buffers';
 import type { FlyerOverlay } from './flyers';
 import type { ElementTable } from './element-table';
@@ -13,9 +14,11 @@ export interface DisplayOptions {
   replacing: boolean;
   /** Draw each cell that holds heat in its temperature's color instead of its own. */
   heatView?: boolean;
+  /** Draw the air: its pressure under the materials, faded, and its wind as arrows. Takes the place of the heat view. */
+  airView?: boolean;
 }
 
-// Uniform: 11 f32 + 1 padding = 12 f32 = 48 bytes
+// Uniform: 12 f32 = 48 bytes
 const UNIFORM_FLOATS = 12;
 const UNIFORM_SIZE = UNIFORM_FLOATS * 4;
 
@@ -39,6 +42,7 @@ export class Display {
     cells: CellFields,
     elements: ElementTable,
     flyers: FlyerOverlay,
+    air?: AirGrid,
   ) {
     this.device = device;
     this.simWidth = simWidth;
@@ -47,7 +51,7 @@ export class Display {
     this.elements = elements;
     this.flyers = flyers;
 
-    const shaderModule = device.createShaderModule({ code: displayWGSL(elements.elements, GRAPHICS) });
+    const shaderModule = device.createShaderModule({ code: displayWGSL(elements.elements, GRAPHICS, air?.shape) });
 
     this.uniformBuffer = device.createBuffer({
       size: UNIFORM_SIZE,
@@ -56,7 +60,11 @@ export class Display {
     this.uniformData = new Float32Array(UNIFORM_FLOATS);
 
     const uniformLayout = device.createBindGroupLayout({
-      entries: [{ binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } }],
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+        // The air state, when there is air: binding 1 of group 0, as the generated shader declares it.
+        ...(air?.state ? [{ binding: 1, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' as const } }] : []),
+      ],
     });
 
     this.pipeline = device.createRenderPipeline({
@@ -75,7 +83,10 @@ export class Display {
 
     this.uniformBindGroup = device.createBindGroup({
       layout: uniformLayout,
-      entries: [{ binding: 0, resource: { buffer: this.uniformBuffer } }],
+      entries: [
+        { binding: 0, resource: { buffer: this.uniformBuffer } },
+        ...(air?.state ? [{ binding: 1, resource: { buffer: air.state } }] : []),
+      ],
     });
   }
 
@@ -98,7 +109,7 @@ export class Display {
     d[8] = opts.erasing ? 1.0 : 0.0;   // erasing
     d[9] = opts.replacing ? 1.0 : 0.0; // replacing
     d[10] = opts.heatView ? 1.0 : 0.0; // heatView
-    d[11] = 0; // _pad
+    d[11] = opts.airView ? 1.0 : 0.0; // airView
 
     this.device.queue.writeBuffer(this.uniformBuffer, 0, this.uniformData);
 

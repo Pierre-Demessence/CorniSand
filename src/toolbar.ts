@@ -70,6 +70,18 @@ export function renderTools(container: HTMLElement, tools: readonly Tool[]): HTM
   });
 }
 
+/** Which of the two views that replace the materials' colors is on; at most one is. */
+export interface Views {
+  heat: boolean;
+  air: boolean;
+}
+
+/** The views after toggling `which`: turning one on turns the other off. */
+export function toggleView(views: Views, which: keyof Views): Views {
+  const on = !views[which];
+  return { heat: which === 'heat' ? on : false, air: which === 'air' ? on : false };
+}
+
 /** Adds a separator and the heat view toggle to `container`; its `aria-pressed` says whether the view is on. */
 export function renderHeatViewToggle(container: HTMLElement): HTMLButtonElement {
   const doc = container.ownerDocument;
@@ -81,6 +93,17 @@ export function renderHeatViewToggle(container: HTMLElement): HTMLButtonElement 
   button.setAttribute('class', 'tool-btn');
   button.setAttribute('aria-pressed', 'false');
   button.textContent = 'Heat view';
+  container.appendChild(button);
+  return button;
+}
+
+/** Adds the air view toggle to `container`, after the heat view's; its `aria-pressed` says whether the view is on. */
+export function renderAirViewToggle(container: HTMLElement): HTMLButtonElement {
+  const button = container.ownerDocument.createElement('button');
+  button.setAttribute('type', 'button');
+  button.setAttribute('class', 'tool-btn');
+  button.setAttribute('aria-pressed', 'false');
+  button.textContent = 'Air view';
   container.appendChild(button);
   return button;
 }

@@ -1,3 +1,4 @@
+import type { RampKnot } from './heat';
 import { wgslFloat } from './movement';
 
 /** The shape of the air grid a shader that reads it needs: grid cells per air cell and air cells across and up. */
@@ -56,6 +57,38 @@ export const AIR = {
   windToolGain: 0.5,
   // Share of the gap between the air's speed and the stroke's that a frame's stroke closes at the faces it reaches.
   windToolBlend: 0.5,
+  // The pressure the air view's ramp ends at: from -viewRange (darkest) to +viewRange (lightest), clamped beyond. A
+  // crushing blast (STONE_CRUSH 0.2) is 40% of the way out, a gunpowder charge (peak above 1) saturates.
+  viewRange: 0.5,
+} as const;
+
+/**
+ * The air view's colors by pressure: dark blue at -viewRange, mid grey at 0 (ambient), pale yellow at +viewRange. Each
+ * knot is lighter than the one before (Rec. 709 luminance), so brightness alone orders the pressures and the view does
+ * not rely on hue (the user is red-green colorblind). `temp` is the position along the ramp, here a pressure. Generates
+ * the shader's `pressureColor` and the legend's gradient, like `HEAT_RAMP`.
+ */
+export const PRESSURE_RAMP: readonly RampKnot[] = [
+  { temp: -AIR.viewRange, color: [0.02, 0.05, 0.30] },
+  { temp: -AIR.viewRange / 2, color: [0.12, 0.25, 0.62] },
+  { temp: 0, color: [0.45, 0.45, 0.45] },
+  { temp: AIR.viewRange / 2, color: [0.78, 0.74, 0.40] },
+  { temp: AIR.viewRange, color: [1.0, 0.96, 0.62] },
+];
+
+/** The pressures the air view's legend labels. */
+export const AIR_LEGEND_PRESSURES: readonly number[] = [-AIR.viewRange, 0, AIR.viewRange];
+
+/**
+ * The air view's wind marks, in screen pixels: one line per `spacing` x `spacing` tile, centered on it, pointing
+ * downwind with an arrowhead, `maxLength` long at the air's top speed (`AIR.maxSpeed`) and shorter by the power
+ * `exponent` of the speed's share of it (so a breeze is still visible next to a gale); none below `minLength`.
+ */
+export const AIR_VIEW = {
+  spacing: 16,
+  maxLength: 11,
+  exponent: 0.4,
+  minLength: 2,
 } as const;
 
 /**

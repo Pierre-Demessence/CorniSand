@@ -1,13 +1,13 @@
 import { initGPU, showBanner, showReloadOverlay, type GPUContext } from './gpu';
 import { computeGrid, maxCellsForDevice, type Grid } from './grid';
-import { AIR_CELL_SIZES } from './air';
+import { AIR_CELL_SIZES, AIR_LEGEND_PRESSURES, PRESSURE_RAMP } from './air';
 import { Simulation, type CellProbe } from './simulation';
 import { Display } from './display';
 import { InputHandler, type Vec2 } from './input';
 import { ELEMENTS, elementHoldsHeat, type ElementDef } from './elements';
 import { findScene, type Scene } from './scenes';
 import { HEAT_LEGEND_TEMPS, effectiveTemp, heatRampCSS } from './heat';
-import { TOOLS, renderHeatViewToggle, renderTools, renderToolbar, toolbarEntries, type Tool } from './toolbar';
+import { TOOLS, renderAirViewToggle, renderHeatViewToggle, renderTools, renderToolbar, toggleView, toolbarEntries, type Tool, type Views } from './toolbar';
 
 interface GpuState {
   gpu: GPUContext;
@@ -61,7 +61,7 @@ async function main(): Promise<void> {
       simulation.load(pendingScene.fields);
       pendingScene = undefined;
     }
-    const display = new Display(gpu.device, gpu.format, grid.width, grid.height, simulation.fields, simulation.elements, simulation.flyers.overlay);
+    const display = new Display(gpu.device, gpu.format, grid.width, grid.height, simulation.fields, simulation.elements, simulation.flyers.overlay, simulation.air);
     return { gpu, simulation, display };
   }
 
@@ -171,16 +171,35 @@ async function main(): Promise<void> {
     label.style.left = `${((t - legendFirst) / legendSpan) * 100}%`;
     legendLabels.appendChild(label);
   }
-  let heatView = false;
-  function toggleHeatView(): void {
-    heatView = !heatView;
-    heatViewButton.setAttribute('aria-pressed', String(heatView));
-    legend.hidden = !heatView;
+  // The air view draws the air's pressure and wind; it and the heat view each replace the materials' colors, so one is on at a time.
+  const airViewButton = renderAirViewToggle(toolbarEl);
+  const airLegend = document.getElementById('air-legend')!;
+  document.getElementById('air-legend-bar')!.style.background = heatRampCSS(PRESSURE_RAMP);
+  const airLegendLabels = document.getElementById('air-legend-labels')!;
+  const airLegendFirst = AIR_LEGEND_PRESSURES[0];
+  const airLegendSpan = AIR_LEGEND_PRESSURES[AIR_LEGEND_PRESSURES.length - 1] - airLegendFirst;
+  for (const p of AIR_LEGEND_PRESSURES) {
+    const label = document.createElement('span');
+    label.textContent = p > 0 ? `+${p}` : String(p);
+    label.style.left = `${((p - airLegendFirst) / airLegendSpan) * 100}%`;
+    airLegendLabels.appendChild(label);
   }
-  heatViewButton.addEventListener('click', toggleHeatView);
+  let views: Views = { heat: false, air: false };
+  function toggle(which: keyof Views): void {
+    views = toggleView(views, which);
+    heatViewButton.setAttribute('aria-pressed', String(views.heat));
+    legend.hidden = !views.heat;
+    airViewButton.setAttribute('aria-pressed', String(views.air));
+    airLegend.hidden = !views.air;
+  }
+  heatViewButton.addEventListener('click', () => toggle('heat'));
+  airViewButton.addEventListener('click', () => toggle('air'));
 
   document.addEventListener('keydown', (e) => {
-    if (e.key.toLowerCase() === 'h' && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey) toggleHeatView();
+    if (!e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      if (e.key.toLowerCase() === 'h') toggle('heat');
+      if (e.key.toLowerCase() === 'a') toggle('air');
+    }
     // Keys 1-9 pick the n-th element button.
     const button = toolButtons[Number(e.key) - 1] as HTMLButtonElement | undefined;
     if (button) selectElement(button);
@@ -309,7 +328,8 @@ async function main(): Promise<void> {
       showBrush: true,
       erasing,
       replacing,
-      heatView,
+      heatView: views.heat,
+      airView: views.air,
     });
     // The probe copies the cell under the pointer at the end of the frame's encoder; an earlier one still in flight skips this frame.
     let probed = false;
