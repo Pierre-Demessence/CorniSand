@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { CellData } from '../src/cell-fields';
+import { type CellData, tempView } from '../src/cell-fields';
 import { ELEMENT as T } from '../src/elements';
 import { packHalf2 } from '../src/half';
 import type { PassTimer } from '../src/passes';
@@ -71,6 +71,27 @@ function full100Scene(): Fields {
     for (let y = HEIGHT - WALL; y < HEIGHT; y++) cells[y * WIDTH + x] = cell(T.WALL);
   }
   return { kind: cells };
+}
+
+const THERMAL_MIX = [T.METAL, T.STONE, T.WATER, T.ICE, T.LAVA, T.SAND];
+const HOT = 1300;
+const COLD = -20;
+
+// Every cell inside a wall frame a random mix of metal, stone, water, ice, lava and sand, the top half at 1,300 C and
+// the bottom half at -20 C, so heat flows and phases change (water boils, lava sets, ice melts) through the frames.
+function thermalScene(): Fields {
+  const rand = mulberry32(9);
+  const kind = new Uint32Array(WIDTH * HEIGHT);
+  for (let i = 0; i < kind.length; i++) kind[i] = cell(THERMAL_MIX[rand() % THERMAL_MIX.length]);
+  frame(kind, WIDTH, HEIGHT);
+  for (let x = 0; x < WIDTH; x++) {
+    for (let y = HEIGHT - WALL; y < HEIGHT; y++) kind[y * WIDTH + x] = cell(T.WALL);
+  }
+  const data = { temp: new Uint32Array(WIDTH * HEIGHT) };
+  tempView(data).forEach((_, i, temps) => {
+    temps[i] = i < (WIDTH * HEIGHT) / 2 ? COLD : HOT;
+  });
+  return { kind, temp: data.temp };
 }
 
 // The `blast` scene at screen size: a sand layer a fifth of the height deep, hit by five blasts along its surface at
@@ -172,6 +193,7 @@ describe.skipIf(!device)('bench', () => {
       { name: 'mix75', build: mix75Scene, warmup: WARMUP_FRAMES },
       { name: 'full100', build: full100Scene, warmup: WARMUP_FRAMES },
       { name: 'blast', build: blastScene, warmup: 0 },
+      { name: 'thermal', build: thermalScene, warmup: WARMUP_FRAMES },
     ];
     const only = process.env.BENCH_SCENES?.split(',');
     const splitOnly = process.env.BENCH_SPLIT_ONLY === '1';

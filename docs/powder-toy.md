@@ -39,17 +39,19 @@ The GPU updates millions of cells at once, so a rule may only change cells it ow
 
 60 fps leaves 16.7 ms a frame. Keep about 12 ms of GPU time for the simulation; the rest goes to drawing, the browser's compositing and spikes.
 
-The element engine (M4) is held to 4 ms of the 12, which leaves 8 ms for heat, air, electricity, gravity and light.
+The element engine (M4) is held to 4 ms of the 12, which leaves 8 ms for heat, air, electricity, gravity and light. Heat (M5) is held to 1 ms of those 8, per 1x frame, on top of the engine.
 
-**Measured** (RTX 4080, 2560×1340 = 3.4M cells, `npm run bench`: GPU timestamp queries, frames submitted back to back after a 1 s burn-in, median of 60 frames; the GPU must be otherwise idle, since a game or a live wallpaper made timings 3 to 8 times too high). The scenes: `tank` (a sand block over a quarter-full tank of water), `mix75` (75% of the cells a random mix of sand, water, oil and smoke, so everything keeps moving), `full100` (every cell inside a wall frame holds such a mix, so density swaps never stop) and `blast` (five blasts under a sand layer, 46,000 flyers launched in the first 1x frame). The bench runs the same code as the game, with the cells moving by velocity and the flyer passes.
+**Measured** (RTX 4080, 2560×1340 = 3.4M cells, `npm run bench`: GPU timestamp queries, frames submitted back to back after a 1 s burn-in, median of 60 frames; the GPU must be otherwise idle, since a game or a live wallpaper made timings 3 to 8 times too high). The scenes: `tank` (a sand block over a quarter-full tank of water), `mix75` (75% of the cells a random mix of sand, water, oil and smoke, so everything keeps moving), `full100` (every cell inside a wall frame holds such a mix, so density swaps never stop), `blast` (five blasts under a sand layer, 46,000 flyers launched in the first 1x frame) and `thermal` (every cell inside a wall frame a random mix of metal, stone, water, ice, lava and sand, the top half at 1,300 °C and the bottom half at −20 °C, so heat flows and phases change throughout). The bench runs the same code as the game, with the cells moving by velocity and the flyer passes.
 
 | Scene | 1x (4 supersteps) | 2x | 4x | 8x (32 supersteps) |
 | --- | --- | --- | --- | --- |
-| `tank` | 0.39 ms (max 0.66) | 0.92 | 1.90 | 3.47 |
-| `mix75` | 0.98 ms (max 1.77) | 1.97 | 3.47 | 5.11 |
-| `full100` | 0.92 ms (max 1.31) | 1.84 | 3.54 | 6.29 |
-| `blast` | 0.33 ms (max 0.46) | 0.52 | 1.05 | 2.16 |
+| `tank` | 0.46 ms (max 1.05) | 0.98 | 2.03 | 4.06 |
+| `mix75` | 1.57 ms (max 3.47) | 3.01 | 5.64 | 7.21 |
+| `full100` | 1.38 ms (max 3.34) | 2.69 | 5.51 | 9.24 |
+| `blast` | 0.39 ms (max 0.98) | 0.72 | 1.18 | 2.36 |
+| `thermal` | 1.11 ms (max 2.75) | 2.16 | 4.13 | 9.18 |
 
+- Heat's share at 1x, from the same-day idle baseline taken before heat (`tank` 0.39, `mix75` 1.05, `full100` 0.98, `blast` 0.33 ms): +0.07, +0.52, +0.40 and +0.06 ms, inside the 1 ms. `thermal`, where every cell conducts and changes phase, costs 1.11 ms, 0.13 ms over the baseline's `full100`. The whole increase is in the two CA dispatches (the fifth field's loads, conduction, phase changes); the flyer passes did not change. These numbers were taken with Chrome using the GPU at about 30% (the idle baseline at 1 to 4%), so they are upper bounds: a second run agreed within 0.07 ms.
 - Time grows about linearly with the speed. A 1x frame is 8 CA dispatches plus 4 rounds of flyer passes: the CA dispatches take most of it, the flyer launch scan 0.06 to 0.08 ms.
 - With the 16-byte cells of M4 (four fields), a dispatch over a busy screen costs about 0.12 ms, three times the 0.04 ms of the first CA, which had 4-byte cells and no velocity (M4.2: 0.33 ms per 1x frame on `tank` and `mix75`). That 0.04 ms per full-grid pass over 4-byte cells, close to the card's memory bandwidth (inferred), is the anchor of the estimates below for passes that only move data.
 - Two changes made the engine fit, both without changing a single cell: a thread skips a block of four inert cells (empty or solid, no lifetime, no rule) after reading only their `kind` words, which cuts `tank` and `blast` by 40 to 50%; and the CA keeps its block in four variables instead of an array indexed by a run-time slot, which put the array in slow per-thread memory and made `mix75` and `full100` three times slower (`docs/simulation.md`, "Margolus neighborhood").

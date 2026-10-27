@@ -1,6 +1,6 @@
 # M5 Heat and phase changes
 
-Status: M5.1 to M5.5 done, the M5.5 gate passed; next is M5.6 (budget; needs an idle RTX 4080). The user declined a Claude Design canvas for M5.5; the layout in its Design is the default.
+Status: M5.1 to M5.6 done, the M5.5 gate passed; next is M5.7 (docs and finish). The user declined a Claude Design canvas for M5.5; the layout in its Design is the default.
 
 ## Goal
 
@@ -281,11 +281,11 @@ Needs you: the playtest gate (steps in the item's report): melt metal with the H
 
 ### M5.6 Budget (tasks)
 
-- [ ] M5.6a The `thermal` bench scene; run; AC21; the levers per Design if needed; "M5.6 results".
-- [ ] M5.6b `docs/powder-toy.md` frame budget with the measured heat numbers.
+- [x] M5.6a The `thermal` bench scene; run; AC21; the levers per Design if needed; "M5.6 results". Every scene is inside its budget, so no lever was used.
+- [x] M5.6b `docs/powder-toy.md` frame budget with the measured heat numbers.
 
 Visible after: nothing new: the frame time with heat everywhere is measured and within its share.
-Needs you: an idle RTX 4080 for the bench; a decision only if the budget is still missed after the levers.
+Needs you: nothing (the optional idle rerun is in "M5.6 results").
 
 ### M5.7 Docs and finish (tasks)
 
@@ -385,4 +385,21 @@ Same machine as the baseline (`nvidia-smi` before and after the runs: 2–5%, de
 
 ## M5.6 results
 
-To be filled by M5.6a.
+Chrome was using the RTX 4080 at about 30% (3D engine, found with the Windows GPU counters; `nvidia-smi` showed 28–34% before each run, 13–15% after; no game or wallpaper), against the baseline's 1–4%. The numbers are therefore upper bounds, and AC21 holds with them.
+
+- The `thermal` scene is in `tests/bench.gpu.ts` (seed 9, 20 warm-up frames, 60 measured). Lint and typecheck clean; the bench file is not part of `npm test`.
+- `npm run bench`, GPU ms per frame, median of 60 frames (run 1; run 2's 1x medians: tank 0.46, mix75 1.57, full100 1.44, blast 0.39, thermal 1.05):
+
+| Scene | 1x | 2x | 4x | 8x | 1x vs baseline | AC21 limit (1x) |
+| --- | --- | --- | --- | --- | --- | --- |
+| tank | 0.46 | 0.98 | 2.03 | 4.06 | +0.07 | 1.39 |
+| mix75 | 1.57 | 3.01 | 5.64 | 7.21 | +0.52 | 2.05 |
+| full100 | 1.38 | 2.69 | 5.51 | 9.24 | +0.40 (+0.46 in run 2) | 1.98 |
+| blast | 0.39 | 0.72 | 1.18 | 2.36 | +0.06 | 1.33 |
+| thermal | 1.11 | 2.16 | 4.13 | 9.18 | +0.13 over the baseline's full100 (+0.07 in run 2) | 1.98 |
+
+- AC21 holds on all five scenes. The tightest is `mix75`, with 0.48 ms to spare; `full100` has 0.6.
+- 1x by pass (run 1): `thermal` CA dispatches 0.59 + 0.60 ms, flyer passes 0.13 (almost nothing launches in a packed scene); `mix75` 0.69 + 0.80, `full100` 0.61 + 0.74 against 0.41 + 0.42 and 0.38 + 0.40 in the baseline. The increase is in the CA only; the flyer passes are within noise. Run 2 agreed within 0.1 ms per pass. Simulation creation: 615–643 ms for the first one of a size, 3–30 ms after.
+- `thermal` is cheaper than `full100` because its blocks hold solids and sorted liquids that do not swap; it still wakes every block (all hold heat), so it measures the conduction and phase-change cost at full coverage, and `mix75` and `full100` the worst case of movement plus heat.
+- No lever (thermal-quiet skip, D31's loads) was needed, so both stay in the backlog's D31 for M6 and later.
+- Optional: rerun `npm run bench` with Chrome closed (`BENCH_SCENES=mix75,full100,thermal` is enough). It can only lower the numbers.
