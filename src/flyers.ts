@@ -6,7 +6,7 @@ import type { PassRecorder } from './passes';
 import {
   ARGS_DISPATCH, ARGS_WORDS, FLYER_OFFSET, FLYER_STATE, FLYER_STATE_WORDS, FLYER_WORDS,
   compactScanWGSL, compactScatterWGSL, flightWGSL, flyerBrushWGSL, landWGSL, launchScanWGSL, launchScatterWGSL,
-  overlayWGSL, retryWGSL,
+  overlayWGSL, retryWGSL, FLIGHT_FIELDS,
 } from './shaders/flyers.wgsl';
 
 // The flyer list: cells fast enough to leave the grid, and the passes that launch, fly, land and compact them once per
@@ -50,6 +50,7 @@ export class Flyers {
   private readonly device: GPUDevice;
   private readonly fields: CellFields;
   private readonly elementTable: ElementTable;
+  private readonly flightFields: ReturnType<CellFields['subset']>;
   private readonly launchGroupCount: { x: number; y: number };
   private readonly launch: GPUBuffer;
   private readonly buffers: [GPUBuffer, GPUBuffer];
@@ -153,17 +154,18 @@ export class Flyers {
       (live) => [live, this.launch, this.state],
       [fields.writeLayout],
     );
+    this.flightFields = fields.subset(FLIGHT_FIELDS);
     this.flight = makePass(
       flightWGSL(table, width, height, maxFlyers),
       ['storage', 'storage', 'storage'],
       (live) => [live, claim, this.state],
-      [fields.readLayout, elements.layout],
+      [this.flightFields.layout, elements.layout],
     );
     this.retry = makePass(
       retryWGSL(table, width, height, maxFlyers),
       ['storage', 'storage', 'storage'],
       (live) => [live, claim, this.state],
-      [fields.readLayout],
+      [this.flightFields.layout],
     );
     this.lands = [1, 2].map((round) => makePass(
       landWGSL(table, width, height, maxFlyers, round as 1 | 2),
@@ -222,7 +224,7 @@ export class Flyers {
     pass = passes.pass('flight');
     pass.setPipeline(this.flight.pipeline);
     pass.setBindGroup(0, this.flight.groups[p]);
-    pass.setBindGroup(1, this.fields.readBindGroup);
+    pass.setBindGroup(1, this.flightFields.bindGroup);
     pass.setBindGroup(2, this.elementTable.bindGroup);
     pass.dispatchWorkgroupsIndirect(this.args, ARGS_DISPATCH * 4);
 
@@ -230,7 +232,7 @@ export class Flyers {
     pass = passes.pass('retry');
     pass.setPipeline(this.retry.pipeline);
     pass.setBindGroup(0, this.retry.groups[p]);
-    pass.setBindGroup(1, this.fields.readBindGroup);
+    pass.setBindGroup(1, this.flightFields.bindGroup);
     pass.dispatchWorkgroupsIndirect(this.args, ARGS_DISPATCH * 4);
     this.dispatchLand(passes.pass('land 2'), this.lands[1], p);
 

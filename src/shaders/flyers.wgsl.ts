@@ -230,9 +230,12 @@ fn main(@builtin(global_invocation_id) gid: vec3u, @builtin(workgroup_id) wid: v
 };
 
 // State, grid access and the nearby-cell search shared by the flight, retry and landing passes.
+// The flight and retry passes read only `kind` (`isFree`); the landings write whole cells.
+export const FLIGHT_FIELDS = ['kind'] as const;
+
 const landingCommon = (elements: readonly ElementDef[], width: number, height: number, maxFlyers: number, access: 'read' | 'read_write'): string => /* wgsl */`
 ${flyerCommon(elements, width, height, maxFlyers)}
-${cellBindingsWGSL(access)}
+${access === 'read' ? cellBindingsWGSL('read', FLIGHT_FIELDS) : cellBindingsWGSL('read_write')}
 ${stateWGSL(true)}
 
 @group(0) @binding(0) var<storage, read_write> flyers: array<Flyer>;

@@ -1,4 +1,4 @@
-import { CELL_FIELDS } from '../cell-fields';
+import { CELL_FIELDS, type CellFieldName } from '../cell-fields';
 import type { ElementDef } from '../elements';
 import { elementConstantsWGSL } from './elements.wgsl';
 
@@ -84,19 +84,26 @@ fn withTemp(c: Cell, temp: f32) -> Cell {
 }
 `;
 
-// The field buffers as bindings (group 1, binding = field index, generated from CELL_FIELDS) with \`loadCell\`; only a
-// read_write pass gets the stores. \`access\` is how the pass binds the fields.
-export const cellBindingsWGSL = (access: 'read' | 'read_write'): string => /* wgsl */`
-${CELL_FIELDS.map((f, i) => `@group(1) @binding(${i}) var<storage, ${access}> field_${f.name}: array<${f.wgslType}>;`).join('\n')}
+// The field buffers as bindings (group 1, binding = field index, generated from CELL_FIELDS); only a read_write pass
+// gets the stores. \`access\` is how the pass binds the fields. \`bound\` lists the fields the pass binds (default: all,
+// with \`loadCell\`, and for read_write \`storeCell\` and \`storeChanged\`); a pass that binds fewer reads those fields
+// by name and gets \`loadKind\` when it binds \`kind\`. The bind group layout comes from \`CellFields.subset\` with the same
+// list.
+export const cellBindingsWGSL = (access: 'read' | 'read_write', bound: readonly CellFieldName[] = names): string => {
+  const all = CELL_FIELDS.every((f) => bound.includes(f.name));
+  return /* wgsl */`
+${CELL_FIELDS.map((f, i) => (bound.includes(f.name) ? `@group(1) @binding(${i}) var<storage, ${access}> field_${f.name}: array<${f.wgslType}>;` : '')).filter(Boolean).join('\n')}
 
+${all ? /* wgsl */`
 fn loadCell(i: u32) -> Cell {
   return Cell(${names.map((n) => `field_${n}[i]`).join(', ')});
 }
-
+` : ''}
+${bound.includes('kind') ? /* wgsl */`
 // The kind word alone, for a pass that decides from the element whether it needs the other fields.
 fn loadKind(i: u32) -> u32 { return field_kind[i]; }
-
-${access === 'read_write' ? /* wgsl */`
+` : ''}
+${all && access === 'read_write' ? /* wgsl */`
 fn storeCell(i: u32, c: Cell) {
 ${names.map((n) => `  field_${n}[i] = c.${n};`).join('\n')}
 }
@@ -107,6 +114,7 @@ ${CELL_FIELDS.map((f) => `  if (${fieldWord(f, 'c')} != ${fieldWord(f, 'before')
 }
 ` : ''}
 `;
+};
 
 // Shared by every shader that reads cells: the types and the bindings.
 export const cellWGSL = (access: 'read' | 'read_write', elements: readonly ElementDef[]): string => /* wgsl */`
