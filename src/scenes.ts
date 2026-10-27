@@ -253,6 +253,60 @@ export function heatBars(): Scene {
   return { name: 'heatBars', width, height, fields: canvas.fields, floorY: WALL, chambers: [] };
 }
 
+/** `iceLava`: a block of ice on the floor beside a pool of lava, in an open-topped tank. Rectangles are [x0, x1) by [y0, y1). */
+export const ICE_LAVA = {
+  width: 80,
+  height: 60,
+  ice: { x0: WALL, x1: WALL + 10, y0: WALL, y1: WALL + 10 },
+  lava: { x0: WALL + 10, x1: WALL + 40, y0: WALL, y1: WALL + 8 },
+};
+
+/** A 10x10 block of ice at the left of an 80x60 tank, touching a 30x8 pool of lava. The ice melts, the water boils, the lava touching it sets into stone. */
+export function iceLava(): Scene {
+  const { width, height, ice, lava } = ICE_LAVA;
+  const canvas = tank(width, height);
+  canvas.fill(T.ICE, ice.x0, ice.x1, ice.y0, ice.y1);
+  canvas.fill(T.LAVA, lava.x0, lava.x1, lava.y0, lava.y1);
+  return { name: 'iceLava', width, height, fields: canvas.fields, floorY: WALL, chambers: [] };
+}
+
+/** `steamCeiling`: a closed wall box (40x24 inside) with a metal ceiling and a layer of steam under it. */
+export const STEAM_CEILING = {
+  width: 44,
+  height: 28,
+  ceiling: { x0: WALL, x1: 42, y0: 22, y1: 26, temp: -50 },
+  steam: { x0: WALL, x1: 42, y0: 18, y1: 22 },
+};
+
+/** A closed box of walls holding a 4-row metal ceiling at -50 °C with 4 rows of steam at 110 °C under it. Steam rising against the cold ceiling condenses. */
+export function steamCeiling(): Scene {
+  const { width, height, ceiling, steam } = STEAM_CEILING;
+  const canvas = new Canvas(width, height);
+  canvas.fill(T.WALL, 0, width, 0, height);
+  canvas.fill(T.EMPTY, WALL, width - WALL, WALL, height - WALL);
+  canvas.fill(T.METAL, ceiling.x0, ceiling.x1, ceiling.y0, ceiling.y1);
+  canvas.fillTemp(ceiling.temp, ceiling.x0, ceiling.x1, ceiling.y0, ceiling.y1);
+  canvas.fill(T.STEAM, steam.x0, steam.x1, steam.y0, steam.y1);
+  return { name: 'steamCeiling', width, height, fields: canvas.fields, floorY: WALL, chambers: [] };
+}
+
+/** `moltenMetal`: a pool of molten metal on a thick metal floor, in an open-topped tank. */
+export const MOLTEN_METAL = {
+  width: 40,
+  height: 24,
+  floor: { x0: WALL, x1: 38, y0: WALL, y1: WALL + 8 },
+  pool: { x0: 10, x1: 30, y0: WALL + 8, y1: WALL + 12 },
+};
+
+/** A 20x4 pool of molten metal at 1,600 °C on an 8-row metal floor at 20 °C. The floor takes its heat and the pool sets back into metal. */
+export function moltenMetal(): Scene {
+  const { width, height, floor, pool } = MOLTEN_METAL;
+  const canvas = tank(width, height);
+  canvas.fill(T.METAL, floor.x0, floor.x1, floor.y0, floor.y1);
+  canvas.fill(T.MOLTEN_METAL, pool.x0, pool.x1, pool.y0, pool.y1);
+  return { name: 'moltenMetal', width, height, fields: canvas.fields, floorY: floor.y1, chambers: [] };
+}
+
 export const SCENES: Record<string, () => Scene> = {
   uTube,
   basin,
@@ -262,6 +316,9 @@ export const SCENES: Record<string, () => Scene> = {
   pile,
   blast,
   heatBars,
+  iceLava,
+  steamCeiling,
+  moltenMetal,
 };
 
 /** The scene registered under `name`; own keys only, so `?scene=constructor` does not match. */

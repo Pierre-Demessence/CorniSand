@@ -119,7 +119,9 @@ export const MAX_ELEMENTS = 256;
 
 // Conductivity and heat capacity are tuning grounded in physical ranks, not physical units: a cell is one unit of matter
 // whatever its state, so the capacity is per cell and the conductivity a share per exchange. Empty space holds no heat
-// until M6 gives it an air temperature.
+// until M6 gives it an air temperature. The latent heats are tuned too, not physical: a cell of steam with water's 2,257 J/g
+// would heat a metal cell by hundreds of degrees as it condenses. Each row's `latent` is in heat capacity × °C, sized so a
+// cold plate condenses a whole layer of steam and a pool of molten metal sets on a floor.
 export const ELEMENTS = [
   { key: 'EMPTY', id: 0, label: 'Empty', color: [0.06, 0.06, 0.08], state: 'empty', density: 1.2 },
   // Dry sand conducts poorly (about 0.3 W/m·K, rank 0.05); capacity from its volumetric 1.3 MJ/m³·K.
@@ -127,8 +129,7 @@ export const ELEMENTS = [
   // The engine's invincible wall and the world's edge, not a real material: it never conducts, so heat never leaves the world.
   { key: 'WALL', id: 2, label: 'Wall', color: [0.43, 0.45, 0.47], state: 'solid', density: 2500, toolbar: 6 },
   // Water conducts 0.6 W/m·K, which ranks 0.1; it gets 0.3 to stand in for the convection a resting CA liquid does not
-  // have. Capacity 4.2 from its 4.2 MJ/m³·K, the highest of the table. Freezes and boils at the physical 0 and 100 °C;
-  // the latent heats are starting values, tuned with the scenes.
+  // have. Capacity 4.2 from its 4.2 MJ/m³·K, the highest of the table. Freezes and boils at the physical 0 and 100 °C.
   {
     key: 'WATER',
     id: 3,

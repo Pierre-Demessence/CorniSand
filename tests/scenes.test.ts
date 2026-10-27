@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { CELL_FIELDS, tempView } from '../src/cell-fields';
 import { ELEMENT as T, ELEMENTS, elementTemperature } from '../src/elements';
 import { unpackHalf2 } from '../src/half';
-import { BLAST, BLAST_CENTER, BLAST_MARK, findScene, HEAT_BARS, heatBars, packCell, SCENES, uTube } from '../src/scenes';
+import {
+  BLAST, BLAST_CENTER, BLAST_MARK, findScene, HEAT_BARS, heatBars, ICE_LAVA, iceLava, MOLTEN_METAL, moltenMetal, packCell, SCENES, STEAM_CEILING, steamCeiling, uTube,
+} from '../src/scenes';
 import { cell } from './gpu';
 import { chamberLevel, liquidVolume } from './metrics';
 
@@ -30,6 +32,8 @@ describe('scenes', () => {
       const { fields } = build();
       const temp = tempView(fields);
       for (let i = 0; i < temp.length; i++) {
+        // The cold ceiling is the one place `steamCeiling` sets its own temperatures.
+        if (name === 'steamCeiling' && (fields.kind[i] & 0xff) === T.METAL) continue;
         if (temp[i] !== temps.get(fields.kind[i] & 0xff)) {
           expect.fail(`${name}: cell ${i} (element ${fields.kind[i] & 0xff}) at ${temp[i]} °C`);
         }
@@ -56,6 +60,52 @@ describe('scenes', () => {
     }
     expect([x1 - x0, barHeight]).toEqual([48, 4]);
     expect(hotColumns).toBe(6);
+  });
+
+  it('M5.4: lay out the ice and lava scene as a 10x10 ice block touching a 30x8 lava pool in an open-topped tank', () => {
+    const { fields, width, height } = iceLava();
+    const { ice, lava } = ICE_LAVA;
+    const at = (x: number, y: number): number => fields.kind[y * width + x] & 0xff;
+    expect([ice.x1 - ice.x0, ice.y1 - ice.y0, lava.x1 - lava.x0, lava.y1 - lava.y0]).toEqual([10, 10, 30, 8]);
+    expect(ice.x1).toBe(lava.x0);
+    expect([at(ice.x0, ice.y0), at(ice.x1 - 1, ice.y1 - 1), at(lava.x0, lava.y0), at(lava.x1 - 1, lava.y1 - 1)]).toEqual([T.ICE, T.ICE, T.LAVA, T.LAVA]);
+    expect([at(ice.x0, ice.y1), at(lava.x0, lava.y1), at(width - 3, 40), at(0, height - 1)]).toEqual([T.EMPTY, T.EMPTY, T.EMPTY, T.WALL]);
+  });
+
+  it('M5.4: lay out the steam ceiling as a closed wall box with a cold metal ceiling over a layer of steam', () => {
+    const { fields, width, height } = steamCeiling();
+    const { ceiling, steam } = STEAM_CEILING;
+    const temp = tempView(fields);
+    const counts = new Map<number, number>();
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const i = y * width + x;
+        const type = fields.kind[i] & 0xff;
+        counts.set(type, (counts.get(type) ?? 0) + 1);
+        const edge = x < 2 || y < 2 || x >= width - 2 || y >= height - 2;
+        if (edge) expect(type, `cell (${x}, ${y}) on the box`).toBe(T.WALL);
+        if (type === T.METAL) expect([y >= ceiling.y0 && y < ceiling.y1, temp[i]], `ceiling cell (${x}, ${y})`).toEqual([true, ceiling.temp]);
+        if (type === T.STEAM) expect([y >= steam.y0 && y < steam.y1, temp[i]], `steam cell (${x}, ${y})`).toEqual([true, 110]);
+      }
+    }
+    expect([counts.get(T.METAL), counts.get(T.STEAM)]).toEqual([160, 160]);
+    expect(ceiling.y1, 'the ceiling touches the top wall').toBe(height - 2);
+    expect(steam.y1, 'the steam touches the ceiling').toBe(ceiling.y0);
+  });
+
+  it('M5.4: lay out the molten metal scene as a pool at 1,600 °C on a metal floor at 20 °C', () => {
+    const { fields, width } = moltenMetal();
+    const { floor, pool } = MOLTEN_METAL;
+    const temp = tempView(fields);
+    for (let y = floor.y0; y < pool.y1; y++) {
+      for (let x = floor.x0; x < floor.x1; x++) {
+        const inPool = y >= pool.y0 && y < pool.y1 && x >= pool.x0 && x < pool.x1;
+        const i = y * width + x;
+        if (y >= pool.y0 && !inPool) continue;
+        expect([fields.kind[i] & 0xff, temp[i]], `cell (${x}, ${y})`).toEqual(inPool ? [T.MOLTEN_METAL, 1600] : [T.METAL, 20]);
+      }
+    }
+    expect([floor.y1 - floor.y0, pool.y0], 'the floor is 8 rows and the pool rests on it').toEqual([8, floor.y1]);
   });
 
   it('look scenes up by their registered name only', () => {

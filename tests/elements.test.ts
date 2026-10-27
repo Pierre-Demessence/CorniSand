@@ -6,6 +6,7 @@ import {
 } from '../src/elements';
 import { ABSOLUTE_ZERO, MAX_TEMP, NO_THRESHOLD, ROOM_TEMP, effectiveTemp } from '../src/heat';
 import { buttonAttributes, toolbarEntries } from '../src/toolbar';
+import { latentOffsets } from './metrics';
 
 // Test rows sit far from the game's IDs and toolbar positions, which grow with the table.
 const MUD: ElementDef = { key: 'MUD', id: 200, label: 'Mud', color: [0.4, 0.3, 0.2], state: 'powder', density: 1300, toolbar: 50 };
@@ -254,5 +255,22 @@ describe('toolbar', () => {
     const unpaintable = (ELEMENTS as readonly ElementDef[]).filter((e) => e.toolbar === undefined);
     expect(toolbarEntries([...unpaintable, ...table]).map((e) => e.key))
       .toEqual(['1', '2', '3', '4', '5', '6', '7', '8', '9', undefined, undefined]);
+  });
+});
+
+describe('M5.4c latent offsets', () => {
+  it('give the elements joined by transitions the heat a phase change leaves in place, and none to those that hold no heat', () => {
+    const offsets = latentOffsets(ELEMENTS);
+    const offset = (key: keyof typeof ELEMENT): number => offsets.get(ELEMENT[key])!;
+    // Ice -> water at 0 °C (latent 300, capacities 1.9 and 4.2), water -> steam at 100 °C (latent 400, steam 2.0). The
+    // offsets are relative: the first element of a group in the table (water) gets 0.
+    expect(offset('WATER')).toBe(0);
+    expect(offset('WATER') - offset('ICE')).toBeCloseTo(300, 9);
+    expect(offset('STEAM') - offset('WATER')).toBeCloseTo((4.2 - 2) * 100 + 400, 9);
+    expect(offsets.has(ELEMENT.EMPTY)).toBe(false);
+    expect(offsets.has(ELEMENT.WALL)).toBe(false);
+    // The same graph walked from another start: the offsets differ only by a constant per group.
+    const reversed = latentOffsets([...ELEMENTS].reverse());
+    expect(reversed.get(ELEMENT.STEAM)! - reversed.get(ELEMENT.ICE)!).toBeCloseTo(offset('STEAM') - offset('ICE'), 9);
   });
 });
