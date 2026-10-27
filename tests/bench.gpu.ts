@@ -141,7 +141,8 @@ const device = await createDevice({ powerPreference: 'high-performance' }, ['tim
 async function timeFrames(sim: Simulation, supersteps: number, count: number, perPass: boolean): Promise<Map<string, number>[]> {
   const dev = device!;
   // Brush, then per superstep two CA dispatches and eight flyer passes, plus one spare.
-  const maxPasses = 1 + supersteps * 11;
+  // The air adds its mask pass and, per superstep, five passes per air step (up to four at 1x1).
+  const maxPasses = 2 + supersteps * (11 + 5 * 4);
   const pending: { labels: string[]; staging: GPUBuffer; destroy: GPUBuffer[]; querySet: GPUQuerySet }[] = [];
   for (let f = 0; f < count; f++) {
     const querySet = dev.createQuerySet({ type: 'timestamp', count: 2 * maxPasses });

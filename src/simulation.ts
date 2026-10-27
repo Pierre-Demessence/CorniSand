@@ -1,3 +1,5 @@
+import { AirGrid, defaultAirOptions } from './air-grid';
+import type { AirCellSize } from './air';
 import { cellWGSL } from './shaders/cell.wgsl';
 import { BRUSH_UNIFORM_WORDS, brushWGSL } from './shaders/brush.wgsl';
 import { caWGSL } from './shaders/ca.wgsl';
@@ -38,6 +40,10 @@ export interface SimulationOptions {
   rules?: Readonly<Record<string, string>>;
   // The most flyers in the air at once (default `MOVEMENT.maxFlyers`); launches past it stay in the grid.
   maxFlyers?: number;
+  // The air (pressure, wind, air temperature; default true). False records no air pass and allocates no air buffer.
+  air?: boolean;
+  // Grid cells per air cell along each axis (default 4).
+  airCellSize?: AirCellSize;
 }
 
 // A superstep is two CA dispatches (Margolus offset 0, then 1).
@@ -55,6 +61,7 @@ export class Simulation {
   readonly fields: CellFields;
   readonly elements: ElementTable;
   readonly flyers: Flyers;
+  readonly air: AirGrid;
 
   // -- Brush pipeline: edits the cell fields in place --
   private readonly brushUniformData = new ArrayBuffer(BRUSH_UNIFORM_WORDS * 4);
@@ -112,6 +119,15 @@ export class Simulation {
     });
 
     this.flyers = new Flyers(device, width, height, this.fields, this.elements, this.brushUniformBuffer, options.maxFlyers ?? MOVEMENT.maxFlyers);
+
+    this.air = new AirGrid(
+      device,
+      width,
+      height,
+      { enabled: options.air ?? defaultAirOptions.enabled, cellSize: options.airCellSize ?? defaultAirOptions.cellSize },
+      this.fields,
+      this.elements,
+    );
 
     // -- CA setup --
     this.slotWords = device.limits.minUniformBufferOffsetAlignment / 4;
@@ -188,6 +204,7 @@ export class Simulation {
   load(data: Partial<CellData>): void {
     this.fields.load(data.temp ? data : { ...data, temp: this.startTemps(data.kind) });
     this.flyers.clear();
+    this.air.clear();
   }
 
   // The `temp` words of cells of these kinds (all empty when absent), each at its element's temperature.
@@ -203,6 +220,7 @@ export class Simulation {
   clear(): void {
     this.fields.clear();
     this.flyers.clear();
+    this.air.clear();
   }
 
   // Records the brush (while a button is down) and `supersteps` supersteps (two CA dispatches each) into the caller's
@@ -222,6 +240,7 @@ export class Simulation {
     const passes = new PassRecorder(encoder, timer);
 
     if (input.mouseActive) this.recordBrush(passes, input);
+    if (dispatches > 0) this.air.recordMask(passes);
 
     for (let i = 0; i < dispatches; i++) {
       const offset = i % 2;
@@ -235,7 +254,10 @@ export class Simulation {
       pass.setBindGroup(3, this.flyers.launchBindGroup);
       pass.dispatchWorkgroups(Math.ceil(blocksX / 8), Math.ceil(blocksY / 8));
       // The offset-1 dispatch counted the cells that launch: they fly, and land, before the next superstep.
-      if (offset === 1) this.flyers.recordSuperstep(passes);
+      if (offset === 1) {
+        this.flyers.recordSuperstep(passes);
+        this.air.recordSuperstep(passes);
+      }
     }
     passes.end();
   }

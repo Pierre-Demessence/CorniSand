@@ -1,6 +1,6 @@
 # M6 Air
 
-Status: M6.1a to M6.1c done; next open item M6.2a.
+Status: M6.1a to M6.1c and M6.2a done; next open item M6.2b.
 
 ## Goal
 
@@ -180,7 +180,10 @@ Needs you: nothing (an idle RTX 4080 for the bench is checked before the run sta
 
 ### M6.2 Air grid (tasks)
 
-- [ ] M6.2a `src/air.ts`, `src/air-grid.ts`, `src/shaders/air.wgsl.ts` per Design: buffers, mask pass, air step (coupling with bursts only, velocity, pressure, advect, diffuse), substeps, open edges; the `air` and `airCellSize` options; `load`, `clear`, `air.read`, `air.load`; `?air=` in `main.ts`. Verify: lint, typecheck, `npm test`.
+- [x] M6.2a `src/air.ts, `src/air-grid.ts`, `src/shaders/air.wgsl.ts` per Design: buffers, mask pass, air step (coupling with bursts only, velocity, pressure, advect, diffuse), substeps, open edges; the `air` and `airCellSize` options; `load`, `clear`, `air.read`, `air.load`; `?air=` in `main.ts`. Verify: lint, typecheck, `npm test`.
+  Decided during the run: a face's speed is multiplied by `faceGate(openness) = max(0, 2 * openness - 1)`, not by the openness itself (`faceGate` in `src/shaders/air.wgsl.ts`). Why: with the plain openness a 45° wall leaked (the far side reached 20 to 40% of the near side's pulse in a measurement at s 4 and 2), because a wall crossing the corner of an air cell leaves two faces half open; the gate closes every path through a one-cell wall at any angle and angle offset measured (s 1, 2 and 4), and still passes the gap control. Alternative: the plain openness, or any other curve. Change: one function.
+  Decided during the run: the arrays hold one more column and row than there are air cells (array position (a, b) is air cell (a - 1, b - 1); column 0 and row 0 are ghost cells whose faces are the left and bottom faces of the first cells), and the faces on the world's edge carry no pressure gradient: the air through them leaves at `waveSpeed` times the pressure inside (an open boundary), plus `edgeDamping` on the outer ring. Why: the pressure-0 ghost air alone reflects a wave back inverted at full strength; this lets it out (the pressure two air cells from the edge shows no echo above 5% of the arrival in a measurement). Alternative: a thick damped ring only. Change: the edge branches of `airVelocityWGSL`. M6.3a and later samples through `at(a, b)` of the same file.
+  Decided during the run: `AIR.maxSpeed` is 2 cells per dispatch, and the heat the air carries moves at the air's speed up to a cap of `cellSize * substeps / 8` (0.5 at 1, 2 and 4; 1 at 8), the speed at which a cell would give away all its heat in one step; and the temperature is advected as the excess over room temperature. Why: without the cap the upwind sum can overshoot at maxSpeed, and advecting the plain temperature changes a uniform room-temperature air that is compressed or stretched. Heat is kept to 1e-5 until it reaches the edge (measured at s 1, 2, 4, 8); a compressed hot blob peaks up to 35% above its start (s 1). Alternative: a smaller `maxSpeed` for the whole air. Change: `AIR.maxSpeed`, `fluxCap` in `src/air.ts`.
 - [ ] M6.2b `tests/air.test.ts`: AC2–AC6; the determinism tests compare the air words too. Bench with `BENCH_AIR` into "M6.2 results". Verify: lint, typecheck, `npm test`, build.
 - [ ] M6.2c `docs/simulation.md`: an Air section (grid, step, walls and edges; intuition, example, formula).
 

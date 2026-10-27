@@ -1,5 +1,6 @@
 import { initGPU, showBanner, showReloadOverlay, type GPUContext } from './gpu';
 import { computeGrid, maxCellsForDevice, type Grid } from './grid';
+import { AIR_CELL_SIZES } from './air';
 import { Simulation, type CellProbe } from './simulation';
 import { Display } from './display';
 import { InputHandler, type Vec2 } from './input';
@@ -37,6 +38,11 @@ async function main(): Promise<void> {
   }
   const sceneLabel = pendingScene?.name;
 
+  // `?air=<size>` sets the grid cells per air cell (1, 2, 4 or 8) to compare resolutions; the default is the simulation's.
+  const airParam = new URLSearchParams(window.location.search).get('air');
+  const airSize = AIR_CELL_SIZES.find((size) => String(size) === airParam);
+  if (airParam !== null && airSize === undefined) console.warn(`Unknown air size "${airParam}", use one of ${AIR_CELL_SIZES.join(', ')}.`);
+
   // Sized once from the first device's limits (or the scene's size); a re-created device keeps the same grid.
   let grid: Grid | undefined;
   let state: GpuState | null = null;
@@ -49,7 +55,7 @@ async function main(): Promise<void> {
     grid ??= pendingScene
       ? { width: pendingScene.width, height: pendingScene.height, scale: 1 }
       : computeGrid(cssWidth, cssHeight, maxCellsForDevice(gpu.device));
-    const simulation = new Simulation(gpu.device, grid.width, grid.height);
+    const simulation = new Simulation(gpu.device, grid.width, grid.height, { airCellSize: airSize });
     // Only the first device gets the scene; after a device loss the world is cleared, as the banner says.
     if (pendingScene) {
       simulation.load(pendingScene.fields);
