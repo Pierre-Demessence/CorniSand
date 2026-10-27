@@ -1,11 +1,11 @@
 import { initGPU, showBanner, showReloadOverlay, type GPUContext } from './gpu';
 import { computeGrid, maxCellsForDevice, type Grid } from './grid';
-import { Simulation } from './simulation';
+import { Simulation, type CellProbe } from './simulation';
 import { Display } from './display';
 import { InputHandler, type Vec2 } from './input';
-import { ELEMENTS } from './elements';
+import { ELEMENTS, elementHoldsHeat, type ElementDef } from './elements';
 import { findScene, type Scene } from './scenes';
-import { HEAT_LEGEND_TEMPS, heatRampCSS } from './heat';
+import { HEAT_LEGEND_TEMPS, effectiveTemp, heatRampCSS } from './heat';
 import { TOOLS, renderHeatViewToggle, renderTools, renderToolbar, toolbarEntries, type Tool } from './toolbar';
 
 interface GpuState {
@@ -18,6 +18,7 @@ const TOOLBAR_HEIGHT = 48;
 // A device that keeps getting lost is not coming back; stop retrying.
 const MAX_RECOVERIES = 3;
 const TOUCH_TIP_MS = 1500;
+const PROBE_INTERVAL_MS = 100;
 
 async function main(): Promise<void> {
   const canvas = document.getElementById('canvas') as HTMLCanvasElement;
@@ -107,6 +108,7 @@ async function main(): Promise<void> {
   const helpHint = document.getElementById('help-hint') as HTMLElement;
   const speedDisplay = document.getElementById('speed-display')!;
   const particleCountEl = document.getElementById('particle-count')!;
+  const probeEl = document.getElementById('probe-info')!;
 
   function changeSpeed(delta: number): void {
     speedIndex = Math.min(SPEED_STEPS.length - 1, Math.max(0, speedIndex + delta));
@@ -200,6 +202,7 @@ async function main(): Promise<void> {
   let lastFpsTime = performance.now();
   let frameCount = 0;
   let lastCountTime = performance.now();
+  let lastProbeTime = 0;
 
   // --- Resize handling (keeps sim resolution fixed, reconfigures swap chain) ---
   window.addEventListener('resize', () => {
@@ -220,6 +223,22 @@ async function main(): Promise<void> {
     } else {
       particleCountEl.textContent = `${count} particles`;
     }
+  }
+
+  // --- Readout of the cell under the pointer ---
+  // A drag that started on the canvas keeps the pointer captured outside it, so `pointerInside` alone is not enough.
+  function overGrid(): boolean {
+    const { x, y } = input.mousePos;
+    return input.pointerInside && x >= 0 && x < simWidth && y >= 0 && y < simHeight;
+  }
+  const elementById = new Map<number, ElementDef>(ELEMENTS.map((e) => [e.id, e]));
+  function updateProbeDisplay(probe: CellProbe | undefined): void {
+    const element = elementById.get(probe?.type ?? -1);
+    if (!probe || !element || !overGrid()) return;
+    // A cell that holds no heat (empty space, wall) has no temperature to show.
+    probeEl.textContent = elementHoldsHeat(element)
+      ? `${element.label} · ${Math.round(effectiveTemp(element, probe.temp))} °C`
+      : element.label;
   }
 
   // --- Animation loop ---
@@ -281,7 +300,16 @@ async function main(): Promise<void> {
       replacing,
       heatView,
     });
+    // The probe copies the cell under the pointer at the end of the frame's encoder; an earlier one still in flight skips this frame.
+    let probed = false;
+    if (!overGrid()) {
+      probeEl.textContent = '';
+    } else if (now - lastProbeTime >= PROBE_INTERVAL_MS) {
+      probed = simulation.probe(encoder, input.mousePos.x, input.mousePos.y);
+      if (probed) lastProbeTime = now;
+    }
     device.queue.submit([encoder.finish()]);
+    if (probed) simulation.readProbe().then(updateProbeDisplay).catch(() => {});
 
     // Read back particle count (non-blocking)
     simulation.readParticleCount().then(updateParticleDisplay).catch(() => {});

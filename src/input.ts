@@ -10,6 +10,8 @@ export class InputHandler {
   readonly simWidth: number;
   readonly simHeight: number;
   mousePos: Vec2 = { x: -1, y: -1 };
+  /** Whether the pointer is over the canvas; `mousePos` keeps its last value after it leaves. */
+  pointerInside = false;
   leftDown = false;
   rightDown = false;
   shiftDown = false;
@@ -56,6 +58,7 @@ export class InputHandler {
     });
 
     c.addEventListener('pointermove', (e) => {
+      this.pointerInside = true;
       this.shiftDown = e.shiftKey;
       this._toSimCoords(e.clientX, e.clientY);
     });
@@ -67,6 +70,7 @@ export class InputHandler {
     });
 
     c.addEventListener('pointerleave', () => {
+      this.pointerInside = false;
       this.leftDown = false;
       this.rightDown = false;
       this.shiftDown = false;

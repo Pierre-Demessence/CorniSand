@@ -4,7 +4,7 @@ import { ELEMENT as T, ELEMENTS, elementByKey, elementConductivity, elementHeatC
 import { packHalf2 } from '../src/half';
 import { ABSOLUTE_ZERO, HEAT_TOOL_RATE, MAX_TEMP, ROOM_TEMP, effectiveTemp } from '../src/heat';
 import { HEAT_BARS, ICE_LAVA, MOLTEN_METAL, STEAM_CEILING, SCENES } from '../src/scenes';
-import type { Simulation } from '../src/simulation';
+import type { CellProbe, Simulation } from '../src/simulation';
 import { TOOLS } from '../src/toolbar';
 import { cell, cellType, countTypes, createSim, device, idleInput, mulberry32, readCells, run, runMany } from './gpu';
 import { heatContent } from './metrics';
@@ -853,5 +853,62 @@ describe.skipIf(!device)('M5.5a Heat and Cool tools', () => {
 
     await run(sim, 1, { ...everywhere, replacing: true });
     expect(await sim.flyers.read(), 'removed by a replacing stroke').toHaveLength(0);
+  });
+});
+
+// Records a probe at (x, y) in its own encoder, as the game appends one to a frame's, and reads it back.
+async function probeAt(sim: Simulation, x: number, y: number): Promise<CellProbe | undefined> {
+  const encoder = device!.createCommandEncoder();
+  if (!sim.probe(encoder, x, y)) return undefined;
+  device!.queue.submit([encoder.finish()]);
+  return sim.readProbe();
+}
+
+describe.skipIf(!device)('M5.5c probe', () => {
+  const width = 8;
+  const height = 6;
+
+  function probeSim(): Simulation {
+    const sim = createSim(width, height);
+    const kind = new Uint32Array(width * height);
+    const temp = uniformTemps(width * height, 0);
+    kind[2 * width + 3] = cell(T.LAVA);
+    temp[2 * width + 3] = tempWord(1180.5);
+    kind[5 * width + 7] = cell(T.WALL);
+    sim.load({ kind, temp });
+    return sim;
+  }
+
+  it('AC18: reads back the element and the stored temperature of the cell, whatever the cells around it hold', async () => {
+    const sim = probeSim();
+    // Any point inside the cell reads the cell: 3.9, 2.1 is in column 3, row 2.
+    expect(await probeAt(sim, 3.9, 2.1)).toEqual({ type: T.LAVA, temp: 1180.5 });
+    expect(await probeAt(sim, 7, 5), 'a wall').toMatchObject({ type: T.WALL });
+    expect(await probeAt(sim, 0, 0), 'empty space').toMatchObject({ type: T.EMPTY });
+  });
+
+  it('AC18: records nothing outside the grid, and one probe at a time', async () => {
+    const sim = probeSim();
+    const encoder = device!.createCommandEncoder();
+    for (const [x, y] of [[-1, 0], [0, -0.5], [width, 0], [0, height]]) {
+      expect(sim.probe(encoder, x, y), `(${x}, ${y})`).toBe(false);
+    }
+    expect(sim.probe(encoder, 3, 2), 'inside').toBe(true);
+    expect(sim.probe(encoder, 3, 2), 'a second one while the first is in flight').toBe(false);
+    device!.queue.submit([encoder.finish()]);
+    expect(await sim.readProbe()).toEqual({ type: T.LAVA, temp: 1180.5 });
+    expect(await probeAt(sim, 3, 2), 'free again once read').toEqual({ type: T.LAVA, temp: 1180.5 });
+    expect(await sim.readProbe(), 'nothing to read').toBeUndefined();
+  });
+
+  it('AC18: follows the cell as the simulation runs', async () => {
+    const sim = createSim(4, 8);
+    const kind = new Uint32Array(4 * 8);
+    kind[7 * 4 + 1] = cell(T.SAND);
+    sim.load({ kind, temp: uniformTemps(4 * 8, 77) });
+    expect(await probeAt(sim, 1, 7)).toMatchObject({ type: T.SAND, temp: 77 });
+    await runMany(sim, 40);
+    expect(await probeAt(sim, 1, 7), 'the grain left').toMatchObject({ type: T.EMPTY });
+    expect(await probeAt(sim, 1, 0), 'it rests on the floor').toEqual({ type: T.SAND, temp: 77 });
   });
 });

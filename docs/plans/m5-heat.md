@@ -1,6 +1,6 @@
 # M5 Heat and phase changes
 
-Status: M5.1 to M5.4, M5.5a and M5.5b done; next is M5.5c (probe and readout). The user declined a Claude Design canvas for M5.5; the layout in its Design is the default.
+Status: M5.1 to M5.4 and M5.5a to M5.5c done; next is M5.5d (toolbar scroll). The user declined a Claude Design canvas for M5.5; the layout in its Design is the default.
 
 ## Goal
 
@@ -186,7 +186,7 @@ Worth a Claude Design canvas before this item: the toolbar grows to about 16 con
 
 **Heat view.** A toolbar toggle "Heat view" (`aria-pressed`) and the H key (ignored with Ctrl, Meta or Alt held, unlike the number keys of B11); `DisplayOptions.heatView?: boolean` (optional, for the existing display test), in the display uniform's padding. In the heat view a cell that holds heat is drawn as `heatColor(cellTemp)`, empty space as the background, a cell that holds no heat (wall) at 30% of its color. `HEAT_RAMP` in `src/heat.ts`: knots (°C, linear RGB) with strictly increasing luminance, from dark blue at −50 through purple at 20, red at 300, orange at 800 and yellow at 1,500 to near white at 2,000 and above; it generates both the WGSL `heatColor` (piecewise linear) and the legend's CSS gradient. The legend, a small bar labelled −50, 100, 500, 1,000 and 2,000 °C (a 0 label would overlap −50 and 100 on a linear bar), sits above the toolbar's right end and shows only in the heat view. Hue never carries the meaning alone (the user is red-green colorblind): the brightness order, the legend's labels and the readout do. A flyer is drawn over an empty cell from its `kind` word only, with the empty cell's meaningless `temp`, so flyer-substituted cells get no glow and take their element color in the heat view (backlog line).
 
-**Readout.** `Simulation.probe(encoder, x, y)` appends two 4-byte copies (the cell's `kind` and `temp` words) into a 16-byte staging buffer at the end of the frame's encoder, so there is no extra submit; `readProbe()` maps it, one probe in flight, like the particle counter. `main.ts` probes every 100 ms while the pointer is over the grid and writes "Lava · 1180 °C" into a new info span (label from the table, `effectiveTemp` from `src/heat.ts`), or the label alone for a cell that holds no heat.
+**Readout.** `Simulation.probe(encoder, x, y)` appends two 4-byte copies (the cell's `kind` and `temp` words) into an 8-byte staging buffer at the end of the frame's encoder, so there is no extra submit; `readProbe()` maps it, one probe in flight, like the particle counter. `main.ts` probes every 100 ms while the pointer is over the grid and writes "Lava · 1180 °C" into a new info span (label from the table, `effectiveTemp` from `src/heat.ts`), or the label alone for a cell that holds no heat.
 
 **Glow.** In the normal view a cell that holds heat above 525 °C (where hot things start to glow) gets a glow color added to its own, scaled by a weight that rises with temperature: dull red at 525, orange at 1,000, yellow-white from 1,600, clamped to 1. Adding never darkens a light base color (smoke), where blending toward dull red would. Elements with their own `graphics` function (fire) draw themselves and get no glow. Constants in `src/heat.ts`.
 
@@ -272,7 +272,7 @@ Needs you: nothing (the playtest is M5.5's gate).
 
 - [x] M5.5a Heat and Cool tools: `TOOLS`, `SimulationInput.heating`, the brush, `replacing` off for tools; AC16 tests. Verify: lint, typecheck, `npm test`.
 - [x] M5.5b Display: heat view, legend, glow, `HEAT_RAMP`; AC17 and AC19 render tests. Verify: lint, typecheck, `npm test`, build.
-- [ ] M5.5c Readout: `probe`, `readProbe`, the info span; AC18 probe test. Verify: lint, typecheck, `npm test`.
+- [x] M5.5c Readout: `probe`, `readProbe`, the info span; AC18 probe test. Verify: lint, typecheck, `npm test`.
 - [ ] M5.5d Toolbar scroll (AC20).
 - [ ] M5.5e Browser check per Design, then the gate.
 

@@ -5,7 +5,7 @@ import { RULES } from './shaders/rules';
 import { ElementTable } from './element-table';
 import { ELEMENTS, MAX_ELEMENTS, elementTemperature, type ElementDef } from './elements';
 import { CellFields } from './cell-field-buffers';
-import { tempView, type CellData } from './cell-fields';
+import { FIELD_BYTES, tempView, type CellData } from './cell-fields';
 import { Flyers } from './flyers';
 import type { Vec2 } from './input';
 import { MOVEMENT } from './movement';
@@ -21,6 +21,12 @@ export interface SimulationInput {
   particleType: number;
   /** °C added to every cell that holds heat inside the stroke per frame, negative to cool; absent or 0 when painting. */
   heating?: number;
+}
+
+/** What `Simulation.readProbe` returns for the cell under the probe: its element ID and stored temperature (°C). */
+export interface CellProbe {
+  type: number;
+  temp: number;
 }
 
 export interface SimulationOptions {
@@ -73,6 +79,10 @@ export class Simulation {
   private pendingCount = false;
   private mapping = false;
   private lastCount = 0;
+
+  // Probe: the `kind` and `temp` words of one cell, copied at the end of the frame's encoder
+  private readonly probeStaging: GPUBuffer;
+  private probePending = false;
 
   constructor(device: GPUDevice, width: number, height: number, options: SimulationOptions = {}) {
     this.device = device;
@@ -169,6 +179,8 @@ export class Simulation {
       layout: device.createPipelineLayout({ bindGroupLayouts: [countLayout, this.fields.readLayout] }),
       compute: { module: countShader, entryPoint: 'main' },
     });
+
+    this.probeStaging = device.createBuffer({ size: 8, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
   }
 
   // Replaces the world: each field of `data` (width x height words) goes into its buffer; a missing field is zero,
@@ -292,5 +304,32 @@ export class Simulation {
       this.mapping = false;
     }
     return this.lastCount;
+  }
+
+  // Appends copies of the `kind` and `temp` words of the grid cell at (x, y) to the caller's encoder, so a probe needs
+  // no submit of its own. False when it recorded nothing: one probe is in flight until `readProbe` returns, or the
+  // point is outside the grid. A flyer in the air over the cell is not seen.
+  probe(encoder: GPUCommandEncoder, x: number, y: number): boolean {
+    const cx = Math.floor(x);
+    const cy = Math.floor(y);
+    if (this.probePending || !(cx >= 0 && cx < this.width && cy >= 0 && cy < this.height)) return false;
+    const offset = (cy * this.width + cx) * FIELD_BYTES;
+    encoder.copyBufferToBuffer(this.fields.buffers.kind, offset, this.probeStaging, 0, FIELD_BYTES);
+    encoder.copyBufferToBuffer(this.fields.buffers.temp, offset, this.probeStaging, FIELD_BYTES, FIELD_BYTES);
+    this.probePending = true;
+    return true;
+  }
+
+  // The cell a successful `probe` copied; call it after the encoder holding the copies is submitted.
+  async readProbe(): Promise<CellProbe | undefined> {
+    if (!this.probePending) return undefined;
+    try {
+      await this.probeStaging.mapAsync(GPUMapMode.READ);
+      const words = new Uint32Array(this.probeStaging.getMappedRange().slice(0));
+      return { type: words[0] & 0xff, temp: tempView({ temp: words.subarray(1, 2) })[0] };
+    } finally {
+      if (this.probeStaging.mapState === 'mapped') this.probeStaging.unmap();
+      this.probePending = false;
+    }
   }
 }

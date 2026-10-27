@@ -114,6 +114,12 @@
             white-space: nowrap;
         }
 
+        /* Wide enough for the longest label and temperature, so the controls after it keep their places. */
+        .probe-text {
+            min-width: 17ch;
+            color: #d1d5db;
+        }
+
         #clear-btn {
             padding: 6px 16px;
             border: 1px solid rgba(239, 68, 68, 0.25);
@@ -208,6 +214,8 @@
 
     <div id="toolbar">
         <div id="tool-buttons"></div>
+        <div class="separator"></div>
+        <span class="info-text probe-text" id="probe-info"></span>
         <div class="separator"></div>
         <span class="info-text" id="brush-size">Brush: 10</span>
         <div class="separator"></div>
