@@ -118,8 +118,6 @@ export class Simulation {
       entries: [{ binding: 0, resource: { buffer: this.brushUniformBuffer } }],
     });
 
-    this.flyers = new Flyers(device, width, height, this.fields, this.elements, this.brushUniformBuffer, options.maxFlyers ?? MOVEMENT.maxFlyers);
-
     this.air = new AirGrid(
       device,
       width,
@@ -128,6 +126,8 @@ export class Simulation {
       this.fields,
       this.elements,
     );
+
+    this.flyers = new Flyers(device, width, height, this.fields, this.elements, this.brushUniformBuffer, options.maxFlyers ?? MOVEMENT.maxFlyers, this.air.state);
 
     // -- CA setup --
     this.slotWords = device.limits.minUniformBufferOffsetAlignment / 4;
@@ -142,7 +142,7 @@ export class Simulation {
     this.caPipeline = device.createComputePipeline({
       layout: device.createPipelineLayout({ bindGroupLayouts: [caLayout, this.fields.writeLayout, this.elements.layout, this.flyers.launchLayout] }),
       compute: {
-        module: device.createShaderModule({ code: caWGSL(width, height, table, { ...RULES, ...options.rules }, this.flyers.maxFlyers) }),
+        module: device.createShaderModule({ code: caWGSL(width, height, table, { ...RULES, ...options.rules }, this.flyers.maxFlyers, this.air.shape) }),
         entryPoint: 'main',
       },
     });

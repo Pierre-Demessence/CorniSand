@@ -1,4 +1,4 @@
-import { airConstantsWGSL } from '../air';
+import { AIR, airConstantsWGSL, type AirShape } from '../air';
 import { ROOM_TEMP } from '../heat';
 import type { ElementDef } from '../elements';
 import { wgslFloat } from '../movement';
@@ -19,6 +19,99 @@ import { elementsWGSL } from './elements.wgsl';
 // cells between the centers of its two air cells that hold no solid cell, and `faceGate` turns it into the factor the
 // face's speed is multiplied by.
 
+/**
+ * Reads of an air state array named `array` (needs the constants `AW` and `AH`): the index of an array position, the
+ * speed through the right and top faces and the pressure of one (0 beyond the array), and bilinear samples at a point.
+ * Points are in air cells counted from the ghost column and row (grid cell x is at x / S + 1), so the right faces of
+ * array column a sit at x = a + 1 and the top faces of row b at y = b + 1. Shared by the air passes and by every pass
+ * that reads the air (the CA, the flight pass, the display).
+ */
+export const airSamplersWGSL = (array: string): string => /* wgsl */`
+fn airIndex(a: i32, b: i32) -> u32 { return u32(b * AW + a); }
+fn inArray(a: i32, b: i32) -> bool { return a >= 0 && a < AW && b >= 0 && b < AH; }
+
+// The speed of the air through the right face of (a, b), and through its top face; 0 beyond the array.
+fn uAt(a: i32, b: i32) -> f32 { if (!inArray(a, b)) { return 0.0; } return ${array}[airIndex(a, b)].x; }
+fn vAt(a: i32, b: i32) -> f32 { if (!inArray(a, b)) { return 0.0; } return ${array}[airIndex(a, b)].y; }
+fn pressureAt(a: i32, b: i32) -> f32 { if (!inArray(a, b)) { return 0.0; } return ${array}[airIndex(a, b)].z; }
+
+// The pressure difference across the right face of (a, b), and across its top face: what accelerates the air there.
+fn dpxAt(a: i32, b: i32) -> f32 { return pressureAt(a + 1, b) - pressureAt(a, b); }
+fn dpyAt(a: i32, b: i32) -> f32 { return pressureAt(a, b + 1) - pressureAt(a, b); }
+
+// Bilinear samples at a point of the two speed fields; the right faces sit at (a + 1, b + 1/2), the top faces at
+// (a + 1/2, b + 1).
+fn sampleU(x: f32, y: f32) -> f32 {
+  let fx = x - 1.0;
+  let fy = y - 0.5;
+  let a = i32(floor(fx));
+  let b = i32(floor(fy));
+  let tx = fx - f32(a);
+  let ty = fy - f32(b);
+  return mix(mix(uAt(a, b), uAt(a + 1, b), tx), mix(uAt(a, b + 1), uAt(a + 1, b + 1), tx), ty);
+}
+
+fn sampleV(x: f32, y: f32) -> f32 {
+  let fx = x - 0.5;
+  let fy = y - 1.0;
+  let a = i32(floor(fx));
+  let b = i32(floor(fy));
+  let tx = fx - f32(a);
+  let ty = fy - f32(b);
+  return mix(mix(vAt(a, b), vAt(a + 1, b), tx), mix(vAt(a, b + 1), vAt(a + 1, b + 1), tx), ty);
+}
+
+// The pressure gradient at a point, per air cell: the pressure differences across the faces, sampled like the speeds.
+fn sampleGradient(x: f32, y: f32) -> vec2f {
+  var g = vec2f(0.0);
+  {
+    let fx = x - 1.0;
+    let fy = y - 0.5;
+    let a = i32(floor(fx));
+    let b = i32(floor(fy));
+    let tx = fx - f32(a);
+    let ty = fy - f32(b);
+    g.x = mix(mix(dpxAt(a, b), dpxAt(a + 1, b), tx), mix(dpxAt(a, b + 1), dpxAt(a + 1, b + 1), tx), ty);
+  }
+  {
+    let fx = x - 0.5;
+    let fy = y - 1.0;
+    let a = i32(floor(fx));
+    let b = i32(floor(fy));
+    let tx = fx - f32(a);
+    let ty = fy - f32(b);
+    g.y = mix(mix(dpyAt(a, b), dpyAt(a + 1, b), tx), mix(dpyAt(a, b + 1), dpyAt(a + 1, b + 1), tx), ty);
+  }
+  return g;
+}
+`;
+
+/**
+ * What the CA reads of the air (group 3, binding 1, read-only): the air state and the sampling of it at a grid point.
+ * `airAround` returns the air's velocity there, in grid cells per dispatch, and the pressure gradient, per grid cell.
+ * The air state changes only in the air passes, between CA dispatches, so a block may read it outside its own cells.
+ */
+export const airReadWGSL = (shape: AirShape): string => /* wgsl */`
+// Array columns and rows: one more than the air cells (the ghost column and row).
+const AW: i32 = ${shape.columns + 1};
+const AH: i32 = ${shape.rows + 1};
+const AIR_S: f32 = ${wgslFloat(shape.cellSize)};
+const AIR_PUSH: f32 = ${wgslFloat(AIR.push)};
+@group(3) @binding(1) var<storage, read> airState: array<vec4f>;
+${airSamplersWGSL('airState')}
+
+struct AirAround {
+  velocity: vec2f,
+  gradient: vec2f,
+};
+
+fn airAround(x: f32, y: f32) -> AirAround {
+  let px = x / AIR_S + 1.0;
+  let py = y / AIR_S + 1.0;
+  return AirAround(vec2f(sampleU(px, py), sampleV(px, py)), sampleGradient(px, py) / AIR_S);
+}
+`;
+
 const prelude = (width: number, height: number, cellSize: number, substeps: number, nx: number, ny: number): string => /* wgsl */`
 ${airConstantsWGSL(cellSize, substeps)}
 const W: i32 = ${width};
@@ -38,8 +131,7 @@ const ROOM: f32 = ${wgslFloat(ROOM_TEMP)};
 // Pressure released into an air cell by the CA, in 1 / BURST_SCALE units.
 @group(0) @binding(3) var<storage, read_write> burst: array<atomic<i32>>;
 
-fn at(a: i32, b: i32) -> u32 { return u32(b * AW + a); }
-fn inArray(a: i32, b: i32) -> bool { return a >= 0 && a < AW && b >= 0 && b < AH; }
+${airSamplersWGSL('air')}
 fn isCell(a: i32, b: i32) -> bool { return a >= 1 && a <= NX && b >= 1 && b <= NY; }
 
 // The factor a face's speed is multiplied by. A wall of one cell, whatever its angle, closes at least half the rows of
@@ -48,12 +140,11 @@ fn isCell(a: i32, b: i32) -> bool { return a >= 1 && a <= NX && b >= 1 && b <= N
 // path through the wall. A face that is open on at least half its rows stays a passage.
 fn faceGate(openness: f32) -> f32 { return max(0.0, 2.0 * openness - 1.0); }
 
-// The speed of the air through the right face of (a, b), and through its top face; 0 beyond the array.
-fn uAt(a: i32, b: i32) -> f32 { if (!inArray(a, b)) { return 0.0; } return air[at(a, b)].x; }
-fn vAt(a: i32, b: i32) -> f32 { if (!inArray(a, b)) { return 0.0; } return air[at(a, b)].y; }
+// The factor the speed of a face is multiplied by for the powder and liquid in the air cells it joins (their mean share).
+fn matterKeep(share: f32) -> f32 { return 1.0 - share * (1.0 - KEEP_MATTER); }
+
 // The temperature above room temperature, 0 beyond the array.
-fn heatAt(a: i32, b: i32) -> f32 { if (!inArray(a, b)) { return 0.0; } return air[at(a, b)].w - ROOM; }
-fn pressureAt(a: i32, b: i32) -> f32 { if (!inArray(a, b)) { return 0.0; } return air[at(a, b)].z; }
+fn heatAt(a: i32, b: i32) -> f32 { if (!inArray(a, b)) { return 0.0; } return air[airIndex(a, b)].w - ROOM; }
 `;
 
 const GROUP = 'let a = i32(gid.x);\n  let b = i32(gid.y);\n  if (a >= AW || b >= AH) { return; }';
@@ -119,7 +210,7 @@ ${ENTRY} {
       if (elHoldsHeat(t)) { heat++; }
     }
   }
-  mask[at(a, b)] = vec4f(openRows(spanX0, spanX1, j * S), openColumns(i * S, spanY0, spanY1), f32(matter) / f32(S * S), f32(heat));
+  mask[airIndex(a, b)] = vec4f(openRows(spanX0, spanX1, j * S), openColumns(i * S, spanY0, spanY1), f32(matter) / f32(S * S), f32(heat));
 }
 `;
 
@@ -129,7 +220,7 @@ ${prelude(width, height, cellSize, substeps, nx, ny)}
 
 ${ENTRY} {
   ${GROUP}
-  let k = at(a, b);
+  let k = airIndex(a, b);
   if (atomicLoad(&burst[k]) == 0) { return; }
   let released = atomicExchange(&burst[k], 0);
   if (isCell(a, b)) { air[k].z += f32(released) / BURST_SCALE; }
@@ -146,7 +237,7 @@ ${prelude(width, height, cellSize, substeps, nx, ny)}
 
 ${ENTRY} {
   ${GROUP}
-  let k = at(a, b);
+  let k = airIndex(a, b);
   let m = mask[k];
   let ring = a == 1 || a == NX || b == 1 || b == NY;
   var edge = 1.0;
@@ -155,22 +246,22 @@ ${ENTRY} {
   // The right face of cell (a, b); the ghost row has none.
   if (b >= 1) {
     if (a == 0) {
-      air[k].x = (0.0 - WAVE_SPEED * air[at(1, b)].z) * faceGate(m.x);
+      air[k].x = (0.0 - WAVE_SPEED * air[airIndex(1, b)].z) * faceGate(m.x);
     } else if (a == NX) {
       air[k].x = (WAVE_SPEED * air[k].z) * faceGate(m.x);
     } else if (a < NX) {
-      let u = (air[k].x - GRADIENT * (air[at(a + 1, b)].z - air[k].z)) * KEEP_VELOCITY * edge;
+      let u = (air[k].x - GRADIENT * (air[airIndex(a + 1, b)].z - air[k].z)) * KEEP_VELOCITY * edge * matterKeep(0.5 * (m.z + mask[airIndex(a + 1, b)].z));
       air[k].x = clamp(u, -MAX_AIR_SPEED, MAX_AIR_SPEED) * faceGate(m.x);
     }
   }
   // The top face; the ghost column has none.
   if (a >= 1) {
     if (b == 0) {
-      air[k].y = (0.0 - WAVE_SPEED * air[at(a, 1)].z) * faceGate(m.y);
+      air[k].y = (0.0 - WAVE_SPEED * air[airIndex(a, 1)].z) * faceGate(m.y);
     } else if (b == NY) {
       air[k].y = (WAVE_SPEED * air[k].z) * faceGate(m.y);
     } else if (b < NY) {
-      let v = (air[k].y - GRADIENT * (air[at(a, b + 1)].z - air[k].z)) * KEEP_VELOCITY * edge;
+      let v = (air[k].y - GRADIENT * (air[airIndex(a, b + 1)].z - air[k].z)) * KEEP_VELOCITY * edge * matterKeep(0.5 * (m.z + mask[airIndex(a, b + 1)].z));
       air[k].y = clamp(v, -MAX_AIR_SPEED, MAX_AIR_SPEED) * faceGate(m.y);
     }
   }
@@ -184,8 +275,8 @@ ${prelude(width, height, cellSize, substeps, nx, ny)}
 ${ENTRY} {
   ${GROUP}
   if (!isCell(a, b)) { return; }
-  let k = at(a, b);
-  let flow = (air[k].x - air[at(a - 1, b)].x) + (air[k].y - air[at(a, b - 1)].y);
+  let k = airIndex(a, b);
+  let flow = (air[k].x - air[airIndex(a - 1, b)].x) + (air[k].y - air[airIndex(a, b - 1)].y);
   var p = (air[k].z - DIVERGENCE * flow) * KEEP_PRESSURE;
   if (a == 1 || a == NX || b == 1 || b == NY) { p *= KEEP_EDGE; }
   air[k].z = p;
@@ -200,34 +291,12 @@ ${ENTRY} {
 export const airAdvectWGSL = (width: number, height: number, cellSize: number, substeps: number, nx: number, ny: number): string => /* wgsl */`
 ${prelude(width, height, cellSize, substeps, nx, ny)}
 
-// Bilinear samples of the two speed fields at a point in air cells; the right faces sit at (a + 1, b + 1/2), the top
-// faces at (a + 1/2, b + 1).
-fn sampleU(x: f32, y: f32) -> f32 {
-  let fx = x - 1.0;
-  let fy = y - 0.5;
-  let a = i32(floor(fx));
-  let b = i32(floor(fy));
-  let tx = fx - f32(a);
-  let ty = fy - f32(b);
-  return mix(mix(uAt(a, b), uAt(a + 1, b), tx), mix(uAt(a, b + 1), uAt(a + 1, b + 1), tx), ty);
-}
-
-fn sampleV(x: f32, y: f32) -> f32 {
-  let fx = x - 0.5;
-  let fy = y - 1.0;
-  let a = i32(floor(fx));
-  let b = i32(floor(fy));
-  let tx = fx - f32(a);
-  let ty = fy - f32(b);
-  return mix(mix(vAt(a, b), vAt(a + 1, b), tx), mix(vAt(a, b + 1), vAt(a + 1, b + 1), tx), ty);
-}
-
 // The speed a face moves heat at: the air's, up to the cap that keeps a cell from giving away more than it holds.
 fn flux(speed: f32) -> f32 { return clamp(speed, -FLUX_CAP, FLUX_CAP); }
 
 ${ENTRY} {
   ${GROUP}
-  let k = at(a, b);
+  let k = airIndex(a, b);
   let s = air[k];
   let m = mask[k];
   var out = s;
@@ -272,19 +341,19 @@ ${prelude(width, height, cellSize, substeps, nx, ny)}
 
 fn scratchHeat(a: i32, b: i32) -> f32 {
   if (!inArray(a, b)) { return 0.0; }
-  return scratch[at(a, b)].w - ROOM;
+  return scratch[airIndex(a, b)].w - ROOM;
 }
 
 ${ENTRY} {
   ${GROUP}
-  let k = at(a, b);
+  let k = airIndex(a, b);
   var out = scratch[k];
   if (isCell(a, b)) {
     let heat = out.w - ROOM;
     let toRight = faceGate(mask[k].x) * (scratchHeat(a + 1, b) - heat);
-    let toLeft = faceGate(mask[at(a - 1, b)].x) * (scratchHeat(a - 1, b) - heat);
+    let toLeft = faceGate(mask[airIndex(a - 1, b)].x) * (scratchHeat(a - 1, b) - heat);
     let toTop = faceGate(mask[k].y) * (scratchHeat(a, b + 1) - heat);
-    let toBottom = faceGate(mask[at(a, b - 1)].y) * (scratchHeat(a, b - 1) - heat);
+    let toBottom = faceGate(mask[airIndex(a, b - 1)].y) * (scratchHeat(a, b - 1) - heat);
     out.w = ROOM + (heat + DIFFUSION * ((toRight + toLeft) + (toTop + toBottom)));
   }
   air[k] = out;

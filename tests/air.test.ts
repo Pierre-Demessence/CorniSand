@@ -7,38 +7,13 @@ import { ROOM_TEMP } from '../src/heat';
 import { SCENES } from '../src/scenes';
 import type { PassTimer } from '../src/passes';
 import type { Simulation } from '../src/simulation';
+import { gaussian, peakAt } from './air-pulse';
 import { airWords, cell, createSim, device, idleInput, loadScene, mulberry32, readCells, run, runMany } from './gpu';
 
 // Dispatches (CA passes) in a superstep: the air constants are per dispatch.
 const DISPATCHES = 2;
 
 const SIZES: readonly AirCellSize[] = [2, 4];
-
-// A pressure pulse: a Gaussian of `sigma` grid cells around the center of the air cell (i0, j0), as pressure per air
-// cell (the array `air.load` takes). Cells for which `keep` is false get 0.
-function gaussian(sim: Simulation, i0: number, j0: number, sigma: number, keep: (x: number, y: number) => boolean = () => true): Float32Array {
-  const { columns, rows, cellSize } = sim.air;
-  const pressure = new Float32Array(columns * rows);
-  for (let j = 0; j < rows; j++) {
-    for (let i = 0; i < columns; i++) {
-      const d2 = ((i - i0) * cellSize) ** 2 + ((j - j0) * cellSize) ** 2;
-      const x = i * cellSize + cellSize / 2;
-      const y = j * cellSize + cellSize / 2;
-      if (keep(x, y)) pressure[j * columns + i] = Math.exp(-d2 / (2 * sigma * sigma));
-    }
-  }
-  return pressure;
-}
-
-// Where the line of values has its highest point, in samples from the start, refined by a parabola through the three
-// samples around it.
-function peakAt(line: number[], from: number): number {
-  let best = from;
-  for (let k = from; k < line.length - 1; k++) if (line[k] > line[best]) best = k;
-  const [a, b, c] = [line[best - 1], line[best], line[best + 1]];
-  const curve = a - 2 * b + c;
-  return curve < 0 ? best + (0.5 * (a - c)) / curve : best;
-}
 
 function expectAirBitIdentical(a: AirData, b: AirData): void {
   const [wordsA, wordsB] = [airWords(a), airWords(b)];
@@ -355,7 +330,7 @@ describe.skipIf(!device)('M6 air', () => {
 
     it.each(SIZES)('M6 AC6: at size %i two runs of a scene with air in motion are bit-identical in every cell field, flyer and air word', async (size) => {
       const scene = SCENES.blast();
-      const snapshot = async (): Promise<{ fields: Record<string, Uint32Array>; flyers: Uint32Array; air: AirData }> => {
+      const snapshot = async (): Promise<{ fields: Record<string, Uint32Array>; flyers: Uint32Array; launched: number; air: AirData }> => {
         const sim = createSim(scene.width, scene.height, 5, { airCellSize: size });
         sim.load(scene.fields);
         const n = sim.air.columns * sim.air.rows;
@@ -371,12 +346,13 @@ describe.skipIf(!device)('M6 air', () => {
         await runMany(sim, 40);
         const fields: Record<string, Uint32Array> = {};
         for (const { name } of CELL_FIELDS) fields[name] = await sim.fields.read(name);
-        return { fields, flyers: await sim.flyers.snapshot(), air: await sim.air.read() };
+        return { fields, flyers: await sim.flyers.snapshot(), launched: (await sim.flyers.readStats()).launched, air: await sim.air.read() };
       };
       const a = await snapshot();
       const b = await snapshot();
 
-      expect(a.flyers.length, 'flyers were in the air').toBeGreaterThan(8);
+      // The air acts on the cells now, so how many flyers are still in the air at the end varies: count the launches.
+      expect(a.launched, 'cells flew').toBeGreaterThan(8);
       expect(b.flyers).toEqual(a.flyers);
       for (const name of Object.keys(a.fields)) expect(b.fields[name], name).toEqual(a.fields[name]);
       expectAirBitIdentical(a.air, b.air);

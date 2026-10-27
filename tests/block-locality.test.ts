@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { AirData } from '../src/air-grid';
 import { CELL_FIELDS, emptyCellData, type CellData } from '../src/cell-fields';
 import { ELEMENT as T, ELEMENTS, elementByKey, elementHoldsHeat, type ElementDef } from '../src/elements';
 import { packHalf2 } from '../src/half';
@@ -14,7 +15,9 @@ import { device } from './gpu';
 // bit-identical, field by field. A phase that reads across a block border breaks that wherever the changed cell is its
 // neighbor. It catches a violation only when the read changes a result for the cells drawn; a continuous phase
 // (conduction) changes something for nearly any out-of-block read, a discrete one is caught with high probability over
-// the 32 rounds, not with certainty.
+// the 32 rounds, not with certainty. Both scenes run on the same random air state (pressure, wind and temperature
+// changing from one air cell to the next): the CA reads the air, which only the air passes write, so that is no
+// violation.
 
 type Rand = () => number;
 type CellWords = Record<string, number>;
@@ -60,6 +63,14 @@ function drawCell(table: readonly ElementDef[], rand: Rand): CellWords {
     words[name] = generate(e, variant, rand);
   }
   return words;
+}
+
+// A random state for every air cell: pressure up to 2 either way, wind up to 1.5 cells per dispatch, any temperature
+// from cold to hot. The same for the same `rand`.
+function randomAir(sim: Simulation, rand: Rand): AirData {
+  const n = sim.air.columns * sim.air.rows;
+  const field = (scale: number, offset: number): Float32Array => Float32Array.from({ length: n }, () => offset + scale * rand());
+  return { pressure: field(4, -2), velocityX: field(3, -1.5), velocityY: field(3, -1.5), temperature: field(300, -50) };
 }
 
 function setCell(scene: CellData, i: number, words: CellWords): void {
@@ -138,7 +149,7 @@ async function checkLocality(check: Check): Promise<Result> {
   const options = { elements: table, rules: check.rules, maxFlyers: 1024 };
   const simA = new Simulation(dev, width, height, { ...options, seedSource: mulberry32(1) });
   const simB = new Simulation(dev, width, height, { ...options, seedSource: mulberry32(1) });
-  const generated = caWGSL(width, height, simA.elements.elements, { ...RULES, ...check.rules }, simA.flyers.maxFlyers);
+  const generated = caWGSL(width, height, simA.elements.elements, { ...RULES, ...check.rules }, simA.flyers.maxFlyers, simA.air.shape);
   const source = check.patch ? check.patch(generated) : generated;
 
   const stepBuffer = dev.createBuffer({ size: 8, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
@@ -178,6 +189,10 @@ async function checkLocality(check: Check): Promise<Result> {
       const mask = allowedMask(reference, copy, width, height, offset);
       simA.load(reference);
       simB.load(copy);
+      const airSeed = mulberry32(check.seed + round);
+      simA.air.load(randomAir(simA, () => airSeed() / 2 ** 32));
+      const airSeedB = mulberry32(check.seed + round);
+      simB.air.load(randomAir(simB, () => airSeedB() / 2 ** 32));
       await validated(() => {
         dev.queue.writeBuffer(stepBuffer, 0, new Uint32Array([offset, stepSeed]));
         const encoder = dev.createCommandEncoder();

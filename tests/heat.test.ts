@@ -136,7 +136,8 @@ describe.skipIf(!device)('M5 heat', () => {
     temp[190 * width + 4] = marked;
     sim.load({ kind, temp });
 
-    await runMany(sim, 30);
+    // The grain launches after 48 supersteps (drag slows the fall in the grid) and is in the air until the 81st.
+    await runMany(sim, 60);
     const flyers = await sim.flyers.read();
     expect(flyers, 'the grain is in the air').toHaveLength(1);
     expect(flyers[0].cell.temp, 'the temp word it carries').toBe(marked);
@@ -841,7 +842,8 @@ describe.skipIf(!device)('M5.5a Heat and Cool tools', () => {
     kind[190 * flyerWidth + 4] = cell(T.SAND);
     temp[190 * flyerWidth + 4] = marked;
     sim.load({ kind, temp });
-    await runMany(sim, 30);
+    // The grain launches after 48 supersteps (drag slows the fall in the grid) and is in the air until the 81st.
+    await runMany(sim, 60);
     expect(await sim.flyers.read(), 'the grain is in the air').toHaveLength(1);
 
     const everywhere = { ...idleInput, mouseActive: true, brushSize: 2000, mousePos: { x: 4, y: 100 }, prevMousePos: { x: 4, y: 100 } };

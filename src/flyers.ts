@@ -42,7 +42,7 @@ interface ComputePass {
 
 export class Flyers {
   readonly maxFlyers: number;
-  /** Group 3 of the CA: the launch counts it writes. */
+  /** Group 3 of the CA: the launch counts it writes and, with air, the air state it reads. */
   readonly launchLayout: GPUBindGroupLayout;
   readonly launchBindGroup: GPUBindGroup;
   readonly overlay: FlyerOverlay;
@@ -78,6 +78,7 @@ export class Flyers {
     elements: ElementTable,
     brushUniforms: GPUBuffer,
     maxFlyers: number,
+    airState?: GPUBuffer,
   ) {
     if (!Number.isInteger(maxFlyers) || maxFlyers < 1 || maxFlyers > MAX_FLYER_SLOTS) {
       throw new RangeError(`maxFlyers must be an integer in 1..${MAX_FLYER_SLOTS}, got ${maxFlyers}`);
@@ -110,10 +111,11 @@ export class Flyers {
       entries: types.map((type, binding) => ({ binding, visibility, buffer: { type } })),
     });
 
-    this.launchLayout = layoutOf(['storage']);
+    // Binding 0 is the launch counts the CA writes; binding 1 the air state it reads, when there is air.
+    this.launchLayout = layoutOf(airState ? ['storage', 'read-only-storage'] : ['storage']);
     this.launchBindGroup = device.createBindGroup({
       layout: this.launchLayout,
-      entries: [{ binding: 0, resource: { buffer: this.launch } }],
+      entries: [{ binding: 0, resource: { buffer: this.launch } }, ...(airState ? [{ binding: 1, resource: { buffer: airState } }] : [])],
     });
     const overlayLayout = layoutOf(['read-only-storage'], GPUShaderStage.FRAGMENT);
     this.overlay = {

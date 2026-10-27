@@ -1,4 +1,4 @@
-import { AIR_CELL_SIZES, DEFAULT_AIR_CELL_SIZE, airSubsteps, type AirCellSize } from './air';
+import { AIR_CELL_SIZES, DEFAULT_AIR_CELL_SIZE, airSubsteps, type AirCellSize, type AirShape } from './air';
 import type { CellFields } from './cell-field-buffers';
 import type { ElementTable } from './element-table';
 import { ROOM_TEMP } from './heat';
@@ -44,12 +44,15 @@ export class AirGrid {
   readonly rows: number;
   /** Air steps per superstep. */
   readonly substeps: number;
+  /** What a shader that reads the air needs to know of its shape; absent without air. */
+  readonly shape?: AirShape;
 
   private readonly device: GPUDevice;
   // Array columns and rows: one more than the air cells, for the ghost column and row (see the shader).
   private readonly arrayWidth: number;
   private readonly arrayHeight: number;
-  private readonly state?: GPUBuffer;
+  /** The air state, one vec4f per array position (speed through the right face, through the top face, pressure, temperature); what the CA and the flight pass bind read-only. Absent without air. */
+  readonly state?: GPUBuffer;
   private readonly burst?: GPUBuffer;
   private readonly bindGroup?: GPUBindGroup;
   private readonly kindBindGroup?: GPUBindGroup;
@@ -72,6 +75,7 @@ export class AirGrid {
     this.arrayHeight = this.rows + 1;
     this.substeps = airSubsteps(this.cellSize);
     if (!this.enabled) return;
+    this.shape = { cellSize: this.cellSize, columns: this.columns, rows: this.rows };
 
     const count = this.arrayWidth * this.arrayHeight;
     const storage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST;

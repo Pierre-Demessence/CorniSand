@@ -260,11 +260,13 @@ describe.skipIf(!device)('GPU simulation', () => {
     }
   });
 
+  // With air: false, the mode this test was written for: with air a falling cell also loses `drag` of its speed
+  // relative to the air (M6 AC10 in tests/air-matter.test.ts).
   it.each([['sand', T.SAND, 'SAND'], ['water', T.WATER, 'WATER']])('AC14: a %s grain falls from rest with its element gravity', async (_name, type, key) => {
     const width = 9;
     const height = 600;
     const start = 590;
-    const sim = createSim(width, height);
+    const sim = createSim(width, height, 1, { air: false });
     const cells = emptyGrid(width, height);
     cells[start * width + 4] = cell(type);
     loadScene(sim, cells);
@@ -303,7 +305,8 @@ describe.skipIf(!device)('GPU simulation', () => {
     life[190 * width + 4] = 1234;
     loadScene(sim, kind, life);
 
-    await runMany(sim, 30);
+    // It launches after 48 supersteps: drag slows its fall in the grid.
+    await runMany(sim, 60);
     expect((await sim.flyers.readStats()).launched, 'it launched').toBe(1);
     await runMany(sim, 120);
 
@@ -386,9 +389,11 @@ describe.skipIf(!device)('GPU simulation', () => {
     const initialSand = (scene: Scene): number => countTypes(scene.fields.kind).get(T.SAND)!;
     const grains = async (sim: Simulation): Promise<number> => countTypes(await readCells(sim)).get(T.SAND)! + (await sim.flyers.readStats()).live;
 
+    // With air: false, the mode this test was written for: the prototype had no drag in the grid, and the debris that
+    // lands and flies again hops about a quarter less far with it (p99 181 cells against 237).
     it('AC17: the blast throws debris as far as the prototype did, and loses nothing', async () => {
       const scene = SCENES.blast();
-      const sim = createSim(scene.width, scene.height, 11);
+      const sim = createSim(scene.width, scene.height, 11, { air: false });
       sim.load(scene.fields);
       const before = countTypes(scene.fields.kind);
 

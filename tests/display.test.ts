@@ -170,7 +170,8 @@ describe.skipIf(!device)('M5.5b heat on the display', () => {
     kind[20] = cell(T.SAND);
     tempView({ temp }).fill(1500);
     sim.load({ kind, temp });
-    await runMany(sim, 30);
+    // The grain launches after 48 supersteps (drag slows the fall in the grid) and is in the air until the 81st.
+    await runMany(sim, 60);
     const flyers = await sim.flyers.read();
     expect(flyers, 'the grain is in the air').toHaveLength(1);
     // Row 0 of the world is the bottom of the picture.

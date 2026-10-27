@@ -1,5 +1,12 @@
 import { wgslFloat } from './movement';
 
+/** The shape of the air grid a shader that reads it needs: grid cells per air cell and air cells across and up. */
+export interface AirShape {
+  cellSize: number;
+  columns: number;
+  rows: number;
+}
+
 // Constants of the air (docs/plans/m6-air.md). Units: grid cells and dispatches (one Margolus pass), not air cells, so
 // the air cell size changes the detail of the air and not its speeds. Pressure is dimensionless, 0 is ambient (the
 // ghost air beyond the grid's edge is at 0). y = 0 is the bottom row, as for the cells.
@@ -18,6 +25,16 @@ export const AIR = {
   edgeDamping: 0.1,
   // Share of the temperature difference to a neighbor an air cell closes per dispatch, across a fully open face.
   diffusion: 0.02,
+  // Acceleration of powders and liquids by the pressure gradient, in (cells per dispatch squared) x density per unit of
+  // pressure per cell: a cell of density d gains push x gradient / d each dispatch, so lighter matter is thrown harder.
+  // Tuned against the pulse tests (tests/air-matter.test.ts): a pulse of peak pressure 2 and sigma 6 inside a layer of
+  // sand throws the grains it reaches out of the surface at several cells per dispatch. Pressure and wind are coupled
+  // (a pulse of pressure p moves the air at about p, capped at maxSpeed), so a pulse much above 2 is no stronger on the
+  // air but pushes the matter proportionally harder.
+  push: 16000,
+  // Share of its speed the air in a cell wholly filled with powder or liquid loses per dispatch, on top of velocityLoss:
+  // wind does not blow through a pile or a pool.
+  matterLoss: 0.05,
   // Fixed-point scale of the burst buffer: pressure released by a cell is added as an integer, so the sum is the same
   // whatever order the threads add in.
   burstScale: 1024,
@@ -65,6 +82,7 @@ const MAX_AIR_SPEED: f32 = ${wgslFloat(AIR.maxSpeed)};
 const FLUX_CAP: f32 = ${wgslFloat(fluxCap)};
 const KEEP_PRESSURE: f32 = ${wgslFloat(keep(AIR.pressureLoss))};
 const KEEP_VELOCITY: f32 = ${wgslFloat(keep(AIR.velocityLoss))};
+const KEEP_MATTER: f32 = ${wgslFloat(keep(AIR.matterLoss))};
 const KEEP_EDGE: f32 = ${wgslFloat(keep(AIR.edgeDamping))};
 const DIFFUSION: f32 = ${wgslFloat(diffusion)};
 const BURST_SCALE: f32 = ${wgslFloat(AIR.burstScale)};

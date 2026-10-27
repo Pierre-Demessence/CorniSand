@@ -1,5 +1,7 @@
+import type { AirShape } from '../air';
 import type { ElementDef } from '../elements';
 import { launchGroups, movementWGSL } from '../movement';
+import { airReadWGSL } from './air.wgsl';
 import { cellWGSL } from './cell.wgsl';
 import { elementsWGSL } from './elements.wgsl';
 import { heatWGSL } from './heat.wgsl';
@@ -18,6 +20,9 @@ const SLOTS = [0, 1, 2, 3] as const;
 // stored temperature has passed a threshold (and its latent heat) becomes the element beyond it. A cell faster than
 // LAUNCH_SPEED waits where it is for the flyer passes, which run after the offset-1 dispatch; that dispatch also counts
 // the launching cells of each workgroup (group 3).
+// With `air` (the shape of the air grid) the CA also reads the air state (group 3, binding 1) once per block, at the
+// block's center: powders and liquids lose `drag` of their speed relative to the air and are pushed by its pressure
+// gradient, and gases and fire drift with the air after the sideways dispersion. Without it none of that code exists.
 // `rules` maps a rule name (`ElementDef.rule`) to its WGSL.
 export const caWGSL = (
   width: number,
@@ -25,6 +30,7 @@ export const caWGSL = (
   elements: readonly ElementDef[],
   rules: Readonly<Record<string, string>>,
   maxFlyers: number,
+  air?: AirShape,
 ): string => {
   const ruled = elements.filter((e) => e.rule !== undefined);
   for (const e of ruled) if (!(e.rule! in rules)) throw new Error(`element ${e.key}: unknown rule "${e.rule}"`);
@@ -101,7 +107,11 @@ struct StepUniforms {
 // One launch count per workgroup of the offset-1 dispatch, then their total (the flyer passes keep the prefix after it).
 @group(3) @binding(0) var<storage, read_write> launchCounts: array<atomic<u32>>;
 var<workgroup> wgLaunches: atomic<u32>;
-
+${air ? `
+${airReadWGSL(air)}
+// The air at the center of the block being processed (zero when the block holds nothing that moves).
+var<private> around: AirAround;
+` : ''}
 const W: u32 = ${width}u;
 const H: u32 = ${height}u;
 
@@ -214,7 +224,10 @@ fn velocityRule(i: u32) {
   // A cell at rest starts falling only once a top-row dispatch has seen the cell below it free. Otherwise every level
   // of a resting stack banks one more gravity step than the one under it, and the top of a deep layer launches.
   if (row == 1 || v.y != 0.0) { v.y -= elGravity(cellType(c)); }
-  if (length(v) > MAX_FLYER_SPEED) { v *= MAX_FLYER_SPEED / length(v); }
+${air ? `  // The air: the cell loses \`drag\` of its speed relative to it, and its pressure gradient pushes it, lighter matter harder.
+  v += elDrag(cellType(c)) * (around.velocity - v);
+  v -= AIR_PUSH * around.gradient / cellDensity(c);
+` : ''}  if (length(v) > MAX_FLYER_SPEED) { v *= MAX_FLYER_SPEED / length(v); }
   r += clamp(v, vec2f(-MAX_SPEED), vec2f(MAX_SPEED));
   let sx = stepOf(r.x);
   let sy = stepOf(r.y);
@@ -354,6 +367,46 @@ fn transitionCell(c: Cell) -> Cell {
   return c;
 }
 
+${air ? `// -- Air drift --
+
+// Whether a random word falls below a probability.
+fn chance(r: u32, p: f32) -> bool { return f32(r >> 8u) * (1.0 / 16777216.0) < p; }
+
+// A gas or fire cell drifts one cell along each axis of the air's velocity, each axis with probability twice the speed
+// along it (certain from half a cell per dispatch), when the cell it drifts to is inside the block and empty. It keeps
+// no state: a gas that moves one way is as likely to move the other. In air at rest nothing moves. A cell that has
+// moved this dispatch (a gas that rose, which is every dispatch for a gas in open air) still drifts sideways, along its
+// row, but not vertically, which would undo its move. Tries the diagonal first, then the vertical, then the horizontal move.
+fn driftCell(i: u32, r: u32) {
+  let s = cellState(blkAt(i));
+  if (s != ST_GAS && s != ST_PLASMA) { return; }
+  let free = !movedAt(i);
+  let w = around.velocity;
+  var dx = 0;
+  var dy = 0;
+  if (chance(r, 2.0 * abs(w.x))) { dx = select(-1, 1, w.x > 0.0); }
+  if (free && chance(pcg(r), 2.0 * abs(w.y))) { dy = select(-1, 1, w.y > 0.0); }
+  let col = i32(i & 1u);
+  let row = i32(i >> 1u);
+  if (dx != 0 && dy != 0) {
+    let j = slotAt(col + dx, row + dy);
+    if (j >= 0 && isEmpty(blkAt(u32(j)))) { swapSlots(i, u32(j)); return; }
+  }
+  if (dy != 0) {
+    let j = slotAt(col, row + dy);
+    if (j >= 0 && isEmpty(blkAt(u32(j)))) { swapSlots(i, u32(j)); return; }
+  }
+  if (dx != 0) {
+    let j = slotAt(col + dx, row);
+    if (j >= 0 && isEmpty(blkAt(u32(j)))) { swapSlots(i, u32(j)); }
+  }
+}
+
+fn movesWithAir(c: Cell) -> bool {
+  let s = cellState(c);
+  return s == ST_POWDER || s == ST_LIQUID || s == ST_GAS || s == ST_PLASMA;
+}
+` : ''}
 @compute @workgroup_size(8, 8)
 fn main(
   @builtin(global_invocation_id) gid: vec3u,
@@ -371,7 +424,11 @@ fn main(
 ${loadBlock}
 
     var rnd = hash2(gid.x, gid.y, u.seed);
-
+${air ? `    around = AirAround(vec2f(0.0), vec2f(0.0));
+    if (movesWithAir(blk0) || movesWithAir(blk1) || movesWithAir(blk2) || movesWithAir(blk3)) {
+      around = airAround(f32(ox) + 1.0, f32(oy) + 1.0);
+    }
+` : ''}
     // Phase 0: Gases rise
     if (isGas(blk0) && canRiseThrough(blk0, blk2)) { swapSlots(0u, 2u); }
     if (isGas(blk1) && canRiseThrough(blk1, blk3)) { swapSlots(1u, 3u); }
@@ -399,7 +456,16 @@ ${loadBlock}
       if (isGas(blk1) && isEmpty(blk0) && !canRiseThrough(blk1, blk3) && !moved1) { swapSlots(1u, 0u); }
     }
 
-    // Phase 3: Liquids spread sideways
+${air ? `    // Gases and fire drift with the air; the slot to start at is random, so no corner is served first. The words come from
+    // \`rnd\` without advancing it.
+    let driftOrder = pcg(rnd ^ 0x3c6ef372u);
+    let driftStart = driftOrder & 3u;
+    driftCell(driftStart, pcg(driftOrder ^ 0x1u));
+    driftCell((driftStart + 1u) & 3u, pcg(driftOrder ^ 0x2u));
+    driftCell((driftStart + 2u) & 3u, pcg(driftOrder ^ 0x3u));
+    driftCell((driftStart + 3u) & 3u, pcg(driftOrder ^ 0x4u));
+
+` : ''}    // Phase 3: Liquids spread sideways
     rnd = pcg(rnd);
     spreadRow(2u, 3u, rnd);
     rnd = pcg(rnd);
