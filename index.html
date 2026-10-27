@@ -96,8 +96,27 @@
             opacity: 1;
         }
 
+        /* The element and tool buttons scroll sideways when they do not fit; the controls after them keep their places. */
         #tool-buttons {
-            display: contents;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex: 1 1 auto;
+            min-width: 0;
+            overflow-x: auto;
+            scrollbar-width: thin;
+            scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
+        }
+
+        #tool-buttons > * {
+            flex-shrink: 0;
+        }
+
+        /* The grid size and the particle count give way, so the buttons keep room to scroll in. */
+        @media (max-width: 1200px) {
+            .narrow-hide {
+                display: none;
+            }
         }
 
         .separator {
@@ -221,10 +240,10 @@
         <div class="separator"></div>
         <span class="info-text" id="fps">-- FPS</span>
         <div class="separator"></div>
-        <span class="info-text" id="grid-info">--</span>
-        <div class="separator"></div>
-        <span class="info-text" id="particle-count">0 particles</span>
-        <div class="separator"></div>
+        <span class="info-text narrow-hide" id="grid-info">--</span>
+        <div class="separator narrow-hide"></div>
+        <span class="info-text narrow-hide" id="particle-count">0 particles</span>
+        <div class="separator narrow-hide"></div>
         <button class="tool-btn" type="button" id="speed-down" aria-label="Slow down ([)" data-tip="Slow down ([)">&#x2039;</button>
         <span class="info-text" id="speed-display">Speed: 1x</span>
         <button class="tool-btn" type="button" id="speed-up" aria-label="Speed up (])" data-tip="Speed up (])">&#x203a;</button>

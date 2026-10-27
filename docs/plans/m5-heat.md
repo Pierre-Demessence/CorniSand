@@ -1,6 +1,6 @@
 # M5 Heat and phase changes
 
-Status: M5.1 to M5.4 and M5.5a to M5.5c done; next is M5.5d (toolbar scroll). The user declined a Claude Design canvas for M5.5; the layout in its Design is the default.
+Status: M5.1 to M5.4 and M5.5a to M5.5d done; M5.5e's browser check is done and its gate waits for the user's playtest. The user declined a Claude Design canvas for M5.5; the layout in its Design is the default.
 
 ## Goal
 
@@ -190,7 +190,7 @@ Worth a Claude Design canvas before this item: the toolbar grows to about 16 con
 
 **Glow.** In the normal view a cell that holds heat above 525 °C (where hot things start to glow) gets a glow color added to its own, scaled by a weight that rises with temperature: dull red at 525, orange at 1,000, yellow-white from 1,600, clamped to 1. Adding never darkens a light base color (smoke), where blending toward dull red would. Elements with their own `graphics` function (fire) draw themselves and get no glow. Constants in `src/heat.ts`.
 
-**Toolbar (B9).** `#tool-buttons` becomes a flex container (`flex: 1 1 auto`, `min-width: 0`, `overflow-x: auto`, thin scrollbar) holding the element and tool buttons; the info spans and the speed and Clear controls keep their places. No `data-tip` tooltip inside it: the scroller would clip it.
+**Toolbar (B9).** `#tool-buttons` becomes a flex container (`flex: 1 1 auto`, `min-width: 0`, `overflow-x: auto`, thin scrollbar) holding the element and tool buttons; the info spans and the speed and Clear controls keep their places. No `data-tip` tooltip inside it: the scroller would clip it. Below 1,200 px the grid size and particle count (`.narrow-hide`) disappear, because with them the scroller shrinks to nothing at 800 px and pushes Clear off the window.
 
 **Heat speed.** If the gate finds heat too slow, the lever is extra conduction-only dispatches per superstep (reading `kind` and `temp` only); each adds the spread of one CA dispatch, and its cost is measured in M5.6 before it is offered (the bench's `maxPasses` count grows with them).
 
@@ -273,8 +273,8 @@ Needs you: nothing (the playtest is M5.5's gate).
 - [x] M5.5a Heat and Cool tools: `TOOLS`, `SimulationInput.heating`, the brush, `replacing` off for tools; AC16 tests. Verify: lint, typecheck, `npm test`.
 - [x] M5.5b Display: heat view, legend, glow, `HEAT_RAMP`; AC17 and AC19 render tests. Verify: lint, typecheck, `npm test`, build.
 - [x] M5.5c Readout: `probe`, `readProbe`, the info span; AC18 probe test. Verify: lint, typecheck, `npm test`.
-- [ ] M5.5d Toolbar scroll (AC20).
-- [ ] M5.5e Browser check per Design, then the gate.
+- [x] M5.5d Toolbar scroll (AC20).
+- [ ] M5.5e Browser check per Design, then the gate. Browser check done (1,280 px: H key and button toggle the heat view and legend, Ctrl+H ignored; readout refreshes about 9.5 times a second, shows the label alone over a wall and clears off the grid; toolbar scrolls; no console error but a missing favicon); the user's playtest remains.
 
 Visible after: Heat and Cool tools, a heat view (button or H) with a legend, the element and temperature under the pointer in the toolbar, and hot things glowing; on a narrow window the toolbar's buttons scroll.
 Needs you: the playtest gate (steps in the item's report): melt metal with the Heat tool, pour lava into water, watch heat cross the metal and the stone bar of `?scene=heatBars` in the heat view, and say whether heat moves fast enough and whether the heat view reads well.
