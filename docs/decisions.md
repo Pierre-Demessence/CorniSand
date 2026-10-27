@@ -8,7 +8,7 @@ Rejected: `THREE.WebGPURenderer` (experimental, and it hides the compute API the
 
 ## Per-cell fields in separate buffers, updated in place
 
-Each per-cell field (`kind` with the element and variant, `life`, `velocity`, `remainder`, and later temperature…) is one 32-bit word per cell in its own storage buffer, declared once in `src/cell-fields.ts`; the buffers, bind groups and WGSL accessors are generated from that list. A buffer's size limit applies to one field, not to the sum, so the grid size does not shrink as fields are added, and a pass can later bind only the fields it uses (today every pass binds every field). A storage texture limits a cell to one texel format; buffers are read by index in every shader.
+Each per-cell field (`kind` with the element and variant, `life`, `velocity`, `remainder` and `temp`, and later `ctype`…) is one 32-bit word per cell in its own storage buffer, declared once in `src/cell-fields.ts`; the buffers, bind groups and WGSL accessors are generated from that list. A buffer's size limit applies to one field, not to the sum, so the grid size does not shrink as fields are added, and a pass can later bind only the fields it uses (today every pass binds every field). A storage texture limits a cell to one texel format; buffers are read by index in every shader.
 
 The CA updates the buffers in place: a Margolus thread reads and writes only the cells of its own 2×2 block, so threads never race, no second copy of the world is needed (half the memory) and a block that did not change writes nothing.
 
@@ -24,7 +24,7 @@ Rejected: per-cell rules where each cell picks a target (conflicts between threa
 
 Every cell carries a velocity, integrated inside the Margolus block at up to 1 cell per dispatch. A cell faster than `launchSpeed` (1.5 cells/dispatch) leaves the grid and flies as a free particle (a flyer) that walks the cells it crosses and lands back in the grid when it hits something or slows down. Slots, claims and landing order come from prefix sums and claim keys, so reruns are bit-identical. Measured on the RTX 4080 at 2560×1340 (M4.1, `git log --all -- docs/plans/m4-element-engine.md`): blast debris flies 237 cells against 37 when every cell stays in the grid, for 0.13 ms more per frame at rest and 0.06 ms more with 230k flyers; piles stand at the same 44°; no flyer failed to land.
 
-Consequence: a flyer is outside the grid while it flies, so anything that acts on grid cells (a blast, pressure, heat, reactions) misses it unless it also acts on the flyer list. Only the brush's erase and replace do; the rest is backlog I13.
+Consequence: a flyer is outside the grid while it flies, so anything that acts on grid cells (a blast, pressure, heat, reactions) misses it unless it also acts on the flyer list. Only the brush's erase and replace do; pressure and explosions are backlog I13. Heat and phase changes do not need to: a flyer carries its temperature with the rest of its cell, does not exchange heat or change phase in flight, and reacts once it lands, a few dozen supersteps later at most.
 
 Rejected:
 
@@ -38,6 +38,18 @@ Water and oil are cells of the Margolus CA. A liquid falls into an empty cell, a
 The liquids before this were FLIP particles with a global pressure solve (a velocity grid, multigrid-preconditioned conjugate gradients, particles ranked back into cells). They levelled connected vessels and splashed, and cost 49 ms of GPU time per 1x frame at 2560×1340 with a quarter of the tank water, three times the whole 16.7 ms frame. The measurements and the code are in `git log --all -- docs/plans/physics-foundation.md` and `git log --all -- src/fluid.ts`.
 
 Rejected: keeping FLIP as a "realistic liquids" setting, off by default. Every per-cell field of a liquid (temperature, `ctype`, `life`, `tmp`…) would also have to live on its particles and be written back by the rasterization, every reaction that creates, removes or changes a liquid cell would need a reconcile pass, and every liquid behavior would be tested in both modes, for a mode that cannot run at full size. The realistic liquids may continue as a separate project (backlog I11).
+
+## Heat moves by pairwise exchanges inside the Margolus block
+
+Heat conduction is phase 7 of the CA dispatch: the four cells of a block exchange heat in four pairs, rows then columns at one offset and columns then rows at the other. Each exchange moves both cells toward their capacity-weighted mean, so it conserves heat exactly (up to float rounding) and is stable for any conductivity from 0 to 1, and it reads and writes only the block's cells, so it keeps the CA's race-free in-place update (`tests/block-locality.test.ts` guards that). Over a superstep every cell exchanges with each of its four neighbors. Measured cost on the RTX 4080 at 2560×1340: 0.06 to 0.52 ms more per 1x frame than before heat on the engine's four scenes, 1.11 ms for a screen where everything conducts and changes phase (`docs/powder-toy.md`, "Frame budget").
+
+Rejected: a separate stencil pass over the grid. Reading the four neighbors of every cell needs a second temperature buffer (or a red-black order of two half passes, which breaks per-step energy conservation), plus an extra pass over every cell, awake or not.
+
+## Latent heat is stored past the threshold
+
+A cell's stored temperature may run past its element's threshold while the cell takes in or gives out the latent heat of the change; the temperature it conducts and shows is the stored one clamped to the thresholds, and the cell changes element only when the stored value has passed the threshold by the whole latent width (latent heat over heat capacity). The new element starts at the threshold plus the overshoot scaled by the two capacities, so a change creates and destroys no energy. Melting and boiling therefore take time, a surface between two phases does not flicker, and the total heat stays constant across every change (`docs/simulation.md`, "Phase changes").
+
+Rejected: instant transitions with a gap between the two thresholds (a hysteresis band): they flicker, or they create or destroy the energy of the change.
 
 ## One cell per CSS pixel, grid fixed at load
 

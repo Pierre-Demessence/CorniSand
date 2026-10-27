@@ -1,6 +1,6 @@
 # Simulation
 
-How a frame turns into particle movement. Code: `src/simulation.ts`, `src/elements.ts`, `src/element-table.ts`, `src/cell-fields.ts`, `src/cell-field-buffers.ts`, `src/shaders/cell.wgsl.ts`, `src/shaders/elements.wgsl.ts`, `src/shaders/ca.wgsl.ts`, `src/shaders/brush.wgsl.ts`, `src/movement.ts`, `src/flyers.ts`, `src/shaders/flyers.wgsl.ts`, `src/passes.ts`, `src/heat.ts`.
+How a frame turns into particle movement. Code: `src/simulation.ts`, `src/elements.ts`, `src/element-table.ts`, `src/cell-fields.ts`, `src/cell-field-buffers.ts`, `src/shaders/cell.wgsl.ts`, `src/shaders/elements.wgsl.ts`, `src/shaders/ca.wgsl.ts`, `src/shaders/brush.wgsl.ts`, `src/movement.ts`, `src/flyers.ts`, `src/shaders/flyers.wgsl.ts`, `src/passes.ts`, `src/heat.ts`, `src/shaders/heat.wgsl.ts`, `src/display.ts`, `src/toolbar.ts`.
 
 ## Frame pipeline
 
@@ -146,6 +146,20 @@ Every slot comes from a prefix sum in a fixed order and every conflict from the 
 ## Brush
 
 Painting writes the selected element into empty cells within the brush radius of the segment from the previous frame's pointer position to the current one (or into any non-wall cell when Shift is held); erasing empties every cell in range. The pass runs once per frame before the CA steps, so no block ever sees a half-painted state. The radius is in cells, whatever the grid scale. The painted variant comes from the cell coordinates and a per-frame seed, the painted life from the element's `life.start` (0 without one), and the painted temperature from the element's `temperature`; a replaced cell's temperature goes with the rest of it.
+
+### Heat and Cool tools
+
+With the Heat or Cool tool selected, the same brush stroke adds or takes `HEAT_TOOL_RATE` (17 °C, about 1,000 °C a second) per frame from the stored temperature of every cell that holds heat inside it, kept within −273.15 to 9,999 °C (`SimulationInput.heating`, word 9 of the brush uniform). Empty cells, walls and flyers are untouched; the right button still erases. A cell pushed past a threshold changes element on the next dispatch: it holds heat, so its block is never skipped.
+
+## Seeing heat
+
+Three views of the same `temp` words (`src/heat.ts`, `src/shaders/heat.wgsl.ts`, `src/shaders/display.wgsl.ts`):
+
+- **Glow** (normal view): a cell that holds heat and is hotter than 525 °C adds a glow color to its own, dull red at 525 °C, orange at 1,000 °C, yellow-white from 1,600 °C, at a weight that grows to full at 2,000 °C. Adding never darkens a light base color. An element with its own `graphics` function (fire) draws itself and gets no glow.
+- **Heat view** (the "Heat view" button, or H; Ctrl, Meta and Alt ignore it): each cell that holds heat is drawn in the color of its temperature (`cellTemp`) from `HEAT_RAMP`, empty space in the background and walls at 30% of their color. Brightness rises with temperature at every step of the ramp, from dark blue at −50 °C through purple (20 °C), red (300 °C), orange (800 °C) and yellow (1,500 °C) to near white at 2,000 °C, so the temperature order never depends on hue alone. A legend above the toolbar labels −50, 100, 500, 1,000 and 2,000 °C.
+- **Readout**: the toolbar shows the element and the whole-degree temperature of the cell under the pointer, or the element alone for a cell that holds no heat. `Simulation.probe` copies that cell's `kind` and `temp` words into a staging buffer at the end of the frame's encoder (no extra submit), and `main.ts` reads it about every 100 ms.
+
+A flyer is drawn over an empty cell from its `kind` word alone, so a flying cell has no glow and takes its element color in the heat view until it lands (backlog I17).
 
 ## Boundaries
 

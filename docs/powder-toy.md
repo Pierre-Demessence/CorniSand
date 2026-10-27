@@ -23,8 +23,8 @@ The GPU updates millions of cells at once, so a rule may only change cells it ow
 | Per-cell state (56 B) | Struct-of-arrays buffers (type, ctype, life, tmp…, temperature, velocity), so a pass reads only the fields it uses; `docs/decisions.md` already puts new per-cell data in separate buffers | Easy, but each field read costs bandwidth |
 | Powders and liquids falling, spreading, density swaps | Margolus CA rules driven by `Falldown` and `Weight`, as today (`docs/simulation.md`). Local rules cannot level connected vessels; TPT has the same limit and its water equalisation option works around it | Easy |
 | Movement by velocity (several pixels per step) | A velocity per cell moves a cell inside its block, and a cell faster than one cell per step leaves the grid as a free particle and lands on contact (`docs/decisions.md`, "Cells move by velocity; fast cells fly as particles") | Medium |
-| Heat conduction | One pass per step: each cell exchanges with its neighbors by `HeatConduct` (explicit diffusion, stable below 0.25 of the neighbor difference per step) | Easy |
-| Temperature and pressure transitions | Per-cell check against the table after the heat and air passes | Easy |
+| Heat conduction | Pairwise exchanges between the cells of a Margolus block, inside the CA dispatch (phase 7), not a pass of its own: no second temperature buffer, no extra pass over the grid, and each exchange conserves heat exactly and is stable for any conductivity (`docs/simulation.md`, "Heat"; `docs/decisions.md`) | Easy |
+| Temperature and pressure transitions | Per-cell check against the table. Temperature transitions are phase 8 of the CA dispatch, with latent heat kept in the stored temperature; pressure transitions come with the air (M6) | Easy |
 | Air: pressure, velocity, ambient heat | TPT's air update is explicit and local (velocity from the pressure gradient, pressure from the velocity divergence, advection, loss), not a global solve: a few passes over the air grid. Particles feed pressure and heat into it by a gather (each air cell reads its fixed block of pixels), so no atomics | Easy |
 | Particles pushed by air | Per-cell read of the air velocity (`Advection`, `AirDrag`), feeding the movement above | Easy once movement exists |
 | Electricity (sparks) | Local: a spark spreads to adjacent conductors with `life` counters. Instant conductors (TPT's `INST`) cross a whole wire in one step: on the GPU, a flood fill by repeated passes or a connected-component labeling | Medium for instant conduction |
@@ -39,7 +39,7 @@ The GPU updates millions of cells at once, so a rule may only change cells it ow
 
 60 fps leaves 16.7 ms a frame. Keep about 12 ms of GPU time for the simulation; the rest goes to drawing, the browser's compositing and spikes.
 
-The element engine (M4) is held to 4 ms of the 12, which leaves 8 ms for heat, air, electricity, gravity and light. Heat (M5) is held to 1 ms of those 8, per 1x frame, on top of the engine.
+The element engine (M4) is held to 4 ms of the 12, which leaves 8 ms for heat, air, electricity, gravity and light. Heat is held to 1 ms of those 8, per 1x frame, on top of the engine.
 
 **Measured** (RTX 4080, 2560×1340 = 3.4M cells, `npm run bench`: GPU timestamp queries, frames submitted back to back after a 1 s burn-in, median of 60 frames; the GPU must be otherwise idle, since a game or a live wallpaper made timings 3 to 8 times too high). The scenes: `tank` (a sand block over a quarter-full tank of water), `mix75` (75% of the cells a random mix of sand, water, oil and smoke, so everything keeps moving), `full100` (every cell inside a wall frame holds such a mix, so density swaps never stop), `blast` (five blasts under a sand layer, 46,000 flyers launched in the first 1x frame) and `thermal` (every cell inside a wall frame a random mix of metal, stone, water, ice, lava and sand, the top half at 1,300 °C and the bottom half at −20 °C, so heat flows and phases change throughout). The bench runs the same code as the game, with the cells moving by velocity and the flyer passes.
 
@@ -53,7 +53,7 @@ The element engine (M4) is held to 4 ms of the 12, which leaves 8 ms for heat, a
 
 - Heat's share at 1x, from the same-day idle baseline taken before heat (`tank` 0.39, `mix75` 1.05, `full100` 0.98, `blast` 0.33 ms): +0.07, +0.52, +0.40 and +0.06 ms, inside the 1 ms. `thermal`, where every cell conducts and changes phase, costs 1.11 ms, 0.13 ms over the baseline's `full100`. The whole increase is in the two CA dispatches (the fifth field's loads, conduction, phase changes); the flyer passes did not change. These numbers were taken with Chrome using the GPU at about 30% (the idle baseline at 1 to 4%), so they are upper bounds: a second run agreed within 0.07 ms.
 - Time grows about linearly with the speed. A 1x frame is 8 CA dispatches plus 4 rounds of flyer passes: the CA dispatches take most of it, the flyer launch scan 0.06 to 0.08 ms.
-- With the 16-byte cells of M4 (four fields), a dispatch over a busy screen costs about 0.12 ms, three times the 0.04 ms of the first CA, which had 4-byte cells and no velocity (M4.2: 0.33 ms per 1x frame on `tank` and `mix75`). That 0.04 ms per full-grid pass over 4-byte cells, close to the card's memory bandwidth (inferred), is the anchor of the estimates below for passes that only move data.
+- A cell is 20 bytes (five fields). Each field adds its loads and stores to every awake block: the fifth, the temperature, added about a quarter to the CA's time (0.2 ms per 1x frame on `mix75` and `full100`). A dispatch over a busy screen with four fields (16 bytes) cost about 0.12 ms, three times the 0.04 ms of a CA with 4-byte cells and no velocity. That 0.04 ms per full-grid pass over 4-byte cells, close to the card's memory bandwidth (inferred), is the anchor of the estimates below for passes that only move data.
 - Two changes made the engine fit, both without changing a single cell: a thread skips a block of four inert cells (empty or solid, no lifetime, no rule) after reading only their `kind` words, which cuts `tank` and `blast` by 40 to 50%; and the CA keeps its block in four variables instead of an array indexed by a run-time slot, which put the array in slow per-thread memory and made `mix75` and `full100` three times slower (`docs/simulation.md`, "Margolus neighborhood").
 - Things that made no difference: reading the table through a `switch` instead of the uniform array, and workgroups of 32×2 or 16×4 instead of 8×8.
 - Compiling the CA's pipelines takes about 0.5 s in Node the first time (backlog D17).
@@ -63,7 +63,7 @@ The element engine (M4) is held to 4 ms of the 12, which leaves 8 ms for heat, a
 
 | System | 3.4M cells on the RTX 4080 | Notes |
 | --- | --- | --- |
-| TPT-parity base (movement, element updates, transitions, heat) | 3–8 ms | The engine above costs about 1 ms at 16 bytes per cell; TPT's cell is 56 bytes, 3.5× the data, with far more logic |
+| TPT-parity base (movement, element updates, transitions, heat) | 3–8 ms | The engine above, heat included, costs about 1.4–1.6 ms on a busy screen at 20 bytes per cell; TPT's cell is 56 bytes, 2.8× the data, with far more logic |
 | Air at TPT's 4×4 resolution | under 0.1 ms | |
 | Air at 2×2 | about 0.2 ms | |
 | Air at full resolution | about 0.6 ms | |
