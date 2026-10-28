@@ -59,6 +59,7 @@ The GPU suites in `tests/` run the real WGSL through Dawn's Node bindings (`webg
 - `docs/roadmap.md` — milestones (M7–M10: The Powder Toy on the GPU) and what defines each as done.
 - `docs/backlog.md` — known bugs, tech debt and ideas, one line each.
 - `docs/powder-toy.md` — what The Powder Toy simulates, how each part maps to the GPU, the frame budget, and what goes beyond it.
+- `docs/research/` — findings and options awaiting a decision; each is deleted once decided, its decisions moved to `docs/decisions.md` and its work to a plan or the backlog.
 - `docs/plans/` — plans in progress only; deleted when the feature ships.
 
 ## Invariants

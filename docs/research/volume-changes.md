@@ -1,0 +1,72 @@
+# Volume changes
+
+Research for backlog I22, not a plan: nothing here is decided. A cell is one unit of matter in every state (the comment above `ELEMENTS` in `src/elements.ts`; `docs/simulation.md`, "Heat"), so nothing changes volume: mercury does not swell when heated, water does not grow when it freezes, and a boiling water cell becomes one steam cell, a burst of air pressure standing in for its expansion (`Transition.burst`, the WATER row). This doc gathers how matter could change volume, what it costs in this engine, and what to decide. Decide once M8.1 adds MERCURY and GLASS, on a thermometer scene.
+
+## Sizes
+
+Physical data, and what it means at one cell per 1.36 mm (`docs/decisions.md`, "The grid has a physical scale from its gravity"):
+
+| Change | Physical size | In cells |
+| --- | --- | --- |
+| A liquid heated | Volume +1.81×10⁻⁴ /K for mercury, 2.07×10⁻⁴ for water (at 20 °C); mercury +7% over its liquid range, −39 to 357 °C | A 400-cell mercury bulb heated by 100 °C gains 7 cells: a 7-cell rise in a one-cell-wide tube, nothing visible on a pool |
+| A solid heated | Three times its linear coefficient: about 3.6×10⁻⁵ /K for steel, 6.9×10⁻⁵ for aluminium | Nothing visible |
+| Water freezing | +9%: ice 917 kg/m³ against water's 1,000 (the ICE and WATER rows); most other materials shrink slightly as they freeze | 11 water cells make 12 ice cells |
+| Water boiling | ×1,700: steam 0.59 kg/m³ at 100 °C (the STEAM row) | A 10×10 puddle makes 170,000 steam cells, 5% of a 2560×1340 grid; a 50×50 pool more than the whole grid |
+
+Mercury is not special: most liquids expand as much per degree or more, and thermometers use it because it stays liquid over a wide range and is easy to see. TPT's mercury doubles its volume between 20 °C and about 300 °C (the amount a particle holds falls as the inverse of the absolute temperature, so its volume grows like a gas's), where real mercury grows about 5%.
+
+## Why a fixed ratio of cells fails
+
+Turning a water cell into a fixed number of ice cells, and back, does not conserve matter. With 1 water = 2 ice, a lone ice cell is half a water cell, but it can only melt into one water cell (matter created) or none (matter destroyed): freeze that water cell into two ice cells, separate them, melt each, and the matter doubles with every round. Any ratio but 1:1 has this, the real 11:12 included. What a phase change conserves must be a quantity the cell carries, not a count of cells.
+
+## The mechanism: a conserved amount per cell
+
+TPT's mercury works this way (`src/simulation/elements/MERC.cpp` on GitHub, read for the mechanism only, through a summary of the file, as `docs/decisions.md` "No code or data tables from The Powder Toy" allows): each particle carries a hidden count of mercury units; the count a particle may hold falls as its temperature rises; a particle over its limit creates mercury particles in its empty neighbors and gives each a unit; one under its limit absorbs a neighboring mercury particle whose count fits; neighbors even out their counts by random exchanges. The total count never changes.
+
+For CorniSand, a proposed design, reasoned from the rules and not prototyped:
+
+- A cell stores an integer amount `m`, in mass units shared by an element and the elements it turns into by a phase change (water, ice and steam count the same units). The capacity `c(e, T)`, the amount of a full cell of element `e` at temperature `T` from its density, is a real number used only as a threshold: rounding decides when a cell appears or empties, never the total.
+- Per dispatch, the cells of one element (and one `ctype`, once M8.1d gives LAVA one) in a 2×2 block pack their amounts: the block's total is poured back bottom row first, each cell in turn filled to its capacity, so the block's excess or shortfall ends in the last cell poured, in the top row. Excess goes into an empty cell of the block, which becomes the same element at the same temperature: a cell appears. With no empty cell, the top cells hold it up to the most a cell can hold (255 units, see Storage) and the rest stays in the cells below. A cell left with nothing becomes empty, with zero motion as the CA's skip requires (`retype`): a cell disappears. The block grid alternates its offset, so one dispatch's top row is the next one's bottom row, and excess and shortfall both climb about a cell per dispatch to the surface. A gas, which rises, would pour top row first. Packing reads and writes only the block, so it fits the in-place CA (`AGENTS.md`, "Invariants"), and integer amounts keep reruns bit-identical. (Evening out the fill, as TPT does, would undo the packing: twelve cells 92% full could never become eleven full cells and an empty one.)
+- A phase change keeps `m`; only the capacity changes. With 1 water = 2 ice: a water cell (`m` = 2) freezes into an ice cell twice full, whose excess fills a free cell of its block: two ice cells of 1. One of them melts into a water cell of 1, half full, which stays one cell, and freezes back into one full ice cell; two such half cells in one block pack into one full cell and an empty one. The total stays 2. With the real ratio, 11 water cells freeze into ice cells 9% over capacity, whose excess climbs and appears as a 12th cell; thawed, they are 12 water cells 92% full, whose shortfall climbs until the top cell empties, leaving 11.
+- A body with no free cell keeps its excess, spread from the top down at up to 255 units a cell, about 72 over an ice cell's capacity against the 17 that freezing adds: the matter is kept and nothing shows, so ice frozen in a sealed box does not crack it.
+- Solids never move, so the excess of a pond freezing from the top appears as a crust of ice cells above its old surface. Ice that forms under water keeps its excess until it reaches free space, as packing stays within one element.
+
+## What it costs in this engine
+
+- **Heat per unit of matter.** A cell's heat capacity is its element's today (`elHeatCapacity(cellType(a))` in `exchangeHeat`, `src/shaders/heat.wgsl.ts`; the same in `airExchangeWGSL`, `src/shaders/air.wgsl.ts`), right only while a cell is one unit of matter: a new cell that appears at its parent's temperature would add a whole cell's heat from nothing. The table's per-cell values become per unit of matter: a cell's capacity is its row's capacity per unit times `m`, and a phase pair's latent heat is one value per unit, so ICE's latent heat per full cell is about 306 MJ/m³ (water's 334 at ice's density) where today both rows of the pair hold 334 per cell. Every row is re-derived, not only the gas rows, whose capacity already assumes a water cell's mass (STEAM). The offset by which a stored temperature runs past a threshold (latent heat over capacity, `docs/decisions.md` "Latent heat is stored past the threshold") is then a property of the material, not of the amount. Matter moving between cells carries its heat: the pour is a sequence of transfers from one cell to another, each receiving cell taking the amount-weighted mean of its stored temperature and the incoming matter's, the latent zone included, and a cell whose amount does not change keeps its temperature (a block-wide mean would conduct heat instantly inside every block). The consumers: `exchangeHeat`, `airExchangeWGSL`, the capacity ratios of `transitionCell` (`src/shaders/ca.wgsl.ts`, a cell's temperature after a phase change), and every heat total in the tests: `heatContent` and `latentOffsets` in `tests/metrics.ts`, `tests/elements.test.ts`, the sealed boxes of `tests/heat.test.ts` and `tests/air-heat.test.ts`.
+- **Storage.** `kind` bits 16–31 are reserved (`src/cell-fields.ts`), and M8.1d puts `ctype` in bits 16–23 (backlog I15, D32), which leaves 8 bits: 256 levels, 0.5% each with a full cell at about 200, coarse but enough (ice is 17 levels below water; mercury's capacity moves about 4 levels per 100 °C), and a cell can hold up to about 1.3 full cells. A sixth field instead needs D32 first: the CA is at the 8 storage buffers per stage the game requests. `withType` (`src/shaders/cell.wgsl.ts`) rewrites the whole `kind` word, and `retype` (`src/shaders/ca.wgsl.ts`) goes through it; M8.1d makes them clear `ctype`. With an amount they keep it through a phase change and reset it through any other retype (burning). `makeCell` starts it at 0, so the brush and the scenes set a full amount. Flyers carry `kind`, and with it the amount.
+- **A pack phase in the CA.** Every row that changes volume holds heat, so `elementInert` already wakes its blocks; `tests/block-locality.test.ts` must put random amounts in the `kind` words it generates.
+- **Frame budget** (inferred). The amount lives in `kind`, so it adds no field to load (D31's cost per field does not apply), but the pack phase runs in every awake block that holds a volume-changing element and needs each cell's capacity at its temperature; `npm run bench` decides.
+- **Behavior** (inferred, not measured). The visible volume is rounded to whole cells: a lone partial cell shows as a whole one, so scattered droplets look larger than they hold until they meet and pack. A cell can appear and vanish at a surface when the total sits near a whole number of cells. A shortfall that empties a cell inside the bulk leaves a bubble, which rises as the liquid falls into it (in a solid, a void). A partial cell sinks and floats as a full one (its density is the row's). Whether packing always settles, in both directions, is the main unknown.
+
+Size: a large plan (estimate). It starts with a prototype of the pack rule, as M8.8e's convection does, which must pass two bars: a pond frozen and thawed returns to its level, and a mercury bulb heated and cooled returns to its height, within a cell. Most of the rest is the heat bookkeeping and its tests.
+
+## Steam
+
+An expansion of 1,700× cannot be cells. The same mechanism could give steam the capacity of a water cell over a capped factor `k` (4 to 16): a boiling water cell becomes a steam cell holding `k` steam cells' worth, whose excess fills the free cells around it over the next dispatches, the burst standing in for the rest. Each steam cell then holds 1/`k` of the latent heat, and `k` cells touch more air: one of the fixes backlog I25 lists for steam that hardly condenses in open air. Clouds of steam would be `k` times larger than today. STEAM's capacity and conductivity are derived from a steam cell holding a water cell's mass (its row comment), so they change with `k`.
+
+## Options
+
+- **A. One unit of matter per cell (today).** No cost; no thermometer, no ice growth, boiling stays a burst.
+- **B. Volume by phase.** A capacity per row, constant with temperature: water grows as it freezes and shrinks back as it thaws, other pairs change by the ratio of their densities, and steam takes `k` cells if wanted. The heat and storage work is the whole of C's.
+- **C. Phase and temperature.** B with each cell's capacity from its row's density at its temperature (`densityAt`, M8.8e's density by temperature, which drives convection). Visible in a thermometer, hardly in a pool.
+
+B and C take volume from the rows' densities, which are reference values: METAL's 7,870 kg/m³ is its density at 20 °C and MOLTEN_METAL's 7,000 its melt's, so melting metal would swell 12% at once, part of it the solid's own expansion as it heats, which a solid row's single density leaves out; STONE and LAVA share 2,700, so lava would not shrink as it sets. Each pair's densities would be taken at its threshold.
+
+TPT's exaggerated mercury is not an option: "Real physics first" (`docs/decisions.md`) rejects copying TPT's feel where it contradicts physics.
+
+## Open questions
+
+- A, B or C: is a 7-cell rise in a thermometer worth a large plan? Judge on a thermometer scene (a mercury bulb under a one-cell-wide glass tube, heated) once M8.1 adds MERCURY and GLASS.
+- Liquids and solids only, or gases too: `densityAt` gives a gas the ideal-gas law, so C taken literally makes smoke at 1,000 °C fill 4.3 times the cells it fills at 20 °C (roadmap M8.3 lists gases that expand when heated).
+- Steam's `k`, if any (I25).
+- Which transitions carry the amount: a phase change of one substance does, burning does not; sand melting into glass would lose a third of its volume if it does (SAND's 1,600 kg/m³ counts the air between its grains, glass is about 2,500).
+- The amount in `kind`'s last 8 bits, or a sixth field after D32.
+- Whether a cell kept over full in a sealed space pushes on its neighbors or cracks its container (a mechanic of its own).
+- Whether a partial cell's density follows its fill.
+
+## Sources
+
+- The Powder Toy: `src/simulation/elements/MERC.cpp` on GitHub (master), read for the mechanism through a summary of the raw file; the wiki's [Liquids page](https://powdertoy.co.uk/Wiki/W/Liquids.html), "Volume changes with temperature", seen through a search result (the wiki is behind bot protection, `docs/powder-toy.md`).
+- Expansion coefficients at 20 °C: Wikipedia, "Thermal expansion", table of coefficients (mercury 181 and water 207 ×10⁻⁶ /K volumetric; steel 11 to 13 and aluminium 23.1 ×10⁻⁶ /K linear).
+- Steam's volume: about 1,600 times its water's at 100 °C and 1 atm, saturated water at 958 kg/m³ and saturated steam at 0.597 (Wikipedia, ["Water (data page)"](https://en.wikipedia.org/wiki/Water_%28data_page%29), steam table); the STEAM and WATER rows' densities give 1,700.
