@@ -1,4 +1,4 @@
-import { FIELD_BYTES } from './cell-fields';
+import { OVERLAY_BYTES } from './cell-fields';
 
 export interface Grid {
   width: number;
@@ -7,10 +7,11 @@ export interface Grid {
   scale: number;
 }
 
-// Largest cell count the cell field buffers can hold on this device (the limits apply to each buffer on its own).
+// Largest cell count the cell field buffers and the flyer overlay (the widest, `OVERLAY_BYTES` per cell) can hold on this
+// device (the limits apply to each buffer on its own).
 export function maxCellsForDevice(device: GPUDevice): number {
   const { maxStorageBufferBindingSize, maxBufferSize } = device.limits;
-  return Math.floor(Math.min(maxStorageBufferBindingSize, maxBufferSize) / FIELD_BYTES);
+  return Math.floor(Math.min(maxStorageBufferBindingSize, maxBufferSize) / OVERLAY_BYTES);
 }
 
 // One cell per CSS pixel, or the smallest integer cells-per-pixel scale that fits maxCells.

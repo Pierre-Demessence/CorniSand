@@ -78,6 +78,22 @@ export const GLOW_RAMP: readonly RampKnot[] = [
   { temp: 1600, color: [1.0, 0.90, 0.60] },
 ];
 
+/**
+ * The temperature (°C) at which a cell that glows radiates the light of its `GLOW_RAMP` color at full scale (1 in linear
+ * light); hotter ones are brighter than the ramp's color, colder ones dimmer, down to nothing at `GLOW_START`.
+ */
+export const EMISSION_REFERENCE = 1000;
+
+/**
+ * How much light a cell at `temp` (°C) radiates, as a multiple of what it radiates at `EMISSION_REFERENCE`: the radiated
+ * power grows as the fourth power of the absolute temperature (Stefan-Boltzmann), counted from `GLOW_START`, where it is
+ * 0. The finished look's halo is made of this light. Mirrors `blackbodyShare` in `src/shaders/light.wgsl.ts`.
+ */
+export function emissionShare(temp: number): number {
+  const fourth = (celsius: number): number => (celsius - ABSOLUTE_ZERO) ** 4;
+  return Math.max(0, (fourth(temp) - fourth(GLOW_START)) / (fourth(EMISSION_REFERENCE) - fourth(GLOW_START)));
+}
+
 /** A CSS `linear-gradient` over the legend's range (`HEAT_LEGEND_TEMPS`' first to last) in the ramp's colors. */
 export function heatRampCSS(ramp: readonly RampKnot[] = HEAT_RAMP): string {
   const first = ramp[0].temp;

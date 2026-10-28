@@ -1,6 +1,5 @@
 import { AIR, AIR_VIEW, PRESSURE_RAMP, type AirShape } from '../air';
-import { DISPLAY_FIELDS } from '../display-table';
-import { MAX_ELEMENTS, type ElementDef } from '../elements';
+import type { ElementDef } from '../elements';
 import { ROOM_TEMP } from '../heat';
 import { LOOK, WALL_LEVEL, WALL_RANGE } from '../look';
 import { wgslFloat } from '../movement';
@@ -8,6 +7,7 @@ import { airSamplersWGSL } from './air.wgsl';
 import { cellWGSL } from './cell.wgsl';
 import { elementsWGSL } from './elements.wgsl';
 import { heatDisplayWGSL, heatWGSL, rampWGSL } from './heat.wgsl';
+import { displayPropsWGSL, graphicsWGSL, lightWGSL } from './light.wgsl';
 
 // What the display reads of the air: `airCentersAt` (pressure and temperature) and `airWindAt` (velocity, grid cells
 // per dispatch) at a point of the grid, in grid cells. The air state is bound at group 0, binding 1; without air both
@@ -140,18 +140,6 @@ fn grainColor(c: Cell, base: vec3f, cellPos: vec2f) -> vec3f {
   return base * (1.0 + strength * cellShade(c) * vec3f(1.15, 1.0, 0.85));
 }
 
-// The finished look computes in linear light and encodes at the end (the canvas is not an sRGB format). A table color
-// is a display value, so the round trip leaves it as it was.
-fn srgbToLinear(c: vec3f) -> vec3f {
-  let v = max(c, vec3f(0.0));
-  return select(pow((v + 0.055) / 1.055, vec3f(2.4)), v / 12.92, v <= vec3f(0.04045));
-}
-
-fn linearToSrgb(c: vec3f) -> vec3f {
-  let v = clamp(c, vec3f(0.0), vec3f(1.0));
-  return select(1.055 * pow(v, vec3f(1.0 / 2.4)) - 0.055, v * 12.92, v <= vec3f(0.0031308));
-}
-
 // Light above 1 turns white by how far over it is (after Khronos PBR Neutral, whose compression knee at 0.76 is left out:
 // it would change the table colors that reach 1, such as fire's red). Up to 1 it changes nothing.
 const DESATURATION: f32 = 0.5;
@@ -165,9 +153,7 @@ fn toneMap(c: vec3f) -> vec3f {
 
 // `graphics` maps a graphics name (`ElementDef.graphics`) to its WGSL color function.
 export const displayWGSL = (elements: readonly ElementDef[], graphics: Readonly<Record<string, string>>, air?: AirShape): string => {
-  const styled = elements.filter((e) => e.graphics !== undefined);
-  for (const e of styled) if (!(e.graphics! in graphics)) throw new Error(`element ${e.key}: unknown graphics "${e.graphics}"`);
-  const graphicsNames = [...new Set(styled.map((e) => e.graphics!))];
+  const { styled, source: graphicsSource } = graphicsWGSL(elements, graphics);
 
   return /* wgsl */`
 ${cellWGSL('read', elements)}
@@ -175,7 +161,7 @@ ${elementsWGSL}
 ${heatWGSL}
 ${heatDisplayWGSL}
 ${rampWGSL('pressureColor', PRESSURE_RAMP)}
-${graphicsNames.map((n) => graphics[n]).join('\n')}
+${graphicsSource}
 
 struct DisplayUniforms {
   simResolution: vec2f,
@@ -190,13 +176,9 @@ struct DisplayUniforms {
   // 1 for the cells look, 0 for the finished look.
   cellsLook: f32,
   wall: f32,
-  pad0: f32,
+  // The strength of the halo: 0 adds none.
+  glow: f32,
   pad1: f32,
-};
-
-// The visual properties of the elements (src/display-table.ts), one row per element ID.
-struct DisplayProps {
-${DISPLAY_FIELDS.map((f) => `  ${f.name}: f32,`).join('\n')}
 };
 
 struct VertexOutput {
@@ -224,12 +206,17 @@ fn vs_main(@builtin(vertex_index) vertexIndex: u32) -> VertexOutput {
 }
 
 @group(0) @binding(0) var<uniform> u: DisplayUniforms;
-@group(0) @binding(2) var<uniform> displayProps: array<DisplayProps, ${MAX_ELEMENTS}>;
+${displayPropsWGSL}
+// The blurred light of the glow chain (src/glow.ts, linear, world orientation).
+@group(0) @binding(3) var glowTex: texture_2d<f32>;
+@group(0) @binding(4) var glowSampler: sampler;
+${lightWGSL(styled)}
 ${lookWGSL}
 ${airDisplayWGSL(air)}
 ${windMarkWGSL}
-// The kind word of the flyer in each cell, 0 where none flies (src/shaders/flyers.wgsl.ts, overlayWGSL).
-@group(3) @binding(0) var<storage, read> flyerKinds: array<u32>;
+// The flyer in each cell, two words: its kind word (0 where none flies) and its temperature's bits (src/shaders/flyers.wgsl.ts,
+// overlayWGSL).
+@group(3) @binding(0) var<storage, read> flyerWords: array<u32>;
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4f {
@@ -240,11 +227,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {
   let cellY = min(u32(uv.y * u.simResolution.y), h - 1u);
   let idx = cellY * w + cellX;
   var cell = loadCell(idx);
-  // A flyer is drawn in the empty cell it is over; one over a filled cell (it lands there next step) is not.
-  var overFlyer = false;
+  // A flyer is drawn in the empty cell it is over, with its temperature; one over a filled cell (it lands there next step)
+  // is not.
   if (cellType(cell) == EL_EMPTY) {
-    cell.kind = flyerKinds[idx];
-    overFlyer = cellType(cell) != EL_EMPTY;
+    cell.kind = flyerWords[2u * idx];
+    cell.temp = bitcast<f32>(flyerWords[2u * idx + 1u]);
   }
   let pType = cellType(cell);
 
@@ -261,15 +248,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {
     color = heatColor(air.y) * 0.5;
   }
 
-  // A flyer's cell is empty, so its temp word means nothing: the flyer is drawn in its element's color, with no glow or
-  // heat color.
   if (pType != EL_EMPTY) {
     color = elColor(pType);
-    let holdsHeat = !overFlyer && elHoldsHeat(pType);
+    let holdsHeat = elHoldsHeat(pType);
     if (heatView) {
       if (holdsHeat) {
         color = heatColor(cellTemp(cell));
-      } else if (!overFlyer) {
+      } else {
         color *= 0.3;
       }
     } else {
@@ -302,11 +287,16 @@ ${styled.map((e) => `        case EL_${e.key}: { color = graphics_${e.graphics}(
     color = mix(color, vec3f(0.97), mark.x);
   }
 
-  // The finished look: the color in linear light, tone mapped, encoded again. The views take today's math as it is. A
-  // cell's own glow is clamped per channel first, as in the cells look, so a lone hot cell is drawn the same in both
-  // looks; only light added in linear light (the halo, M11.3) reaches the tone map above 1.
+  // The finished look: the color in linear light, the halo added, tone mapped, encoded again. The views take today's math
+  // as it is. A cell's own glow is clamped per channel first, as in the cells look, so a lone hot cell is drawn the same in
+  // both looks; only light added in linear light (the halo) reaches the tone map above 1. The halo is the blurred light of
+  // the cells that radiate (src/glow.ts), added around them: a cell that radiates is drawn by its own color alone.
   if (u.cellsLook < 0.5 && !heatView && !airView) {
-    color = linearToSrgb(toneMap(srgbToLinear(clamp(color, vec3f(0.0), vec3f(1.0)))));
+    var light = srgbToLinear(clamp(color, vec3f(0.0), vec3f(1.0)));
+    if (u.glow > 0.0 && dot(cellEmission(cell), vec3f(1.0)) <= 0.0) {
+      light += textureSampleLevel(glowTex, glowSampler, uv, 0.0).rgb * u.glow;
+    }
+    color = linearToSrgb(toneMap(light));
   }
 
   // Brush cursor

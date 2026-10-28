@@ -18,6 +18,8 @@ interface RowOptions {
 }
 
 // Renders a sim `WIDTH` columns wide, one pixel per cell, flyers included; 64 pixels are one 256-byte row, the alignment a copy needs.
+// These tests pin the cells look and the views: each cell as itself, with no halo around the ones that shine (the finished
+// look's tests are in `tests/look.test.ts`).
 async function renderSim(sim: Simulation, height: number, heatView = false, airView = false): Promise<Uint8Array> {
   const dev = device!;
   const display = new Display(dev, 'rgba8unorm', WIDTH, height, sim.fields, sim.elements, sim.flyers.overlay, { air: sim.air });
@@ -37,6 +39,7 @@ async function renderSim(sim: Simulation, height: number, heatView = false, airV
     replacing: false,
     heatView,
     airView,
+    look: 'cells',
   });
   encoder.copyTextureToBuffer({ texture: target }, { buffer: staging, bytesPerRow: WIDTH * 4 }, [WIDTH, height]);
   dev.queue.submit([encoder.finish()]);
@@ -163,13 +166,13 @@ describe.skipIf(!device)('M5.5b heat on the display', () => {
     [0.43, 0.45, 0.47].forEach((channel, c) => expect(Math.abs(pixels[3 * 4 + c] - Math.round(channel * 0.3 * 255))).toBeLessThanOrEqual(1));
   });
 
-  it('AC17: a flyer over empty space keeps its element color in both views, while a resting cell takes its heat color', async () => {
+  it('AC17: a flyer over empty space is drawn as a resting cell of its temperature, in both views (M11 AC9)', async () => {
     const height = 200;
     const sim = createSim(WIDTH, height);
     const kind = new Uint32Array(WIDTH * height);
     const temp = new Uint32Array(WIDTH * height);
     kind[190 * WIDTH + 4] = cell(T.SAND);
-    // A resting grain on the floor (row 0) at the same temperature, to tell the heat color from the element color.
+    // A resting grain on the floor (row 0) at the same temperature, to compare the flyer with.
     kind[20] = cell(T.SAND);
     tempView({ temp }).fill(1500);
     sim.load({ kind, temp });
@@ -179,15 +182,16 @@ describe.skipIf(!device)('M5.5b heat on the display', () => {
     expect(flyers, 'the grain is in the air').toHaveLength(1);
     // Row 0 of the world is the bottom of the picture.
     const at = (height - 1 - Math.floor(flyers[0].y)) * WIDTH + Math.floor(flyers[0].x);
+    const resting = (height - 1) * WIDTH + 20;
     const sand = [0.80, 0.70, 0.48].map((c) => Math.round(c * 255));
 
     for (const heatView of [false, true]) {
       const pixels = await renderSim(sim, height, heatView);
-      pixel(pixels, at).forEach((channel, c) => expect(Math.abs(channel - sand[c]), `flyer, channel ${c}, heat view ${heatView}`).toBeLessThanOrEqual(1));
+      pixel(pixels, at).forEach((channel, c) => expect(Math.abs(channel - pixel(pixels, resting)[c]), `flyer against resting, channel ${c}, heat view ${heatView}`).toBeLessThanOrEqual(1));
+      if (heatView) {
+        expect(pixel(pixels, at).some((channel, c) => Math.abs(channel - sand[c]) > 20), 'the flyer is drawn in its heat color').toBe(true);
+      }
     }
-    const rest = await renderSim(sim, height, true);
-    const resting = pixel(rest, (height - 1) * WIDTH + 20);
-    expect(resting.some((channel, c) => Math.abs(channel - sand[c]) > 20), 'the resting grain is drawn in its heat color').toBe(true);
   });
 });
 

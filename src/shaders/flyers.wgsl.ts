@@ -517,7 +517,10 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 }
 `;
 
-// The overlay: the kind word of the flyer in each cell, for the display (cleared before every frame's scatter).
+// The overlay: the kind word and the temperature (the bits of its f32) of the flyer in each cell, two words per cell, for
+// the display and the glow's coverage pass (cleared before every frame's scatter). The two words are written by the same
+// thread; two flyers over one cell may leave the kind of one and the temperature of the other for a frame, which only the
+// display sees.
 export const overlayWGSL = (elements: readonly ElementDef[], width: number, height: number, maxFlyers: number): string => /* wgsl */`
 ${flyerCommon(elements, width, height, maxFlyers)}
 ${stateWGSL(false)}
@@ -532,6 +535,10 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   if (i >= state.live) { return; }
   let fl = flyers[i];
   let p = vec2i(floor(fl.pos));
-  if (fl.status != LANDED && inBounds(p.x, p.y)) { overlay[cellIndex(p.x, p.y)] = fl.cell.kind; }
+  if (fl.status != LANDED && inBounds(p.x, p.y)) {
+    let at = 2u * cellIndex(p.x, p.y);
+    overlay[at] = fl.cell.kind;
+    overlay[at + 1u] = bitcast<u32>(fl.cell.temp);
+  }
 }
 `;

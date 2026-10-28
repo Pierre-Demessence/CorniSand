@@ -5,7 +5,7 @@ import { packHalf2 } from '../src/half';
 import { AIR_CELL_SIZES, type AirCellSize } from '../src/air';
 import type { PassTimer } from '../src/passes';
 import { Display } from '../src/display';
-import type { Look } from '../src/look';
+import { LOOK, type Look } from '../src/look';
 import { Simulation } from '../src/simulation';
 import { cell, createDevice, idleInput } from './gpu';
 import { mulberry32 } from '../src/random';
@@ -30,8 +30,9 @@ const WARMUP_FRAMES = 20;
 const MEASURED_FRAMES = 60;
 // The GPU clocks down when idle: spend this long at full load before each measurement, or it measures the clock ramp.
 const BURN_IN_MS = 1000;
-// The renderer's passes (M11 adds coverage, shadow, glow and composite; one for now), for the timestamp query count.
-const RENDER_PASSES = 4;
+// The renderer's passes, for the timestamp query count: coverage, a down and an up pass per glow level, the composite, and
+// room for the shadow pass (M11.4).
+const RENDER_PASSES = 3 + 2 * LOOK.glowLevels;
 const isRenderLabel = (label: string): boolean => label.startsWith('render:');
 
 type Fields = Partial<CellData>;

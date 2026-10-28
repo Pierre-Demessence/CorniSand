@@ -1,6 +1,6 @@
 # M11 Rendering quick wins
 
-Status: running; M11.1 and M11.2 done, next open item M11.3 (glow). Runs before M8.1, beside M8.9 (`docs/plans/m8.9-real-world-scenarios.md`): it touches only the drawing code, never a cell, a rule or a test of the simulation.
+Status: running; M11.1 to M11.3 done, next open item M11.4 (shadows). Runs before M8.1, beside M8.9 (`docs/plans/m8.9-real-world-scenarios.md`): it touches only the drawing code, never a cell, a rule or a test of the simulation.
 
 ## Goal
 
@@ -110,10 +110,18 @@ Needs you: run `npm test` (the new `tests/look.test.ts` and the display, element
 
 ### M11.3 Glow
 
-- [ ] The coverage pass (emission only), the glow chain, emission in the composite, the two-word overlay (I17); AC7 to AC9; backlog I17 deleted. Verify: lint, typecheck, `npm test`, build, bench.
+- [x] The coverage pass (emission only), the glow chain, emission in the composite, the two-word overlay (I17); AC7 to AC9; backlog I17 deleted. Verify: lint, typecheck, `npm test`, build, bench.
+
+Done in the run (not ticked, checks left to the user): `src/glow.ts` (`Glow`: the emission texture, the chain's textures and pipelines, `record` with the passes timed `render:coverage` and `render:glow`), `src/shaders/glow.wgsl.ts` (`coverageWGSL`: one thread per 4x4 cells writing the mean light of each 2x2 cells into an `rgba16float` storage texture, flyers included; `glowChainWGSL`: 13-tap downsample with the Karis average on the first, 3x3 tent upsample added by blending), `src/shaders/light.wgsl.ts` (`cellEmission`, `blackbodyShare`, the sRGB conversions moved out of the display, `graphicsWGSL`, `displayPropsWGSL`), `emissionShare` and `EMISSION_REFERENCE` in `src/heat.ts`, `glowStrength` (0.08) and `glowLevels` (4) in `LOOK`, the composite adding the halo in the finished look, the overlay with two words per cell (`kind`, `temp`) for the display and the coverage pass (I17), `OVERLAY_BYTES` in `src/cell-fields.ts`, backlog I17 deleted, `docs/simulation.md` (Seeing heat). Tests: `tests/look.test.ts` (AC3 reworked, AC7 to AC9), `tests/display.test.ts` (pinned to the cells look; the flyer test rewritten to AC9), `tests/glow.test.ts` (unit: the emission law, settings, shader limits), the bench's pass count. Lint, typecheck and build pass; the GPU tests, the bench and every visual check were not run (the GPU was busy with a game).
+
+Decided during the run: a cell that radiates keeps today's in-cell glow (clamped, as the cells look draws it) in the finished look, and the halo is not added over cells that radiate; Design's "the finished look adds the cell's own emission to its color" is not done. Why: AC3 promises a lone lava, molten metal or fire cell is drawn in its cells-look color within 1 step, and the emission law (fourth power, scaled at 1,000 °C) differs from the in-cell glow ramp. Alternative: add the cell's own emission and limit AC3 to cells that do not radiate. To change: the `cellEmission` test in `fs_main` (`src/shaders/display.wgsl.ts`).
+Decided during the run: the glow passes are not recorded when `glowStrength` is 0, and the tests for AC7 to AC9 compare the finished picture with the same scene rendered at `glowStrength` 0 rather than with a scene without the pool, the block or the grain. Why: the difference is the halo alone whatever effects later items add around the same cells (shadows, M11.4), and the dither cancels. Alternative: render the scene without the cause. To change: `withAndWithoutHalo` in `tests/look.test.ts`.
+Decided during the run: `tests/look.test.ts` AC3 draws the cells that radiate (fire, lava, molten metal) each alone, and the others side by side; `tests/display.test.ts` renders in the cells look. Why: a radiating cell's halo reaches its neighbors, which AC3's "nothing hot around it" excludes, and AC2 pins those tests to the cells look. Alternative: none that keeps both criteria.
+Decided during the run: `maxCellsForDevice` divides the buffer limit by `OVERLAY_BYTES` (8) instead of `FIELD_BYTES` (4), since the overlay is now the widest per-cell buffer: a device whose limit allowed the grid exactly would have failed to create it. At the default 128 MiB limit the grid is capped at 16.7 million cells (3,000 by 5,500) instead of 33.5 million. Alternative: two overlay buffers of one word, which costs a storage binding in the display (8 of 8 with air). To change: `OVERLAY_BYTES` and `Flyers`' overlay layout.
+Decided during the run: the glow strength is the share of the blurred light added, with the levels summed (a wide uniform pool adds about five times the strength of its own light at its center); 0.08 as in Design, untuned since no run was possible. Alternative: normalize the levels. To change: `LOOK.glowStrength`, or the weights in `fs_up`.
 
 Visible after: lava, fire, molten metal and anything above 525 °C glow with a halo; flying hot debris glows; C shows the difference.
-Needs you: look at lava and fire in `?scene=showcase` and at a blast (`?scene=blast`) (at the end).
+Needs you: run `npm test` (the new AC7 to AC9 tests, the reworked AC3 and flyer tests and `tests/glow.test.ts`; none was run, the GPU was busy; a shader that fails to compile shows at the first `Display`) and `npm run bench`, and record the finished look's `render:coverage` and `render:glow` cost under this item (at the end); look at lava and fire in `?scene=showcase` and at a blast (`?scene=blast`), and say whether the halo at 0.08 is too faint or too strong (at the end).
 
 ### M11.4 Shadows
 

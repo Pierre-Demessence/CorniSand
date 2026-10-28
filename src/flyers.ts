@@ -1,5 +1,5 @@
 import type { AirShape } from './air';
-import { CELL_FIELDS } from './cell-fields';
+import { CELL_FIELDS, OVERLAY_BYTES } from './cell-fields';
 import type { CellFields } from './cell-field-buffers';
 import type { ElementTable } from './element-table';
 import { MAX_FLYER_SLOTS, launchGroups } from './movement';
@@ -27,7 +27,7 @@ export interface FlyerSnapshot {
   status: number;
 }
 
-/** What the display reads: the kind word of the flyer in each cell, cleared and scattered every frame. */
+/** What the display and the coverage pass read: two words per cell, the kind word and the temperature's bits of the flyer in it, cleared and scattered every frame. */
 export interface FlyerOverlay {
   layout: GPUBindGroupLayout;
   bindGroup: GPUBindGroup;
@@ -106,7 +106,7 @@ export class Flyers {
     this.state = device.createBuffer({ label: 'flyer state', size: (FLYER_STATE_WORDS + survivorGroups) * 4, usage: storage });
     const survivorPrefix = device.createBuffer({ label: 'survivor prefix', size: survivorGroups * 4, usage: storage });
     this.args = device.createBuffer({ label: 'flyer args', size: ARGS_WORDS * 4, usage: storage | GPUBufferUsage.INDIRECT });
-    this.overlayBuffer = device.createBuffer({ label: 'flyer overlay', size: width * height * 4, usage: storage });
+    this.overlayBuffer = device.createBuffer({ label: 'flyer overlay', size: width * height * OVERLAY_BYTES, usage: storage });
     device.queue.writeBuffer(claim, 0, new Uint32Array(width * height).fill(0xffffffff));
 
     const compute = GPUShaderStage.COMPUTE;
@@ -124,7 +124,7 @@ export class Flyers {
         ...(air ? [{ binding: 1, resource: { buffer: air.state } }, { binding: 2, resource: { buffer: air.burst } }] : []),
       ],
     });
-    const overlayLayout = layoutOf(['read-only-storage'], GPUShaderStage.FRAGMENT);
+    const overlayLayout = layoutOf(['read-only-storage'], GPUShaderStage.FRAGMENT | GPUShaderStage.COMPUTE);
     this.overlay = {
       layout: overlayLayout,
       bindGroup: device.createBindGroup({ layout: overlayLayout, entries: [{ binding: 0, resource: { buffer: this.overlayBuffer } }] }),

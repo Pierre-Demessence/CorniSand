@@ -29,6 +29,10 @@ export type CellData = Record<CellFieldName, Uint32Array<ArrayBuffer>>;
 // to one buffer, not to the sum, so this (not the sum over the fields) sizes the grid.
 export const FIELD_BYTES = 4;
 
+// The flyer overlay holds the kind word and the temperature of the flyer in each cell (`src/flyers.ts`): one buffer of two
+// words per cell, which the device's buffer limits cap on its own like a field buffer.
+export const OVERLAY_BYTES = 2 * FIELD_BYTES;
+
 export function emptyCellData(cellCount: number): CellData {
   return Object.fromEntries(CELL_FIELDS.map(({ name }) => [name, new Uint32Array(cellCount)])) as CellData;
 }

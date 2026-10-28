@@ -1,4 +1,5 @@
 import { DisplayTable } from './display-table';
+import { Glow } from './glow';
 import { lookSettings, type Look, type LookSettings } from './look';
 import { displayWGSL } from './shaders/display.wgsl';
 import { GRAPHICS } from './shaders/graphics.wgsl';
@@ -19,7 +20,7 @@ export interface DisplayOptions {
   heatView?: boolean;
   /** Draw the air: its pressure under the materials, faded, and its wind as arrows. Takes the place of the heat view. */
   airView?: boolean;
-  /** `finished` (the default) or `cells`: each cell as itself, with its grain and the wall. The heat and air views look the same in both. */
+  /** `finished` (the default) or `cells`: each cell as itself, with its grain and the wall, and no halo. The heat and air views look the same in both. */
   look?: Look;
 }
 
@@ -47,6 +48,7 @@ export class Display {
   private readonly simWidth: number;
   private readonly simHeight: number;
   private readonly settings: LookSettings;
+  private readonly glow: Glow;
 
   constructor(
     device: GPUDevice,
@@ -74,11 +76,16 @@ export class Display {
     });
     this.uniformData = new Float32Array(UNIFORM_FLOATS);
     const table = new DisplayTable(device, elements.elements, this.settings);
+    this.glow = new Glow(device, simWidth, simHeight, cells, elements, flyers, table, GRAPHICS, this.settings.glowLevels);
+    const glowSampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear', addressModeU: 'clamp-to-edge', addressModeV: 'clamp-to-edge' });
 
     const uniformLayout = device.createBindGroupLayout({
       entries: [
         { binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
         { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+        // The halo of the glow chain and the sampler that reads it.
+        { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+        { binding: 4, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
         // The air state, when there is air: binding 1 of group 0, as the generated shader declares it.
         ...(air?.state ? [{ binding: 1, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' as const } }] : []),
       ],
@@ -103,6 +110,8 @@ export class Display {
       entries: [
         { binding: 0, resource: { buffer: this.uniformBuffer } },
         { binding: 2, resource: { buffer: table.buffer } },
+        { binding: 3, resource: this.glow.view },
+        { binding: 4, resource: glowSampler },
         ...(air?.state ? [{ binding: 1, resource: { buffer: air.state } }] : []),
       ],
     });
@@ -131,8 +140,14 @@ export class Display {
     d[11] = opts.airView ? 1.0 : 0.0; // airView
     d[12] = opts.look === 'cells' ? 1.0 : 0.0; // cellsLook
     d[13] = this.settings.wall; // wall
+    d[14] = this.settings.glowStrength; // glow
 
     this.device.queue.writeBuffer(this.uniformBuffer, 0, this.uniformData);
+
+    // The halo is only read by the finished look; the cells look and the views record the composite alone.
+    if (opts.look !== 'cells' && !opts.heatView && !opts.airView && this.settings.glowStrength > 0) {
+      this.glow.record(encoder, timer);
+    }
 
     const pass = encoder.beginRenderPass({
       // Bench only: every render pass is timed under its own label, whatever the timer's `perPass`.

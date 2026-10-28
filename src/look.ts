@@ -20,6 +20,13 @@ export interface LookSettings {
    * from a smooth noise of the cell's place. A solid never moves, so its blotches stay put; variant 0 stays the table color.
    */
   solidNoise: number;
+  /**
+   * How much of the blurred light of the hot cells (the halo) the finished look adds around them, 0 to 1 (0 draws none and
+   * records no glow pass): the halo near a large pool is this share of the light the pool radiates.
+   */
+  glowStrength: number;
+  /** Downsamples of the glow chain below the emission texture (half the cells' resolution), 1 to 6; each doubles the halo's reach. */
+  glowLevels: number;
 }
 
 export const LOOK: Readonly<LookSettings> = {
@@ -27,16 +34,25 @@ export const LOOK: Readonly<LookSettings> = {
   grainPowder: 0.1,
   grainSolid: 0.03,
   solidNoise: 0.2,
+  glowStrength: 0.08,
+  glowLevels: 4,
 };
+
+const MAX_GLOW_LEVELS = 6;
 
 /** The wall's brightness at `wall` 0 and the range above it, at the top center, as a display value (0 to 1). */
 export const WALL_LEVEL = 0.04;
 export const WALL_RANGE = 0.5;
 
-/** The settings with the defaults applied and the wall's brightness kept in 0..1. */
+/** The settings with the defaults applied, the wall's brightness and the glow strength kept in 0..1 and the glow levels a whole number in 1..6. */
 export function lookSettings(overrides: Partial<LookSettings> = {}): LookSettings {
   const settings = { ...LOOK, ...overrides };
-  return { ...settings, wall: Math.min(1, Math.max(0, settings.wall)) };
+  return {
+    ...settings,
+    wall: Math.min(1, Math.max(0, settings.wall)),
+    glowStrength: Math.min(1, Math.max(0, settings.glowStrength)),
+    glowLevels: Math.min(MAX_GLOW_LEVELS, Math.max(1, Math.round(settings.glowLevels))),
+  };
 }
 
 /**

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { tempView } from '../src/cell-fields';
 import { Display } from '../src/display';
 import { ELEMENT as T, ELEMENTS, type ElementDef } from '../src/elements';
-import { ROOM_TEMP } from '../src/heat';
+import { effectiveTemp, GLOW_START, ROOM_TEMP } from '../src/heat';
 import type { Look, LookSettings } from '../src/look';
 import type { Simulation } from '../src/simulation';
 import { cell, createSim, device, runMany } from './gpu';
@@ -99,17 +99,39 @@ describe.skipIf(!device)('M11.2 the two looks', () => {
     }
   });
 
+  // A cell that radiates (fire, and what is hot at room temperature: lava and molten metal sit at their thresholds) has a halo
+  // around it, so it is drawn alone; the others stand side by side.
+  const radiates = (e: ElementDef): boolean => (e.life !== undefined && e.graphics !== undefined) || effectiveTemp(e, ROOM_TEMP) >= GLOW_START;
+
   it('M11 AC3: a cell with nothing around it is drawn in its cells-look color, for every element of the table', async () => {
     const width = 64;
+    const row = everyElementRow(width);
+    ROWS.filter(radiates).forEach((e) => { row.kind[ROWS.indexOf(e)] = 0; });
     const sim = createSim(width, 1);
-    sim.load(everyElementRow(width));
+    sim.load(row);
     const finished = await render(sim, width, 1, { look: 'finished' });
     const cells = await render(sim, width, 1, { look: 'cells' });
-    ROWS.forEach((e, i) => {
+    ROWS.filter((e) => !radiates(e)).forEach((e) => {
+      const i = ROWS.indexOf(e);
       pixelAt(finished, width, i, 0).forEach((channel, c) => {
         expect(Math.abs(channel - cells[i * 4 + c]), `${e.key}, channel ${c}`).toBeLessThanOrEqual(1);
       });
     });
+
+    for (const e of ROWS.filter(radiates)) {
+      const alone = everyElementRow(width);
+      alone.kind.fill(0);
+      alone.life.fill(0);
+      alone.kind[10] = cell(e.id);
+      alone.life[10] = e.life?.start ?? 0;
+      const lone = createSim(width, 1);
+      lone.load(alone);
+      const finishedAlone = await render(lone, width, 1, { look: 'finished' });
+      const cellsAlone = await render(lone, width, 1, { look: 'cells' });
+      pixelAt(finishedAlone, width, 10, 0).forEach((channel, c) => {
+        expect(Math.abs(channel - cellsAlone[10 * 4 + c]), `${e.key} alone, channel ${c}`).toBeLessThanOrEqual(1);
+      });
+    }
   });
 });
 
@@ -232,5 +254,149 @@ describe.skipIf(!device)('M11.2 wall', () => {
     const cells = await emptyPicture('cells');
     // The finished look's round trip through linear light may land a value on the other side of a rounding boundary.
     finished.forEach((value, i) => expect(Math.abs(value - cells[i]), `byte ${i}`).toBeLessThanOrEqual(1));
+  });
+});
+
+// A block of one element, `w` by `h` cells with its lower left cell at (x, y), world rows counted from the bottom.
+interface Block { x: number; y: number; w: number; h: number; type: number; temp: number; life?: number }
+
+function blockSim(width: number, height: number, blocks: readonly Block[]): Simulation {
+  const kind = new Uint32Array(width * height);
+  const life = new Uint32Array(width * height);
+  const temp = new Uint32Array(width * height);
+  const temps = tempView({ temp });
+  temps.fill(ROOM_TEMP);
+  for (const b of blocks) {
+    for (let j = 0; j < b.h; j++) {
+      for (let i = 0; i < b.w; i++) {
+        const at = (b.y + j) * width + b.x + i;
+        kind[at] = cell(b.type);
+        life[at] = b.life ?? 0;
+        temps[at] = b.temp;
+      }
+    }
+  }
+  const sim = createSim(width, height);
+  sim.load({ kind, life, temp });
+  return sim;
+}
+
+// The finished look's picture with the halo and the same picture without it (`glowStrength` 0): their difference is the
+// halo alone, the dither and every other effect cancel.
+async function withAndWithoutHalo(sim: Simulation, width: number, height: number): Promise<{ lit: Uint8Array; dark: Uint8Array }> {
+  return {
+    lit: await render(sim, width, height),
+    dark: await render(sim, width, height, { settings: { glowStrength: 0 } }),
+  };
+}
+
+// How much brighter pixel (x, y) is in `lit`, y counted from the bottom of the world.
+const gainAt = (lit: Uint8Array, dark: Uint8Array, width: number, height: number, x: number, y: number): number => {
+  const i = (height - 1 - y) * width + x;
+  return luminanceOf(lit.slice(i * 4, i * 4 + 3)) - luminanceOf(dark.slice(i * 4, i * 4 + 3));
+};
+
+describe.skipIf(!device)('M11.3 glow', () => {
+  const width = 128;
+  const height = 64;
+  const pool = { x: 48, y: 24, w: 32, h: 16 };
+  const poolSim = (temp: number): Simulation => blockSim(width, height, [{ ...pool, type: T.LAVA, temp }]);
+
+  // The summed brightness the halo adds outside the pool.
+  async function addedAround(sim: Simulation, inside: { x: number; y: number; w: number; h: number }): Promise<number> {
+    const { lit, dark } = await withAndWithoutHalo(sim, width, height);
+    let sum = 0;
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        if (x >= inside.x && x < inside.x + inside.w && y >= inside.y && y < inside.y + inside.h) continue;
+        sum += gainAt(lit, dark, width, height, x, y);
+      }
+    }
+    return sum;
+  }
+
+  it('M11 AC7: empty cells within 8 cells of a lava pool at 1,300 °C are brighter, more so the nearer, and the cells look is unchanged', async () => {
+    const sim = poolSim(1300);
+    const { lit, dark } = await withAndWithoutHalo(sim, width, height);
+    const middle = pool.y + pool.h / 2;
+    const gains = Array.from({ length: 8 }, (_, k) => gainAt(lit, dark, width, height, pool.x + pool.w + k, middle));
+    gains.forEach((gain, k) => expect(gain, `${k + 1} cells from the pool`).toBeGreaterThan(1));
+    // Brighter the nearer: never rising with the distance by more than a step of rounding, and clearly lower at 8 cells than at 1.
+    for (let k = 1; k < gains.length; k++) expect(gains[k], `${k + 1} against ${k} cells`).toBeLessThanOrEqual(gains[k - 1] + 1);
+    expect(gains[0]).toBeGreaterThan(gains[7] + 1);
+    // Above and to the left too.
+    expect(gainAt(lit, dark, width, height, pool.x + 8, pool.y + pool.h + 2)).toBeGreaterThan(1);
+    expect(gainAt(lit, dark, width, height, pool.x - 3, middle)).toBeGreaterThan(1);
+
+    const cellsLook = await render(sim, width, height, { look: 'cells' });
+    const cellsLookNoGlow = await render(sim, width, height, { look: 'cells', settings: { glowStrength: 0 } });
+    expect(cellsLook).toEqual(cellsLookNoGlow);
+  });
+
+  it('M11 AC8: the summed brightness the halo adds grows from lava at 1,000 to 1,300 to 1,700 °C', async () => {
+    // Lava below its 1,200 °C threshold shines at the threshold: 1,000 °C is the dimmest it can be drawn.
+    const added: number[] = [];
+    for (const temp of [1000, 1300, 1700]) added.push(await addedAround(poolSim(temp), pool));
+    expect(added[0], 'lava at 1,000 °C').toBeGreaterThan(0);
+    expect(added[1], '1,300 against 1,000 °C').toBeGreaterThan(added[0]);
+    expect(added[2], '1,700 against 1,300 °C').toBeGreaterThan(added[1]);
+  });
+
+  it('M11 AC8: metal at 500 °C and every element but fire at 20 °C add no halo', async () => {
+    // Lava and molten metal are never colder than their thresholds, which are over 525 °C: they are the glow test above.
+    const cases: { label: string; type: number; temp: number; life?: number }[] = [
+      { label: 'metal at 500 °C', type: T.METAL, temp: 500 },
+      ...ROWS
+        .filter((e) => e.key !== 'EMPTY' && e.key !== 'FIRE' && effectiveTemp(e, ROOM_TEMP) < GLOW_START)
+        .map((e) => ({ label: `${e.key} at 20 °C`, type: e.id, temp: ROOM_TEMP, life: e.life?.start })),
+    ];
+    const spacing = 6;
+    const worldWidth = Math.ceil((cases.length * spacing + 2) / 64) * 64;
+    const worldHeight = 32;
+    const sim = blockSim(worldWidth, worldHeight, cases.map((c, i) => ({ x: 2 + i * spacing, y: 14, w: 4, h: 4, type: c.type, temp: c.temp, life: c.life })));
+    const { lit, dark } = await withAndWithoutHalo(sim, worldWidth, worldHeight);
+    cases.forEach((c, i) => {
+      // The stretch of the picture from the gap before the block to the gap after it.
+      for (let y = 0; y < worldHeight; y++) {
+        for (let x = 1 + i * spacing; x < 1 + (i + 1) * spacing; x++) {
+          expect(gainAt(lit, dark, worldWidth, worldHeight, x, y), `${c.label} at (${x}, ${y})`).toBe(0);
+        }
+      }
+    });
+  });
+
+  describe('M11 AC9: a flying grain', () => {
+    const grainWidth = 64;
+    const grainHeight = 200;
+
+    // A sand grain dropped from near the top, run until it is in the air (it launches after 48 supersteps and flies until the 81st).
+    async function flyingGrain(temp: number): Promise<{ sim: Simulation; x: number; y: number }> {
+      const sim = blockSim(grainWidth, grainHeight, [{ x: 4, y: 190, w: 1, h: 1, type: T.SAND, temp }]);
+      await runMany(sim, 60);
+      const flyers = await sim.flyers.read();
+      expect(flyers, 'the grain is in the air').toHaveLength(1);
+      return { sim, x: Math.floor(flyers[0].x), y: Math.floor(flyers[0].y) };
+    }
+
+    it('adds a halo around itself in the finished look at 1,500 °C and none in the cells look', async () => {
+      const { sim, x, y } = await flyingGrain(1500);
+      const { lit, dark } = await withAndWithoutHalo(sim, grainWidth, grainHeight);
+      // The eight cells two cells from the grain.
+      const ring = [-2, 0, 2].flatMap((dx) => [-2, 0, 2]
+        .filter((dy) => dx !== 0 || dy !== 0)
+        .map((dy) => gainAt(lit, dark, grainWidth, grainHeight, x + dx, y + dy)));
+      ring.forEach((gain, i) => expect(gain, `ring cell ${i}`).toBeGreaterThanOrEqual(0));
+      expect(ring.reduce((a, b) => a + b, 0) / ring.length, 'the mean gain of the ring').toBeGreaterThan(2);
+
+      const cellsLook = await render(sim, grainWidth, grainHeight, { look: 'cells' });
+      const cellsLookNoGlow = await render(sim, grainWidth, grainHeight, { look: 'cells', settings: { glowStrength: 0 } });
+      expect(cellsLook).toEqual(cellsLookNoGlow);
+    });
+
+    it('adds no halo at 20 °C', async () => {
+      const { sim } = await flyingGrain(ROOM_TEMP);
+      const { lit, dark } = await withAndWithoutHalo(sim, grainWidth, grainHeight);
+      expect(lit).toEqual(dark);
+    });
   });
 });
