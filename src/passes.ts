@@ -3,6 +3,8 @@ export interface PassTimer {
   // True: every group of dispatches gets a compute pass of its own, timed under its label. False: the frame's one
   // compute pass is timed as 'frame', as the game records it.
   perPass: boolean;
+  // The same shape serves a render pass (`GPURenderPassTimestampWrites`): the renderer stamps its passes under
+  // labels starting with `render:`.
   stamp(label: string): GPUComputePassTimestampWrites;
 }
 

@@ -4,6 +4,7 @@ import { ELEMENT as T } from '../src/elements';
 import { packHalf2 } from '../src/half';
 import { AIR_CELL_SIZES, type AirCellSize } from '../src/air';
 import type { PassTimer } from '../src/passes';
+import { Display } from '../src/display';
 import { Simulation } from '../src/simulation';
 import { cell, createDevice, idleInput } from './gpu';
 import { mulberry32 } from '../src/random';
@@ -13,7 +14,9 @@ import { mulberry32 } from '../src/random';
 // frame (docs/powder-toy.md, "Frame budget").
 // BENCH_SCENES=mix75,blast runs only those scenes; BENCH_SPLIT_ONLY=1 only the 1x breakdown by pass. BENCH_AIR=1,2,4,8
 // runs every scene at each of those air cell sizes (`off` for no air); the default is the simulation's own. The air
-// passes show in the breakdown under their own labels, and their sum in the `air` column.
+// passes show in the breakdown under their own labels, and their sum in the `air` column. Every measured frame also
+// renders into a screen-sized texture after the simulation; the render passes show under `render:` labels, their sum
+// in the `render` column (the `sum` column is the simulation's alone).
 
 const WIDTH = 2560;
 const HEIGHT = 1340;
@@ -25,6 +28,9 @@ const WARMUP_FRAMES = 20;
 const MEASURED_FRAMES = 60;
 // The GPU clocks down when idle: spend this long at full load before each measurement, or it measures the clock ramp.
 const BURN_IN_MS = 1000;
+// The renderer's passes (M11 adds coverage, shadow, glow and composite; one for now), for the timestamp query count.
+const RENDER_PASSES = 4;
+const isRenderLabel = (label: string): boolean => label.startsWith('render:');
 
 type Fields = Partial<CellData>;
 
@@ -156,18 +162,33 @@ function median(values: number[]): number {
 }
 
 const mean = (values: number[]): number => values.reduce((a, b) => a + b, 0) / values.length;
+const sumLabels = (times: Map<string, number>, wanted: (label: string) => boolean): number =>
+  [...times].filter(([label]) => wanted(label)).reduce((a, [, ms]) => a + ms, 0);
 const round = (x: number, digits = 2): number => Number(x.toFixed(digits));
 
 const device = await createDevice({ powerPreference: 'high-performance' }, ['timestamp-query']);
 
+interface Renderer {
+  display: Display;
+  target: GPUTexture;
+}
+
+const RENDER_OPTIONS = { mousePos: { x: 0, y: 0 }, brushSize: 0, showBrush: false, erasing: false, replacing: false };
+
 // Per frame, the GPU milliseconds of each label: the sum over that label's passes ('frame' for the whole frame when
 // `perPass` is false). Frames are submitted back to back, as a game does; waiting after each frame lets the GPU clock
 // down and inflates the times up to 3x.
-async function timeFrames(sim: Simulation, supersteps: number, count: number, perPass: boolean): Promise<Map<string, number>[]> {
+async function timeFrames(
+  sim: Simulation,
+  renderer: Renderer,
+  supersteps: number,
+  count: number,
+  perPass: boolean,
+): Promise<Map<string, number>[]> {
   const dev = device!;
   // Brush, then per superstep two CA dispatches and eight flyer passes, plus one spare.
   // The air adds its mask pass and, per superstep, five passes per air step (up to four at 1x1).
-  const maxPasses = 2 + supersteps * (11 + 5 * 4);
+  const maxPasses = 2 + supersteps * (11 + 5 * 4) + RENDER_PASSES;
   const pending: { labels: string[]; staging: GPUBuffer; destroy: GPUBuffer[]; querySet: GPUQuerySet }[] = [];
   for (let f = 0; f < count; f++) {
     const querySet = dev.createQuerySet({ type: 'timestamp', count: 2 * maxPasses });
@@ -183,6 +204,8 @@ async function timeFrames(sim: Simulation, supersteps: number, count: number, pe
     };
     const encoder = dev.createCommandEncoder();
     sim.simulate(encoder, supersteps, idleInput, timer);
+    sim.recordOverlay(encoder);
+    renderer.display.render(encoder, renderer.target.createView(), WIDTH, HEIGHT, RENDER_OPTIONS, timer);
     encoder.resolveQuerySet(querySet, 0, 2 * labels.length, resolved, 0);
     encoder.copyBufferToBuffer(resolved, 0, staging, 0, 16 * labels.length);
     dev.queue.submit([encoder.finish()]);
@@ -234,8 +257,12 @@ describe.skipIf(!device)('bench', () => {
     });
     const burner = new Simulation(dev, WIDTH, HEIGHT, { seedSource: mulberry32(2) });
     burner.load(full100Scene());
+    const burnerRenderer: Renderer = {
+      display: new Display(dev, 'bgra8unorm', WIDTH, HEIGHT, burner.fields, burner.elements, burner.flyers.overlay, burner.air),
+      target: dev.createTexture({ size: [WIDTH, HEIGHT], format: 'bgra8unorm', usage: GPUTextureUsage.RENDER_ATTACHMENT }),
+    };
     const burnIn = async (): Promise<void> => {
-      for (const start = performance.now(); performance.now() - start < BURN_IN_MS;) await timeFrames(burner, 32, 4, false);
+      for (const start = performance.now(); performance.now() - start < BURN_IN_MS;) await timeFrames(burner, burnerRenderer, 32, 4, false);
     };
 
     const rows: Record<string, string | number>[] = [];
@@ -246,17 +273,23 @@ describe.skipIf(!device)('bench', () => {
       const sim = new Simulation(dev, WIDTH, HEIGHT, { seedSource: mulberry32(1), ...airOptions });
       // Dawn compiles a pipeline on its first use: not inside a measured frame.
       sim.load(fields);
-      await timeFrames(sim, 1, 2, true);
+      const renderer: Renderer = {
+        display: new Display(dev, 'bgra8unorm', WIDTH, HEIGHT, sim.fields, sim.elements, sim.flyers.overlay, sim.air),
+        target: dev.createTexture({ size: [WIDTH, HEIGHT], format: 'bgra8unorm', usage: GPUTextureUsage.RENDER_ATTACHMENT }),
+      };
+      await timeFrames(sim, renderer, 1, 2, true);
 
       const measure = async (supersteps: number, perPass: boolean): Promise<Map<string, number>[]> => {
         await burnIn();
         sim.load(fields);
-        if (warmup > 0) await timeFrames(sim, supersteps, warmup, perPass);
-        return timeFrames(sim, supersteps, MEASURED_FRAMES, perPass);
+        if (warmup > 0) await timeFrames(sim, renderer, supersteps, warmup, perPass);
+        return timeFrames(sim, renderer, supersteps, MEASURED_FRAMES, perPass);
       };
 
       for (const supersteps of splitOnly ? [] : SPEEDS) {
-        const times = (await measure(supersteps, false)).map((t) => t.get('frame')!);
+        const measured = await measure(supersteps, false);
+        const times = measured.map((t) => t.get('frame')!);
+        const renderTimes = measured.map((t) => sumLabels(t, isRenderLabel));
         const stats = supersteps === SPEEDS[0] && name === 'blast' ? await sim.flyers.readStats() : undefined;
         rows.push({
           scene: name,
@@ -264,6 +297,7 @@ describe.skipIf(!device)('bench', () => {
           speed: `${supersteps / SPEEDS[0]}x`,
           msMedian: round(median(times)),
           msMax: round(Math.max(...times)),
+          renderMs: round(median(renderTimes)),
           msPerSuperstep: round(median(times) / supersteps, 3),
           ...(stats && { launched: stats.launched }),
         });
@@ -273,8 +307,9 @@ describe.skipIf(!device)('bench', () => {
       const split = await measure(SPEEDS[0], true);
       const labels = [...split[0].keys()];
       const perLabel = Object.fromEntries(labels.map((label) => [label, round(mean(split.map((t) => t.get(label) ?? 0)), 3)]));
-      perLabel.air = round(mean(split.map((t) => [...t].filter(([label]) => label.startsWith('air')).reduce((a, [, ms]) => a + ms, 0))), 3);
-      perLabel.sum = round(mean(split.map((t) => [...t.values()].reduce((a, b) => a + b, 0))), 3);
+      perLabel.air = round(mean(split.map((t) => sumLabels(t, (label) => label.startsWith('air')))), 3);
+      perLabel.render = round(mean(split.map((t) => sumLabels(t, isRenderLabel))), 3);
+      perLabel.sum = round(mean(split.map((t) => sumLabels(t, (label) => !isRenderLabel(label)))), 3);
       breakdown[`${name} (air ${air})`] = perLabel;
     }
     console.log('GPU ms per frame (one compute pass, as the game records it):');

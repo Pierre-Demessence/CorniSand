@@ -1,6 +1,6 @@
 # M11 Rendering quick wins
 
-Status: draft, waiting for the user's approval. Runs before M8.1, beside M8.9 (`docs/plans/m8.9-real-world-scenarios.md`): it touches only the drawing code, never a cell, a rule or a test of the simulation.
+Status: running; M11.1 done, next open item M11.2 (looks, display table, grain, wall). Runs before M8.1, beside M8.9 (`docs/plans/m8.9-real-world-scenarios.md`): it touches only the drawing code, never a cell, a rule or a test of the simulation.
 
 ## Goal
 
@@ -81,10 +81,16 @@ Budget and docs (M11.8)
 
 ### M11.1 Roadmap, baseline and render timing
 
-- [ ] `docs/roadmap.md`: M11 Rendering ("The finished look: grain, the wall and its shadows, glow, soft gases, liquid depth, air shimmer, from the simulation's state, with a cells look on a key. Done when each effect has a deterministic display test and the renderer costs at most 1 ms per frame on the RTX 4080 (`docs/plans/m11-rendering.md`)."), the order line (M11 beside M8.9, before M8.1), `Next ID: M12`. Baseline: lint, typecheck, `npm test` counts, build, into a "Baseline" note under this item. The bench's render timing (AC1, Design "Bench"), and today's render cost recorded here. Verify: lint, typecheck, `npm test`, `npm run bench`.
+- [x] `docs/roadmap.md`: M11 Rendering ("The finished look: grain, the wall and its shadows, glow, soft gases, liquid depth, air shimmer, from the simulation's state, with a cells look on a key. Done when each effect has a deterministic display test and the renderer costs at most 1 ms per frame on the RTX 4080 (`docs/plans/m11-rendering.md`)."), the order line (M11 beside M8.9, before M8.1), `Next ID: M12`. Baseline: lint, typecheck, `npm test` counts, build, into a "Baseline" note under this item. The bench's render timing (AC1, Design "Bench"), and today's render cost recorded here. Verify: lint, typecheck, `npm test`, `npm run bench`.
+
+Baseline (before M11, from the run's start): lint, typecheck and build pass with no warnings. `npm test` and `npm run bench` were not run (the GPU was busy with a game); their counts and today's render cost are left to the user, see Needs you.
+
+Done in the run: `docs/roadmap.md` (M11 section, order line, `Next ID: M12`); `Display.render` takes an optional `PassTimer` and stamps its pass `render:composite`; `tests/bench.gpu.ts` renders every frame into a 2560x1340 `bgra8unorm` texture after `recordOverlay`, prints a `renderMs` column in the speed table and a `render` column (the sum of the `render:` labels) in the 1x breakdown, with `sum` the simulation's alone.
+
+Decided during the run: the bench has a single render look for now. The finished/cells look split of AC1 needs M11.2's `look` option; M11.2 adds a look loop to the bench and the cells-look column. Alternative: a stand-in flag now; to change, edit the bench.
 
 Visible after: nothing: `npm run bench` prints the drawing's cost.
-Needs you: nothing.
+Needs you: run `npm test` and `npm run bench` (with `nvidia-smi` showing no other load) and write the test counts and today's `render:composite` cost into the Baseline note above (at the end).
 
 ### M11.2 Looks, display table, grain, wall
 

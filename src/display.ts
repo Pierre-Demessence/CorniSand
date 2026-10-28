@@ -5,6 +5,7 @@ import type { CellFields } from './cell-field-buffers';
 import type { FlyerOverlay } from './flyers';
 import type { ElementTable } from './element-table';
 import type { Vec2 } from './input';
+import type { PassTimer } from './passes';
 
 export interface DisplayOptions {
   mousePos: Vec2;
@@ -96,6 +97,7 @@ export class Display {
     screenWidth: number,
     screenHeight: number,
     opts: DisplayOptions,
+    timer?: PassTimer,
   ): void {
     const d = this.uniformData;
     d[0] = this.simWidth;   // simResolution.x
@@ -114,6 +116,8 @@ export class Display {
     this.device.queue.writeBuffer(this.uniformBuffer, 0, this.uniformData);
 
     const pass = encoder.beginRenderPass({
+      // Bench only: every render pass is timed under its own label, whatever the timer's `perPass`.
+      ...(timer && { timestampWrites: timer.stamp('render:composite') }),
       colorAttachments: [{
         view: targetView,
         loadOp: 'clear',
