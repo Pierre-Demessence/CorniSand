@@ -147,7 +147,7 @@ const WATER_BURST = 0.1;
 // The pressure a cell of gunpowder releases as it burns.
 const GUNPOWDER_BURST = 3;
 // The pressure that crushes stone into sand (`ElementDef.pressureAbove`).
-const STONE_CRUSH = 0.2;
+const STONE_CRUSH = 0.45;
 
 // Conductivity and heat capacity are tuning grounded in physical ranks, not physical units: a cell is one unit of matter
 // whatever its state, so the capacity is per cell and the conductivity a share per exchange. Empty space holds no heat

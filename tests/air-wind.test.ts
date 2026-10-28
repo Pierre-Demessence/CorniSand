@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { AIR, windVelocity } from '../src/air';
 import { ELEMENT as T } from '../src/elements';
 import type { Simulation, SimulationInput } from '../src/simulation';
-import { airWords, cell, cellType, createSim, device, idleInput, readCells, run } from './gpu';
+import { airWords, cell, cellType, createSim, device, idleInput, readCells, run, runMany } from './gpu';
 
 // The Wind tool (M6.6a): a stroke with the tool selected moves the air under the brush along the pointer's movement.
 
@@ -178,3 +178,43 @@ describe.skipIf(!device)('M6 AC20: the Wind tool', () => {
 
 // Measured (27.4 right, 27.4 left, 0.06 with no stroke) with the constants of AIR in M6.6a: the shift of the smoke's centroid in the test above, in cells.
 const MEASURED_SMOKE_SHIFT = 27;
+
+describe.skipIf(!device)('M6 AC26: the air after a Wind stroke', () => {
+  const width = 512;
+  const height = 320;
+  // A broad stroke swung left and right through the middle, 10 times 6 frames of 40 cells, so the air under it runs at
+  // about the top speed (B12: a region of air at the top speed used to grow without end once the stroke stopped).
+  const swing = async (sim: Simulation): Promise<void> => {
+    let x = width / 2 - 120;
+    let direction = 1;
+    for (let s = 0; s < 10; s++) {
+      for (let f = 0; f < 6; f++) {
+        await run(sim, 4, stroke({ x, y: height / 2 }, { x: x + direction * 40, y: height / 2 }, { brushSize: 60 }));
+        x += direction * 40;
+      }
+      direction = -direction;
+    }
+  };
+  const largest = (values: Float32Array): number => values.reduce((m, v) => Math.max(m, Math.abs(v)), 0);
+
+  it.each([
+    [4, false],
+    [2, false],
+    [4, true],
+  ] as const)('M6 AC26: at air cell size %i (sand floor: %s) the air is at rest 800 supersteps after the stroke', async (airCellSize, sand) => {
+    const sim = createSim(width, height, 1, { airCellSize });
+    if (sand) {
+      const kind = new Uint32Array(width * height);
+      kind.fill(cell(T.SAND), 0, 16 * width);
+      sim.load({ kind });
+    }
+    await swing(sim);
+    const during = await sim.air.read();
+    expect(Math.max(largest(during.velocityX), largest(during.velocityY)), 'the stroke drives the air near its top speed').toBeGreaterThan(0.75 * AIR.maxSpeed);
+    await runMany(sim, 800);
+    const after = await sim.air.read();
+    // Friction alone leaves 0.995^1600, 0.03%, of a speed after 800 supersteps, and the open edges only take more.
+    expect(Math.max(largest(after.velocityX), largest(after.velocityY)), 'fastest face').toBeLessThan(0.02);
+    expect(largest(after.pressure), 'largest |pressure|').toBeLessThan(0.01);
+  });
+});

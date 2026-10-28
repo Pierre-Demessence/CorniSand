@@ -8,6 +8,7 @@ IDs are stable: B = bug, D = tech debt, I = idea.
 - **B8** Brush ring states (erase red, replace amber, draw white) differ by color only, which is unreadable with red-green colorblindness; add a second cue (dashed ring, icon, label). `src/shaders/display.wgsl.ts` `fs_main`
 - **B10** No per-grain color variation: `variant` is generated and stored, but the display shader ignores it (the WebGL version shaded sand, wall and water by variant until commit e6a38a9). `src/shaders/display.wgsl.ts` `fs_main`
 - **B11** Number keys ignore modifiers, so Ctrl+1 (browser tab switch) also selects a tool. `src/main.ts` keydown handler
+- **B13** (M6) After a gunpowder charge surrounded by sand is heated, the reaction keeps going and sand is thrown around for a long time (a dust of flying grains, streaks of sand high up, air at 127 °C with pressure below 0). Seen before M6 as well, so it may not come from the air. Found at the M6.6 gate; cause unknown, to reproduce as a scene with a numeric check before changing anything. `src/elements.ts` GUNPOWDER, `src/shaders/ca.wgsl.ts`
 
 ## Tech debt
 

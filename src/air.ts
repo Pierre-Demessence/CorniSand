@@ -22,8 +22,9 @@ export const AIR = {
   // Share of its speed a face loses per dispatch.
   velocityLoss: 0.005,
   // Extra share the pressure and velocity of the outermost ring of air cells lose per dispatch, on top of the open
-  // boundary (which already lets a wave leave): it takes the echo of waves that arrive at a slant.
-  edgeDamping: 0.1,
+  // boundary (which already lets a wave leave): it takes the echo of waves that arrive at a slant. Small: a thicker damped
+  // ring reflects more, like a wall (the echo of AC4 grows with it).
+  edgeDamping: 0.02,
   // Share of the temperature difference to a neighbor an air cell closes per dispatch, across a fully open face.
   diffusion: 0.02,
   // Share of the temperature difference that evens out when a cell that holds heat exchanges with its air: the pair
@@ -58,7 +59,7 @@ export const AIR = {
   // Share of the gap between the air's speed and the stroke's that a frame's stroke closes at the faces it reaches.
   windToolBlend: 0.5,
   // The pressure the air view's ramp ends at: from -viewRange (darkest) to +viewRange (lightest), clamped beyond. A
-  // crushing blast (STONE_CRUSH 0.2) is 40% of the way out, a gunpowder charge (peak above 1) saturates.
+  // crushing blast (STONE_CRUSH 0.45) is 90% of the way out, a gunpowder charge (peak above 1) saturates.
   viewRange: 0.5,
 } as const;
 
@@ -117,7 +118,7 @@ const MAX_WAVE_COURANT = 0.7;
 
 /**
  * Air steps per superstep (two dispatches): the fewest that keep the pressure waves (`waveSpeed`) within
- * `MAX_WAVE_COURANT` air cells per step and the fastest air (`maxSpeed`) within one air cell per step. 1 at 4x4.
+ * `MAX_WAVE_COURANT` air cells per step and the fastest air (`maxSpeed`, which carries heat) within one air cell per step. 1 at 4x4.
  */
 export function airSubsteps(cellSize: number): number {
   const wave = Math.ceil((AIR.waveSpeed * 2) / (cellSize * MAX_WAVE_COURANT));

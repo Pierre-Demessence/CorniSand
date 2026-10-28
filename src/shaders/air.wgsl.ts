@@ -408,9 +408,9 @@ ${ENTRY} {
 `;
 
 /**
- * Carries the air along with itself, state to scratch: the speeds by semi-Lagrangian advection (each face takes the
- * speed from where its air came from), the temperature in flux form (what leaves one cell enters the next, so the heat
- * is kept), the pressure unchanged. A closed face stays closed.
+ * Carries the air's heat along with the air, state to scratch: the temperature in flux form (what leaves one cell enters
+ * the next, so the heat is kept). The speeds and pressures are copied unchanged: the air is a linear wave (the speeds
+ * never advect themselves), the one model with no gain at any speed.
  */
 export const airAdvectWGSL = (width: number, height: number, cellSize: number, substeps: number, nx: number, ny: number): string => /* wgsl */`
 ${prelude(width, height, cellSize, substeps, nx, ny)}
@@ -422,21 +422,7 @@ ${ENTRY} {
   ${GROUP}
   let k = airIndex(a, b);
   let s = air[k];
-  let m = mask[k];
   var out = s;
-
-  if (b >= 1 && a >= 1 && a < NX) {
-    let x = f32(a) + 1.0;
-    let y = f32(b) + 0.5;
-    let across = sampleV(x, y);
-    out.x = sampleU(x - s.x * ADVECT, y - across * ADVECT) * faceGate(m.x);
-  }
-  if (a >= 1 && b >= 1 && b < NY) {
-    let x = f32(a) + 0.5;
-    let y = f32(b) + 1.0;
-    let across = sampleU(x, y);
-    out.y = sampleV(x - across * ADVECT, y - s.y * ADVECT) * faceGate(m.y);
-  }
 
   if (isCell(a, b)) {
     let heat = s.w - ROOM;

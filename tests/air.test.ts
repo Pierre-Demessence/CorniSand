@@ -228,7 +228,7 @@ describe.skipIf(!device)('M6 air', () => {
       const totals = small.map((frame) => frame.reduce((sum, p) => sum + Math.abs(p), 0) / start);
       expect(incident, 'the wave arrived').toBeGreaterThan(0.05);
       expect(worst / incident, 'echo over incident peak').toBeLessThan(0.3);
-      // Measured: under 5% after 89 supersteps at size 2 and 94 at size 4.
+      // Measured: under 5% after 63 supersteps at size 2 and 65 at size 4.
       expect(totals[DRAINED - 1], `total absolute pressure after ${DRAINED} supersteps, over the start`).toBeLessThan(0.05);
     });
 

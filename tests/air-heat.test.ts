@@ -17,8 +17,8 @@ const MEASURED = {
   // Mean upward speed of the air over the plume scene's plate after `PLUME_STEPS`, in cells per dispatch.
   plumeSpeed: 0.077,
 };
-// A block of metal at 1,000 °C cools below 200 °C after about 19,500 supersteps (81 s at 1x).
-const COOLING_STEPS = 24_000;
+// A block of metal at 1,000 °C cools below 200 °C after about 27,600 supersteps (115 s at 1x).
+const COOLING_STEPS = 30_000;
 // Supersteps the plume has had to develop.
 const PLUME_STEPS = 960;
 // All 64 steam cells have condensed after about 840 supersteps.
