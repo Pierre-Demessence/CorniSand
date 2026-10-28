@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { AIR } from '../src/air';
+import { AIR, type AirCellSize } from '../src/air';
 import { emptyCellData, tempView } from '../src/cell-fields';
 import { ELEMENT as T, ELEMENTS, elementByKey, elementConductivity, elementHeatCapacity } from '../src/elements';
+import { packHalf2 } from '../src/half';
 import { ROOM_TEMP } from '../src/heat';
 import { PLUME, plume } from '../src/scenes';
 import type { Simulation } from '../src/simulation';
-import { FRAME_SUPERSTEPS, airWords, cell, createSim, device, mulberry32, readCells, run, runMany, countTypes } from './gpu';
+import { FRAME_SUPERSTEPS, airWords, cell, cellType, createSim, device, idleInput, mulberry32, readCells, run, runMany, countTypes } from './gpu';
 import { heatContent } from './metrics';
 
 // Measured with the constants in `AIR` (docs/plans/m6-air.md, "M6.4 results").
@@ -278,5 +279,62 @@ describe.skipIf(!device)('M6 ambient heat', () => {
       expect(counts.get(T.STEAM), 'steam').toBe(64);
     }, 60_000);
   });
-});
 
+  // The M6.6 gate: lava poured from high set in mid-fall and hung there as a stone ledge that held up the stream, and a
+  // pile of lava crusted within seconds. Measured before the fix (seed 3): no lava reached the floor and 472 stone cells
+  // hung above row 40 after 3 s of pouring; the pile was 9.5% stone after 5 s and 45% after 20 s at air cell size 4.
+  describe('AC28: lava in open air', () => {
+    // Fills a disc of lava with the brush every frame, as a player holding the button does, for `frames` frames at 1x.
+    async function pour(sim: Simulation, at: { x: number; y: number }, brushSize: number, frames: number): Promise<void> {
+      const stroke = { ...idleInput, mouseActive: true, brushSize, particleType: T.LAVA, mousePos: at, prevMousePos: at };
+      for (let frame = 0; frame < frames; frame++) await run(sim, FRAME_SUPERSTEPS, stroke);
+    }
+
+    // The exchange runs before the CA, with the velocity the cell starts the frame with; nothing else in a superstep changes
+    // the temperature of a lone lava cell at 1,250 °C (no neighbor, no threshold crossed).
+    it.each([[0.3, false], [0.2, true]] as const)('M6 AC28: a lava cell falling at %f cells per dispatch trades heat with the air: %s', async (speed, trades) => {
+      const world = new World(16, 16).fill(T.LAVA, 8, 9, 10, 11, 1250);
+      world.data.velocity[10 * 16 + 8] = packHalf2(0, -speed);
+      const sim = createSim(16, 16);
+      sim.load(world.data);
+      await run(sim, 1);
+      const kinds = await readCells(sim);
+      const at = kinds.findIndex((c) => cellType(c) === T.LAVA);
+      const temp = (await temps(sim))[at];
+      if (trades) expect(temp, 'the lava cell has warmed its air').toBeLessThan(1240);
+      else expect(temp, 'the lava cell kept its heat').toBe(1250);
+    });
+
+    // Measured: 544 (size 4) and 599 (size 2) lava cells within 10 rows of the floor, and 4 and 0 stone cells above row 40.
+    it.each([4, 2] as AirCellSize[])('M6 AC28: lava poured from 380 cells up reaches the floor molten and hangs no stone in the air (air cell size %i)', async (airCellSize) => {
+      const [width, height] = [160, 400];
+      const sim = createSim(width, height, 3, { airCellSize });
+      await pour(sim, { x: 80, y: 380 }, 5, 180);
+      const cells = await readCells(sim);
+      let low = 0;
+      let hanging = 0;
+      for (let k = 0; k < cells.length; k++) {
+        const y = Math.floor(k / width);
+        if (cellType(cells[k]) === T.LAVA && y < 10) low++;
+        if (cellType(cells[k]) === T.STONE && y >= 40) hanging++;
+      }
+      expect(low, 'lava within 10 rows of the floor').toBeGreaterThan(400);
+      expect(hanging, 'stone above row 40').toBeLessThanOrEqual(20);
+    }, 60_000);
+
+    // Measured: 4.1% stone after 5 s and 23.8% after 20 s.
+    it('M6 AC28: a pile of lava on the floor sets slowly: under a third of it is stone after 20 s at 1x', async () => {
+      const sim = createSim(160, 160, 3);
+      await pour(sim, { x: 80, y: 30 }, 30, 60);
+      const stoneShare = async (): Promise<number> => {
+        const counts = countTypes(await readCells(sim));
+        const stone = counts.get(T.STONE) ?? 0;
+        return stone / (stone + (counts.get(T.LAVA) ?? 0));
+      };
+      await runMany(sim, 240 * 4, FRAME_SUPERSTEPS);
+      expect(await stoneShare(), 'stone after 5 s').toBeLessThan(0.055);
+      await runMany(sim, 240 * 15, FRAME_SUPERSTEPS);
+      expect(await stoneShare(), 'stone after 20 s').toBeLessThan(0.31);
+    }, 120_000);
+  });
+});

@@ -35,6 +35,12 @@ export const AIR = {
   // matter, water 4.2): air's volumetric heat capacity is about 1/3,500 of water's, so about 0.0012. An air cell holds
   // this times `cellSize` squared. Tuned in M6.4a.
   heatCapacity: 0.04,
+  // A powder or liquid moving at least this fast (cells per dispatch) trades no heat with the air, as a flyer does: the
+  // exchange stands for a cell warming the still air beside it, and a cell crossing a new air cell every few dispatches
+  // would mix with a whole air cell of fresh air each frame (a lone falling lava cell would lose about 160 °C a frame,
+  // and a poured stream would set in mid-fall and hang there as stone). A cell falling from rest passes it after 8
+  // dispatches; one resting in moving air stays far below it.
+  stillSpeed: 0.25,
   // Upward acceleration of the air per degree it is above room temperature, in cells per dispatch squared: hot air rises,
   // cold air sinks. Friction (`velocityLoss`) limits the speed hot air reaches to `buoyancy` x degrees / `velocityLoss`.
   // Tuned in M6.4a: small enough that the pressure the rising air builds does not push sand, large enough that a
@@ -53,6 +59,10 @@ export const AIR = {
   // Fixed-point scale of the burst buffer: pressure released by a cell is added as an integer, so the sum is the same
   // whatever order the threads add in.
   burstScale: 1024,
+  // The air cell size, in grid cells along each axis, a `Transition.burst` is the pressure for: a cell's burst raises an
+  // air cell of this size by that much, and a smaller air cell by more, in the ratio of their areas (the same gas in less
+  // room), so a charge of powder raises the pressure around it by the same amount at every air cell size.
+  burstCellSize: 4,
   // The Wind tool's air speed per unit of pointer speed: a stroke that moves the pointer `d` grid cells over a frame of `n`
   // dispatches blows at gain x d / n cells per dispatch, capped at maxSpeed.
   windToolGain: 0.5,
@@ -155,6 +165,7 @@ const DIFFUSION: f32 = ${wgslFloat(diffusion)};
 const AIR_CONDUCTIVITY: f32 = ${wgslFloat(AIR.conductivity)};
 // The heat an air cell takes per degree: its \`S x S\` grid cells' worth.
 const AIR_CAPACITY: f32 = ${wgslFloat(AIR.heatCapacity * cellSize * cellSize)};
+const STILL_SPEED: f32 = ${wgslFloat(AIR.stillSpeed)};
 // Velocity gain per degree above room temperature over one step.
 const BUOYANCY: f32 = ${wgslFloat(AIR.buoyancy * dt)};
 const BURST_SCALE: f32 = ${wgslFloat(AIR.burstScale)};

@@ -1,6 +1,7 @@
 import { AIR, type AirShape } from '../air';
 import type { ElementDef } from '../elements';
 import { launchGroups, movementWGSL, wgslFloat } from '../movement';
+import { NO_PRESSURE } from '../element-table';
 import { airReadWGSL } from './air.wgsl';
 import { cellWGSL } from './cell.wgsl';
 import { elementsWGSL } from './elements.wgsl';
@@ -119,6 +120,8 @@ var<private> around: AirAround;
 
 const AIR_SI: i32 = ${air.cellSize};
 const BURST_SCALE: f32 = ${wgslFloat(AIR.burstScale)};
+// What a burst is multiplied by in an air cell of this size (\`AIR.burstCellSize\`).
+const BURST_GAIN: f32 = ${wgslFloat((AIR.burstCellSize / air.cellSize) ** 2)};
 // Pressure released by the CA, per array position of the air state; the air's pressure pass moves it into the pressure.
 @group(3) @binding(2) var<storage, read_write> airBurst: array<atomic<i32>>;
 ` : ''}
@@ -355,10 +358,11 @@ fn ageCell(c: Cell) -> Cell {
   return withLife(c, life - decay);
 }
 
-${air ? `// Adds pressure to the air cell over the grid cell (x, y). The amount is rounded to a whole number of 1 / BURST_SCALE:
-// integer additions commute, so the sum does not depend on the order the threads add in.
+${air ? `// Adds pressure to the air cell over the grid cell (x, y): \`amount\` for an air cell of \`AIR.burstCellSize\`, scaled to this
+// one's area. The amount is rounded to a whole number of 1 / BURST_SCALE: integer additions commute, so the sum does not
+// depend on the order the threads add in.
 fn releaseBurst(x: i32, y: i32, amount: f32) {
-  let fixed = i32(amount * BURST_SCALE + 0.5);
+  let fixed = i32(amount * BURST_GAIN * BURST_SCALE + 0.5);
   if (fixed != 0) { atomicAdd(&airBurst[airIndex(x / AIR_SI + 1, y / AIR_SI + 1)], fixed); }
 }
 
@@ -367,11 +371,32 @@ fn igniteBurst(t: u32, x: i32, y: i32) {
   if (elAboveBecomes(t) == EL_FIRE) { releaseBurst(x, y, elAboveBurst(t)); }
 }
 
+` : ''}${pressures ? `// What an element without a pressure transition packs as its limit (\`NO_PRESSURE\`).
+const NO_PRESSURE: f32 = ${wgslFloat(Math.fround(NO_PRESSURE))};
+
+// The pressure against the cell in slot i, at grid cell (x, y): the highest of the air cell over it and the air cells over
+// its two neighbors inside the block (across its column and across its row) that are open to the air, not solid. A solid
+// closes its air cell's faces, so the air cell a cell inside a wall sits in may be closed off from a blast beside it; the
+// open cell beside it carries the blast. A solid neighbor (a wall) is skipped: the air cell over it may be open on the
+// wall's far side. \`solid\` has bit k set when slot k held a solid as phase 8 began, so a neighbor crushed in this
+// dispatch does not open the way yet. The other two neighbors are inside the block on the other Margolus offset, the
+// next dispatch.
+fn pressureAgainst(i: u32, solid: u32, x: i32, y: i32) -> f32 {
+  var p = pressureAt(x / AIR_SI + 1, y / AIR_SI + 1);
+  if (((solid >> (i ^ 1u)) & 1u) == 0u) {
+    p = max(p, pressureAt((x + select(1, -1, (i & 1u) == 1u)) / AIR_SI + 1, y / AIR_SI + 1));
+  }
+  if (((solid >> (i ^ 2u)) & 1u) == 0u) {
+    p = max(p, pressureAt(x / AIR_SI + 1, (y + select(1, -1, (i >> 1u) == 1u)) / AIR_SI + 1));
+  }
+  return p;
+}
+
 ` : ''}// Phase 8 for one cell: once its stored temperature has run past a threshold by the whole latent width, the cell becomes
 // the element beyond it. It starts there at the threshold plus the overshoot scaled by the two heat capacities, so the
 // heat it holds is the heat it had; it starts with the new element's life. A large overshoot can carry it through the
 // next change in the same direction on the next dispatch. Cells that hold no heat have thresholds out of reach.
-fn transitionCell(c: Cell, x: i32, y: i32) -> Cell {
+fn transitionCell(c: Cell, i: u32, solid: u32, x: i32, y: i32) -> Cell {
   let t = cellType(c);
   let s = cellStoredTemp(c);
   let upper = elAboveTemp(t) + elAboveWidth(t);
@@ -386,11 +411,11 @@ ${air ? '    releaseBurst(x, y, elAboveBurst(t));\n' : ''}    let start = elAbov
     let start = elBelowTemp(t) - (lower - s) * elHeatCapacity(t) / elHeatCapacity(next);
     return retype(withTemp(c, start), next, cellVariant(c), elLifeStart(next));
   }
-${pressures ? `  // Then the pressure of the air cell over the cell: past the element's limit it becomes its pressure target, keeping its
-  // heat (not its temperature: the two elements hold different heat per degree, so the new cell starts at the temperature
-  // that holds the same heat, as above). Nothing is read from the cell's neighbors; the air state does not change during a
-  // dispatch.
-  if (pressureAt(x / AIR_SI + 1, y / AIR_SI + 1) > elPressureAbove(t)) {
+${pressures ? `  // Then the pressure against the cell: past the element's limit it becomes its pressure target, keeping its heat (not
+  // its temperature: the two elements hold different heat per degree, so the new cell starts at the temperature that
+  // holds the same heat, as above). No cell outside the block is read, only the air, which does not change during a
+  // dispatch. Elements without one skip the air reads.
+  if (elPressureAbove(t) < NO_PRESSURE && pressureAgainst(i, solid, x, y) > elPressureAbove(t)) {
     let next = elPressureBecomes(t);
     let start = s * elHeatCapacity(t) / elHeatCapacity(next);
     return retype(withTemp(c, start), next, cellVariant(c), elLifeStart(next));
@@ -515,8 +540,9 @@ ${ignitionApplied}` : ''}
     // Phase 7: Heat conduction
 ${conduction}
 ${transitions ? `
-    // Phase 8: Phase changes
-${SLOTS.map((n) => `    blk${n} = transitionCell(blk${n}, ox + ${n & 1}, oy + ${n >> 1});`).join('\n')}` : ''}
+    // Phase 8: Phase changes. \`solid\`: the slots that hold a solid as it begins (bit k for slot k).
+    let solid = ${SLOTS.map((n) => `select(0u, ${1 << n}u, cellState(blk${n}) == ST_SOLID)`).join(' | ')};
+${SLOTS.map((n) => `    blk${n} = transitionCell(blk${n}, ${n}u, solid, ox + ${n & 1}, oy + ${n >> 1});`).join('\n')}` : ''}
 
 ${storeBlock}
   }

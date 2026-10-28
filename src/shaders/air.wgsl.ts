@@ -235,17 +235,19 @@ ${ENTRY} {
  * The exchange pass, one thread per air cell, once per call to `simulate` (the air steps of the call are folded into it):
  * exchanges heat between the air cell and the cells that hold heat and belong to it, one after the other in row-major
  * order (every cell at its own turn sees the air as the cells before it left it, so the exchange conserves heat and
- * never overshoots). A pair that would exchange `g` of its difference at each of `steps` air steps exchanges
- * `1 - (1 - g)^steps` at once, what the steps would leave of it if the air stood still between them. A cell that is not solid belongs to the air cell it is in. A solid cell belongs to the air cell of
- * its first neighbor (up, left, right, down) that is empty space, a gas or fire: the air cells inside a block of metal are
- * closed off, and its surface must reach the open air next to it. A solid with no such neighbor belongs to none and a cell
- * on the grid's edge counts the outside as no neighbor. The thread reads the one-cell ring around its cells to find the
- * solids that belong to it, so no cell belongs to two threads. Cells hold their temperature in `temp`, which this
- * pass writes; it runs before the CA dispatches, so nothing else touches it.
+ * never overshoots). A powder or liquid moving at `AIR.stillSpeed` or faster takes no part, as a flyer. A pair that
+ * would exchange `g` of its difference at each of `steps` air steps exchanges `1 - (1 - g)^steps` at once, what the
+ * steps would leave of it if the air stood still between them. A cell that is not solid belongs to the air cell it is
+ * in. A solid cell belongs to the air cell of its first neighbor (up, left, right, down) that is empty space, a gas or
+ * fire: the air cells inside a block of metal are closed off, and its surface must reach the open air next to it. A
+ * solid with no such neighbor belongs to none and a cell on the grid's edge counts the outside as no neighbor. The
+ * thread reads the one-cell ring around its cells to find the solids that belong to it, so no cell belongs to two
+ * threads. Cells hold their temperature in `temp`, which this pass writes; it runs before the CA dispatches, so nothing
+ * else touches it.
  */
 export const airExchangeWGSL = (elements: readonly ElementDef[], width: number, height: number, cellSize: number, substeps: number, nx: number, ny: number): string => /* wgsl */`
 ${cellTypesWGSL(elements)}
-${cellBindingsWGSL('read_write', ['kind', 'temp'])}
+${cellBindingsWGSL('read_write', ['kind', 'velocity', 'temp'])}
 ${elementsWGSL}
 ${prelude(width, height, cellSize, substeps, nx, ny)}
 
@@ -296,6 +298,8 @@ ${ENTRY} {
       let i = u32(y * W + x);
       let t = loadKind(i) & 0xffu;
       if (!elHoldsHeat(t)) { continue; }
+      // A falling cell keeps its heat until it slows down (\`AIR.stillSpeed\`).
+      if (length(unpack2x16float(field_velocity[i])) >= STILL_SPEED) { continue; }
       let inside = insideX && insideY;
       if (!inside && elState(t) != ST_SOLID) { continue; }
       if (airOf(x, y, t) != k) { continue; }

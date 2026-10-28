@@ -548,17 +548,18 @@ describe.skipIf(!device)('M5.4c phase changes in scenes', () => {
     }
     const kinds = await readCells(sim);
     const melted = (iceCells - count(kinds, T.ICE)) / iceCells;
-    // First run: water at superstep 2, steam at 4 (the 8 ice cells touching the lava melt together and boil together), and
-    // after 600 supersteps a share of 0.36 melted (the steam pushes the lava back, and empty space carries no heat until
-    // M6, so the rest of the block stays), 36 steam, 0 water left and 40 stone. Limits: 30% around each.
+    // Measured: water at superstep 4, steam at 7 (the 8 ice cells touching the lava melt together and boil together), and
+    // after 600 supersteps a share of 0.65 melted (the steam pushes the lava back, and without air empty space carries no
+    // heat, so the rest of the block stays), 65 steam, 0 water left and 35 stone, with lava's latent heat of 1,200 and
+    // conductivity of 0.04 (M6.6g). Limits: 30% around each.
     expect(firstWater, 'superstep of the first water').toBeGreaterThan(0);
     expect(firstSteam, 'superstep of the first steam, after the first water').toBeGreaterThan(firstWater);
-    expect(melted, 'share of the ice melted').toBeGreaterThanOrEqual(0.25);
-    expect(melted, 'share of the ice melted').toBeLessThanOrEqual(0.47);
-    expect(count(kinds, T.STEAM), 'steam').toBeGreaterThanOrEqual(26);
-    expect(count(kinds, T.STEAM), 'steam').toBeLessThanOrEqual(46);
-    expect(count(kinds, T.STONE), 'stone').toBeGreaterThanOrEqual(28);
-    expect(count(kinds, T.STONE), 'stone').toBeLessThanOrEqual(52);
+    expect(melted, 'share of the ice melted').toBeGreaterThanOrEqual(0.45);
+    expect(melted, 'share of the ice melted').toBeLessThanOrEqual(0.85);
+    expect(count(kinds, T.STEAM), 'steam').toBeGreaterThanOrEqual(45);
+    expect(count(kinds, T.STEAM), 'steam').toBeLessThanOrEqual(85);
+    expect(count(kinds, T.STONE), 'stone').toBeGreaterThanOrEqual(24);
+    expect(count(kinds, T.STONE), 'stone').toBeLessThanOrEqual(46);
   }, 60_000);
 
   function steamCeilingSim(ceilingTemp: number): Simulation {

@@ -146,6 +146,8 @@ export const MAX_ELEMENTS = 256;
 const WATER_BURST = 0.1;
 // The pressure a cell of gunpowder releases as it burns.
 const GUNPOWDER_BURST = 3;
+// Heat a cell of lava gives out as it sets into stone, and stone takes in as it melts (see the LAVA row).
+const LAVA_LATENT = 1200;
 // The pressure that crushes stone into sand (`ElementDef.pressureAbove`).
 const STONE_CRUSH = 0.45;
 
@@ -224,7 +226,8 @@ export const ELEMENTS = [
     above: { temp: 1538, becomes: 'MOLTEN_METAL', latent: 600 },
     toolbar: 7,
   },
-  // Granite-like stone: about 2.5 W/m·K (rank 0.1), 2.2 MJ/m³·K. Melts into lava at 1,200 °C.
+  // Granite-like stone: about 2.5 W/m·K (rank 0.1), 2.2 MJ/m³·K. Melts into lava at 1,200 °C, taking rock's physical latent
+  // heat (see LAVA).
   {
     key: 'STONE',
     id: 8,
@@ -234,7 +237,7 @@ export const ELEMENTS = [
     density: 2700,
     conductivity: 0.1,
     heatCapacity: 2.2,
-    above: { temp: 1200, becomes: 'LAVA', latent: 400 },
+    above: { temp: 1200, becomes: 'LAVA', latent: LAVA_LATENT },
     // Crushed rock: a blast turns stone into sand, its stand-in. The pressure is tuned in tests/air-crush.test.ts so that a
     // gunpowder charge of about 50 cells crushes the stone within about 15 cells.
     pressureAbove: { pressure: STONE_CRUSH, becomes: 'SAND' },
@@ -269,8 +272,10 @@ export const ELEMENTS = [
     below: { temp: 100, becomes: 'WATER', latent: 400 },
     toolbar: 11,
   },
-  // Lava is molten stone: liquid stone at 2,700 kg/m³, painted at 1,300 °C and setting at 1,200. One molten element per
-  // meltable material (backlog I15).
+  // Lava is molten stone: liquid stone at 2,700 kg/m³, painted at 1,300 °C and setting at 1,200. Its latent heat is rock's
+  // physical one, unlike the other rows' tuned values: about 450 kJ/kg (basalt) at 2,700 kg/m³ is 1,200 MJ/m³, in the
+  // units of `heatCapacity` (MJ/m³·K). It is what keeps a pile of lava flowing in open air for a while: with a third of it
+  // a pile's sides set within 5 s at 1x. One molten element per meltable material (backlog I15).
   {
     key: 'LAVA',
     id: 11,
@@ -279,9 +284,10 @@ export const ELEMENTS = [
     state: 'liquid',
     density: 2700,
     temperature: 1300,
-    conductivity: 0.15,
+    // Molten basalt conducts about 1 W/m·K, less than solid rock (rank 0.04 against stone's 0.1).
+    conductivity: 0.04,
     heatCapacity: 2.6,
-    below: { temp: 1200, becomes: 'STONE', latent: 400 },
+    below: { temp: 1200, becomes: 'STONE', latent: LAVA_LATENT },
     toolbar: 10,
   },
   // Molten steel: 7,000 kg/m³, painted at 1,600 °C, sets back into METAL at 1,538. Not paintable: metal melts into it.

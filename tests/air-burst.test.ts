@@ -105,6 +105,21 @@ describe.skipIf(!device)('M6 bursts', () => {
       expect(totalPressure((await sim.air.read()).pressure)).toBeCloseTo(CHARGE_CELLS * GUNPOWDER_BURST * KEEP, 2);
     });
 
+    // The burst is the pressure for an air cell of `AIR.burstCellSize`: in a smaller air cell the same gas raises the
+    // pressure more, by the ratio of the areas, so the pressure summed over the area is the same at every size.
+    it.each([4, 2] as const)('M6 AC29: a charge raises the pressure over its area by the same amount at air cell size %i', async (airCellSize) => {
+      const { kind, width, height } = charge({ lit: false });
+      const temp = new Uint32Array(width * height);
+      const temps = tempView({ temp });
+      temps.fill(20);
+      for (let i = 0; i < kind.length; i++) if (cellType(kind[i]) === T.GUNPOWDER) temps[i] = GUNPOWDER.above!.temp + 100;
+      const sim = createSim(width, height, 3, { airCellSize });
+      sim.load({ kind, temp });
+      await run(sim, 1);
+      const area = (airCellSize / AIR.burstCellSize) ** 2;
+      expect(totalPressure((await sim.air.read()).pressure) * area).toBeCloseTo(CHARGE_CELLS * GUNPOWDER_BURST * KEEP, 2);
+    });
+
     it('M6 AC13: cold gunpowder with no fire near it releases nothing, and the air stays at rest', async () => {
       const { kind, width, height } = charge({ lit: false });
       const sim = createSim(width, height, 3);
@@ -320,9 +335,10 @@ describe.skipIf(!device)('M6 bursts', () => {
     // every 60.
     const WINDOW = 60;
     const RECORDS = 50;
-    // Measured (seed 7): the grains on the ceiling are gone by 600 supersteps after ignition and the flyers have landed but
-    // the 13 to 17 that jam (backlog D29) by 840.
-    const SETTLED = 840;
+    // Measured (seed 7): the grains on the ceiling are gone by 600 supersteps after ignition, the flyers have landed but
+    // the 30 to 40 that jam (backlog D29) by 840, and the last gunpowder that hot debris lights burns by 1,080 (a grain
+    // falling through the air keeps its heat, AIR.stillSpeed).
+    const SETTLED = 1080;
     // The creep bar is read from here: the sliding of loose grains under the plume falls below 1% of the sand per 60
     // supersteps at about this time (the plan asked for 1,200; M6.6f, option (a)). Between 2,400 and 2,700 the share wanders
     // between 0.9% and 1.1% around the bar, so it is read from 2,760, where it is 0.8% to 0.9% (M6.7a).
@@ -391,7 +407,7 @@ describe.skipIf(!device)('M6 bursts', () => {
       expect(settled.every((r) => r.gunpowder === settled[0].gunpowder), 'no gunpowder ignites once settled').toBe(true);
     });
 
-    it('M6 AC27: the air over the hot ground stays within the pressure of its plume (measured 0.124 at 840 supersteps, falling)', () => {
+    it('M6 AC27: the air over the hot ground stays within the pressure of its plume (measured 0.119 at 1,080 supersteps, falling)', () => {
       for (const r of after(SETTLED)) expect(r.pressure, '|pressure|').toBeLessThan(0.2);
     });
 

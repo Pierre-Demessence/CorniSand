@@ -112,7 +112,7 @@ export class AirGrid {
     });
 
     const kind = fields.subset(['kind']);
-    const heat = fields.subset(['kind', 'temp'], 'read_write');
+    const heat = fields.subset(['kind', 'velocity', 'temp'], 'read_write');
     this.kindBindGroup = kind.bindGroup;
     this.elementBindGroup = elements.bindGroup;
     const pipeline = (code: string, layouts: GPUBindGroupLayout[]): GPUComputePipeline => device.createComputePipeline({
