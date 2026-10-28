@@ -31,6 +31,7 @@ fn elInert(t: u32) -> bool { return elements[t].inert != 0u; }
 fn elTemperature(t: u32) -> f32 { return elements[t].temperature; }
 fn elConductivity(t: u32) -> f32 { return elements[t].conductivity; }
 fn elHeatCapacity(t: u32) -> f32 { return elements[t].heatCapacity; }
+fn elAirCoupling(t: u32) -> f32 { return elements[t].airCoupling; }
 fn elHoldsHeat(t: u32) -> bool { return elements[t].holdsHeat != 0u; }
 fn elBelowTemp(t: u32) -> f32 { return elements[t].belowTemp; }
 fn elBelowWidth(t: u32) -> f32 { return elements[t].belowWidth; }

@@ -1,4 +1,5 @@
 import type { ElementDef } from './elements';
+import { CELL_SIZE, HEAT_UNIT, PAIR_TIME } from './physics';
 
 // Temperatures, in °C. A cell's stored temperature is its `temp` field (`src/cell-fields.ts`); empty space and walls
 // hold no heat, and their `temp` word means nothing.
@@ -12,6 +13,23 @@ export const MAX_TEMP = 9999;
 
 /** What the Heat and Cool tools add to or take from every cell of the stroke per frame: about 1,000 °C a second at 60 FPS. */
 export const HEAT_TOOL_RATE = 17;
+
+/**
+ * Share of the temperature difference per unit of conductivity (W/m·K) and per unit of 1 / capacity (MJ/m³·K) that a
+ * pair of neighbors closes in one exchange: PAIR_TIME / CELL_SIZE² of the explicit heat equation, in the table's units.
+ */
+export const CONDUCTION = PAIR_TIME / CELL_SIZE ** 2 / HEAT_UNIT;
+
+/**
+ * The share of the way to their capacity-weighted mean that two neighbors move in one exchange (`exchangeHeat`): the
+ * heat equation for a pair of cells, with the harmonic mean of their conductivities (W/m·K) and their capacities
+ * (MJ/m³·K), at most 1 (never past the mean). 0 when either conducts nothing. Mirrors the share in `exchangeHeat` in
+ * `src/shaders/heat.wgsl.ts`.
+ */
+export function heatShare(kA: number, cA: number, kB: number, cB: number): number {
+  if (!(kA > 0 && kB > 0)) return 0;
+  return Math.min(1, CONDUCTION * ((2 * kA * kB) / (kA + kB)) * ((cA + cB) / (cA * cB)));
+}
 
 /** The threshold of a transition an element does not have: far enough out that no stored temperature reaches it, and still a finite f32. */
 export const NO_THRESHOLD = 3e38;

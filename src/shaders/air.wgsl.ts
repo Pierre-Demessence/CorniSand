@@ -304,7 +304,7 @@ ${ENTRY} {
       if (!inside && elState(t) != ST_SOLID) { continue; }
       if (airOf(x, y, t) != k) { continue; }
       // The pair's exchange, as \`exchangeHeat\`: the cell's temperature is its stored one clamped to its thresholds.
-      let kc = elConductivity(t);
+      let kc = elAirCoupling(t);
       if (kc <= 0.0) { continue; }
       let d = clamp(field_temp[i], elBelowTemp(t), elAboveTemp(t)) - airTemp;
       if (d == 0.0) { continue; }

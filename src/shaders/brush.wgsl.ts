@@ -41,7 +41,9 @@ fn brushReaches(pos: vec2f) -> bool {
 // never see a half-painted block. A painted cell starts at its element's
 // temperature; replacing a cell discards its temperature with the rest of it. With `heating` set (the Heat and Cool
 // tools) it paints nothing: it adds `heating` °C to the stored temperature of every cell that holds heat, within
-// absolute zero and the table's maximum, and leaves empty space and walls alone.
+// absolute zero and the table's maximum, widened to the whole latent range of the element's thresholds (a condensing
+// steam cell's stored temperature runs under absolute zero, and the tools never cut that progress), and leaves empty
+// space and walls alone.
 export const brushWGSL = (width: number, height: number, elements: readonly ElementDef[]): string => /* wgsl */`
 ${cellWGSL('read_write', elements)}
 ${elementsWGSL}
@@ -67,8 +69,13 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   }
 
   if (b.heating != 0.0) {
-    if (elHoldsHeat(cellType(current))) {
-      storeCell(idx, withTemp(current, clamp(cellStoredTemp(current) + b.heating, ${ABSOLUTE_ZERO}, ${MAX_TEMP}.0)));
+    let t = cellType(current);
+    if (elHoldsHeat(t)) {
+      var lowest = ${ABSOLUTE_ZERO};
+      if (elBelowTemp(t) > -1e30) { lowest = min(lowest, elBelowTemp(t) - elBelowWidth(t)); }
+      var highest = ${MAX_TEMP}.0;
+      if (elAboveTemp(t) < 1e30) { highest = max(highest, elAboveTemp(t) + elAboveWidth(t)); }
+      storeCell(idx, withTemp(current, clamp(cellStoredTemp(current) + b.heating, lowest, highest)));
     }
     return;
   }

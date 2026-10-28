@@ -1,17 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { tempView } from '../src/cell-fields';
-import { ELEMENT as T, ELEMENTS, elementByKey, elementHeatCapacity } from '../src/elements';
+import { ELEMENT as T, ELEMENTS, crushPressure, elementByKey, elementHeatCapacity } from '../src/elements';
 import { caWGSL } from '../src/shaders/ca.wgsl';
 import { RULES } from '../src/shaders/rules';
 import type { AirCellSize } from '../src/air';
 import { FRAME_SUPERSTEPS, cell, cellType, createSim, device, loadScene, readCells, run, runMany } from './gpu';
 
-// Pressure transitions (M6.5): a cell whose air cell is above its element's `pressureAbove.pressure` becomes the target
+// Pressure transitions (M6.5): a cell whose air cell is above its element's crush pressure (`crushPressure`) becomes the target
 // element in that dispatch, keeping its temperature. STONE is crushed into SAND.
 
 const STONE = elementByKey(ELEMENTS, 'STONE');
 const SAND = elementByKey(ELEMENTS, 'SAND');
-const LIMIT = STONE.pressureAbove!.pressure;
+const LIMIT = crushPressure(STONE)!;
 // What 500 °C of stone becomes as sand: the same heat.
 const SAND_TEMP = (500 * elementHeatCapacity(STONE)) / elementHeatCapacity(SAND);
 

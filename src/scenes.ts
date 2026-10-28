@@ -280,11 +280,11 @@ export function iceLava(): Scene {
 export const STEAM_CEILING = {
   width: 44,
   height: 28,
-  ceiling: { x0: WALL, x1: 42, y0: 22, y1: 26, temp: -50 },
-  steam: { x0: WALL, x1: 42, y0: 18, y1: 22 },
+  ceiling: { x0: WALL, x1: 42, y0: 18, y1: 26, temp: -50 },
+  steam: { x0: WALL, x1: 42, y0: 17, y1: 18 },
 };
 
-/** A closed box of walls holding a 4-row metal ceiling at -50 °C with 4 rows of steam at 110 °C under it. Steam rising against the cold ceiling condenses. */
+/** A closed box of walls holding an 8-row metal ceiling at -50 °C with a row of steam at 110 °C under it (condensing takes 2,257 per cell, so the ceiling must hold a lot of cold). Steam against the cold ceiling condenses. */
 export function steamCeiling(): Scene {
   const { width, height, ceiling, steam } = STEAM_CEILING;
   const canvas = new Canvas(width, height);

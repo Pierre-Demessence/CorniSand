@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { AIR, type AirCellSize } from '../src/air';
 import { emptyCellData, tempView } from '../src/cell-fields';
-import { ELEMENT as T, ELEMENTS, elementByKey, elementConductivity, elementHeatCapacity } from '../src/elements';
+import { ELEMENT as T, ELEMENTS, elementByKey, elementAirCoupling, elementHeatCapacity } from '../src/elements';
 import { packHalf2 } from '../src/half';
 import { ROOM_TEMP } from '../src/heat';
 import { PLUME, plume } from '../src/scenes';
@@ -22,8 +22,9 @@ const MEASURED = {
 const COOLING_STEPS = 30_000;
 // Supersteps the plume has had to develop.
 const PLUME_STEPS = 960;
-// All 64 steam cells have condensed after about 840 supersteps.
-const STEAM_STEPS = 1200;
+// All 64 steam cells have condensed after about 2,800 supersteps (M8.8c: each gives the air 2,257 as it condenses; before,
+// about 840). Limit with a 30% margin: 3,600.
+const STEAM_STEPS = 3600;
 
 // A world of cells at room temperature, edited by rectangles; row y = 0 is the bottom.
 class World {
@@ -88,7 +89,7 @@ describe.skipIf(!device)('M6 ambient heat', () => {
     // The temperature a metal cell at `from` has after one exchange with an air cell at room temperature.
     // `steps` air steps folded into one exchange: a pair that trades a share g per step trades 1 - (1 - g)^steps at once.
     function exchange(from: number, cellSize: number, steps = 1): number {
-      const [km, c] = [elementConductivity(metal), elementHeatCapacity(metal)];
+      const [km, c] = [elementAirCoupling(metal), elementHeatCapacity(metal)];
       const capacity = AIR.heatCapacity * cellSize * cellSize;
       const g = (2 * km * AIR.conductivity) / (km + AIR.conductivity);
       const share = steps === 1 ? g : 1 - (1 - g) ** steps;

@@ -161,9 +161,12 @@ describe.skipIf(!device)('M6 bursts', () => {
   describe('AC13: water', () => {
     const WIDTH = 160;
     const HEIGHT = 96;
-    // Measured with the water pouring onto lava below: the largest pressure and the fastest air in 60 supersteps.
-    const MEASURED_PEAK = 0.175;
-    const MEASURED_SPEED = 0.21;
+    // Measured with the water pouring onto lava below: the largest pressure and the fastest air in 1,000 supersteps. (M8.8c:
+    // boiling takes 2,257 a cell at real heat speed, so the water boils over about 900 supersteps; before, the peak 0.175 and
+    // the speed 0.21 came within 60.)
+    const MEASURED_PEAK = 0.14;
+    const MEASURED_SPEED = 0.18;
+    const POUR_SUPERSTEPS = 1000;
 
     // A tank with a layer of lava on the floor and, when `water`, a block of water hanging above it.
     function pour(options: { lava: boolean }): Kinds {
@@ -198,8 +201,8 @@ describe.skipIf(!device)('M6 bursts', () => {
       const temp = new Uint32Array(WIDTH * HEIGHT);
       const temps = tempView({ temp });
       temps.fill(20);
-      // Past the boiling point and the latent width: it flashes in the first dispatch.
-      temps[at] = 300;
+      // Past the boiling point and the latent width (2,257 / 4.18 = 540 °C): it flashes in the first dispatch.
+      temps[at] = 800;
       const sim = createSim(WIDTH, HEIGHT, 5);
       sim.load({ kind: kinds.kind, temp });
       await run(sim, 1);
@@ -216,7 +219,7 @@ describe.skipIf(!device)('M6 bursts', () => {
     it('M6 AC13: water poured onto lava raises the pressure and moves the air', async () => {
       const sim = createSim(WIDTH, HEIGHT, 5);
       sim.load({ kind: pour({ lava: true }).kind });
-      const { pressure, speed } = await extremes(sim, 60);
+      const { pressure, speed } = await extremes(sim, POUR_SUPERSTEPS);
       expect(pressure, 'peak pressure').toBeGreaterThanOrEqual(MEASURED_PEAK * 0.7);
       expect(speed, 'fastest wind, cells per dispatch').toBeGreaterThanOrEqual(MEASURED_SPEED * 0.7);
     }, 60_000);

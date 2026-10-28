@@ -1,4 +1,5 @@
-import { GLOW_FULL, GLOW_RAMP, GLOW_START, HEAT_RAMP, type RampKnot } from '../heat';
+import { CONDUCTION, GLOW_FULL, GLOW_RAMP, GLOW_START, HEAT_RAMP, type RampKnot } from '../heat';
+import { wgslFloat } from '../movement';
 
 // Heat in the CA: the WGSL for conduction between the cells of a block. Needs the `Cell` type and the element table.
 
@@ -13,9 +14,12 @@ fn cellTemp(c: Cell) -> f32 {
 
 // One heat exchange between two cells of a block; returns their new stored temperatures. The pair meets at the
 // harmonic mean of their conductivities, 2 ka kb / (ka + kb), which is 0 when either is 0 (the plain formula is 0/0 for
-// two cells that hold no heat). Each cell moves toward the capacity-weighted mean of the two and never past it, so any
-// conductivity in [0, 1] is stable, and the heat gained by one is the heat lost by the other. A pair that exchanges
-// nothing gets its own words back, so a cell that holds no heat keeps its \`temp\` word.
+// two cells that hold no heat). Each cell moves toward the capacity-weighted mean of the two by a share of the way
+// (\`heatShare\` in src/heat.ts: the heat equation on the physical scale, at most 1), so any conductivity is stable and
+// never goes past the mean, and the heat gained by one is the heat lost by the other. A pair that exchanges nothing gets
+// its own words back, so a cell that holds no heat keeps its \`temp\` word.
+const CONDUCTION: f32 = ${wgslFloat(CONDUCTION)};
+
 fn exchangeHeat(a: Cell, b: Cell) -> vec2f {
   let ka = elConductivity(cellType(a));
   let kb = elConductivity(cellType(b));
@@ -24,7 +28,8 @@ fn exchangeHeat(a: Cell, b: Cell) -> vec2f {
   if (d == 0.0) { return vec2f(a.temp, b.temp); }
   let ca = elHeatCapacity(cellType(a));
   let cb = elHeatCapacity(cellType(b));
-  let flow = (2.0 * ka * kb / (ka + kb)) * d / (ca + cb);
+  let share = min(1.0, CONDUCTION * (2.0 * ka * kb / (ka + kb)) * (ca + cb) / (ca * cb));
+  let flow = share * d / (ca + cb);
   return vec2f(a.temp - flow * cb, b.temp + flow * ca);
 }
 `;

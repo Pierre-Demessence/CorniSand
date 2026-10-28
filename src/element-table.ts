@@ -1,5 +1,5 @@
 import {
-  MAX_ELEMENTS, STATES, elementByKey, elementConductivity, elementDrag, elementGravity, elementHeatCapacity, elementHoldsHeat, elementInert, elementTemperature,
+  MAX_ELEMENTS, STATES, crushPressure, elementAirCoupling, elementByKey, elementConductivity, elementDrag, elementGravity, elementHeatCapacity, elementHoldsHeat, elementInert, elementTemperature,
   latentWidth, transitionBurst, validateElements, type ElementDef,
 } from './elements';
 import { NO_THRESHOLD } from './heat';
@@ -54,9 +54,10 @@ export const PROP_FIELDS: readonly PropField[] = [
   // The pressure the cell releases into the air as it passes the above threshold, or ignites into FIRE.
   { name: 'aboveBurst', wgslType: 'f32', value: (e) => (e.above ? transitionBurst(e.above) : 0) },
   // The pressure above which the cell becomes the element in bits 16-23 of `transitions`; out of reach when absent.
-  { name: 'pressureAbove', wgslType: 'f32', value: (e) => e.pressureAbove?.pressure ?? NO_PRESSURE },
+  { name: 'pressureAbove', wgslType: 'f32', value: (e) => crushPressure(e) ?? NO_PRESSURE },
+  // The interim rank of the cell's heat exchange with the air (`ElementDef.airCoupling`), until M8.8d.
+  { name: 'airCoupling', wgslType: 'f32', value: (e) => elementAirCoupling(e) },
   // Padding up to the next multiple of four words.
-  { name: 'pad1', wgslType: 'u32', value: () => 0 },
   { name: 'pad2', wgslType: 'u32', value: () => 0 },
 ];
 

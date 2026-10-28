@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { tempView } from '../src/cell-fields';
 import { ELEMENT as T, ELEMENTS, elementByKey, elementConductivity, elementHeatCapacity, elementTemperature, type ElementDef } from '../src/elements';
 import { packHalf2 } from '../src/half';
-import { ABSOLUTE_ZERO, HEAT_TOOL_RATE, MAX_TEMP, ROOM_TEMP, effectiveTemp } from '../src/heat';
+import { ABSOLUTE_ZERO, HEAT_TOOL_RATE, MAX_TEMP, ROOM_TEMP, effectiveTemp, heatShare } from '../src/heat';
 import { HEAT_BARS, ICE_LAVA, MOLTEN_METAL, STEAM_CEILING, SCENES } from '../src/scenes';
 import type { CellProbe, Simulation } from '../src/simulation';
 import { TOOLS } from '../src/toolbar';
@@ -180,7 +180,10 @@ function meanTemp(temps: Float32Array, width: number, x0: number, x1: number, y0
 describe.skipIf(!device)('M5.3 conduction', () => {
   it.each(['METAL', 'STONE'])('AC5: the heat of a hot line in a %s slab spreads at the rate its conductivity gives', async (key) => {
     const element = elementByKey(ELEMENTS, key);
-    const kappa = elementConductivity(element);
+    // The share of a pair of its cells (M8.8c: the heat equation on the physical scale).
+    const kappa = heatShare(elementConductivity(element), elementHeatCapacity(element), elementConductivity(element), elementHeatCapacity(element));
+    // Stone is 12 times slower than the metal: it runs 10 times longer for a comparable spread.
+    const supersteps = key === 'METAL' ? 300 : 3000;
     const width = 256;
     const height = 8;
     const kind = new Uint32Array(width * height).fill(cell(element.id));
@@ -192,34 +195,39 @@ describe.skipIf(!device)('M5.3 conduction', () => {
 
     await runMany(sim, 100);
     const before = excessVariance(await readTemps(sim), width, height, 20);
-    await runMany(sim, 300);
+    await runMany(sim, supersteps);
     const after = excessVariance(await readTemps(sim), width, height, 20);
 
-    // 300 supersteps are 600 dispatches; each adds kappa / (2 - kappa) cells² along x.
-    const ratio = (after - before) / ((600 * kappa) / (2 - kappa));
+    // Each superstep is 2 dispatches, and each adds kappa / (2 - kappa) cells² along x.
+    const ratio = (after - before) / ((2 * supersteps * kappa) / (2 - kappa));
     expect(ratio, `variance growth over the formula's, ${key}`).toBeGreaterThan(0.95);
     expect(ratio, `variance growth over the formula's, ${key}`).toBeLessThan(1.05);
   }, 60_000);
 
   it('AC6: heat crosses a metal bar at least 5 times faster than a stone bar of the same size', async () => {
     const scene = SCENES.heatBars();
-    const { width, x1, cold, metalY0, stoneY0, barHeight } = HEAT_BARS;
+    const { width, x0, hotColumns, cold, metalY0, stoneY0, barHeight } = HEAT_BARS;
+    // Four columns 14 cells past the hot end (19 mm): at real speed, heat takes minutes to cross the whole bar in steel and
+    // about an hour in stone.
+    const probeX = x0 + hotColumns + 14;
     const sim = createSim(scene.width, scene.height);
     sim.load(scene.fields);
 
     const reached: Record<string, number | undefined> = {};
-    const step = 10;
-    const cap = 6000;
+    const step = 100;
+    const cap = 60000;
     for (let supersteps = step; supersteps <= cap && (reached.metal === undefined || reached.stone === undefined); supersteps += step) {
       await runMany(sim, step);
       const temps = await readTemps(sim);
       for (const [name, y0] of [['metal', metalY0], ['stone', stoneY0]] as const) {
-        if (reached[name] === undefined && meanTemp(temps, width, x1 - 4, x1, y0, y0 + barHeight) > cold + 10) reached[name] = supersteps;
+        if (reached[name] === undefined && meanTemp(temps, width, probeX, probeX + 4, y0, y0 + barHeight) > cold + 10) reached[name] = supersteps;
       }
     }
 
-    expect(reached.metal, 'superstep the far end of the metal bar passed 30 °C').toBeDefined();
-    expect(reached.stone, 'superstep the far end of the stone bar passed 30 °C (cap 6,000)').toBeDefined();
+    expect(reached.metal, 'superstep the probed columns of the metal bar passed cold + 10 °C').toBeDefined();
+    expect(reached.stone, 'superstep the probed columns of the stone bar passed cold + 10 °C (cap 60,000)').toBeDefined();
+    // First run (M8.8c): metal at 1,000 supersteps (4.2 s), stone at 11,900 (50 s), a ratio of 11.9 against 12.6 for their
+    // diffusivities (50 / 3.5 and 2.5 / 2.2).
     expect(reached.stone! / reached.metal!, `metal at ${reached.metal}, stone at ${reached.stone}`).toBeGreaterThanOrEqual(5);
   }, 120_000);
 
@@ -245,25 +253,27 @@ describe.skipIf(!device)('M5.3 conduction', () => {
   });
 
   it('AC7: two touching blocks settle at their capacity-weighted mean temperature', async () => {
-    const width = 20;
-    const height = 12;
+    // Small blocks: at real speed a stone block 8 cells thick takes minutes to level out.
+    const width = 8;
+    const height = 8;
     const sim = createSim(width, height);
     const kind = new Uint32Array(width * height);
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         if (y < 2 || y >= height - 2 || x < 2 || x >= width - 2) kind[y * width + x] = cell(T.WALL);
-        else kind[y * width + x] = cell(x < 10 ? T.METAL : T.STONE);
+        else kind[y * width + x] = cell(x < 4 ? T.METAL : T.STONE);
       }
     }
     const temp = uniformTemps(width * height, 20);
     const temps = tempView({ temp });
-    for (let y = 2; y < height - 2; y++) for (let x = 2; x < 10; x++) temps[y * width + x] = 500;
+    for (let y = 2; y < height - 2; y++) for (let x = 2; x < 4; x++) temps[y * width + x] = 500;
     sim.load({ kind, temp });
     const capacityMetal = elementHeatCapacity(elementByKey(ELEMENTS, 'METAL'));
     const capacityStone = elementHeatCapacity(elementByKey(ELEMENTS, 'STONE'));
     const mean = (capacityMetal * 500 + capacityStone * 20) / (capacityMetal + capacityStone);
 
-    await runMany(sim, 2500);
+    // The stone block levels out with a time constant of about 2.6 s (630 supersteps); 6,000 supersteps are 10 of them.
+    await runMany(sim, 6000);
 
     const after = await readTemps(sim);
     for (let y = 2; y < height - 2; y++) {
@@ -283,9 +293,8 @@ describe.skipIf(!device)('M5.3 conduction', () => {
     sim.load({ kind, temp });
     const metal = elementByKey(ELEMENTS, 'METAL');
     const stone = elementByKey(ELEMENTS, 'STONE');
-    const [km, ks] = [elementConductivity(metal), elementConductivity(stone)];
     const [cm, cs] = [elementHeatCapacity(metal), elementHeatCapacity(stone)];
-    const flow = ((2 * km * ks) / (km + ks)) * 480 / (cm + cs);
+    const flow = heatShare(elementConductivity(metal), cm, elementConductivity(stone), cs) * 480 / (cm + cs);
 
     await runMany(sim, 1);
 
@@ -294,7 +303,7 @@ describe.skipIf(!device)('M5.3 conduction', () => {
     expect(after[1], 'stone').toBeCloseTo(20 + flow * cm, 3);
   });
 
-  it('AC8: a sealed box of moving and fixed materials keeps its total heat over 2,000 supersteps', async () => {
+  it('AC8: a sealed box of moving and fixed materials keeps its total heat over 8,000 supersteps', async () => {
     const width = 48;
     const height = 40;
     const sim = createSim(width, height, 8, NO_AIR);
@@ -322,23 +331,33 @@ describe.skipIf(!device)('M5.3 conduction', () => {
       }
     }
     sim.load({ kind, temp });
+    // The largest difference between two touching cells that hold heat: where the heat has not evened out yet. (The spread
+    // between the hottest and the coldest solid would not do: at real speed the grains settle before much heat has moved,
+    // and some solids end up apart from the rest, with only empty space around them.)
     const measure = async (): Promise<{ heat: number; spread: number }> => {
       const grid = { kind: await readCells(sim), temp: await sim.fields.read('temp') };
       const view = tempView(grid);
-      const solids: number[] = [];
-      grid.kind.forEach((k, i) => {
-        if (cellType(k) === T.METAL || cellType(k) === T.STONE) solids.push(view[i]);
-      });
-      return { heat: heatContent(ELEMENTS, grid, await sim.flyers.read()), spread: Math.max(...solids) - Math.min(...solids) };
+      const holds = (i: number): boolean => cellType(grid.kind[i]) !== T.EMPTY && cellType(grid.kind[i]) !== T.WALL;
+      let spread = 0;
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const i = y * width + x;
+          if (!holds(i)) continue;
+          if (x + 1 < width && holds(i + 1)) spread = Math.max(spread, Math.abs(view[i] - view[i + 1]));
+          if (y + 1 < height && holds(i + width)) spread = Math.max(spread, Math.abs(view[i] - view[i + width]));
+        }
+      }
+      return { heat: heatContent(ELEMENTS, grid, await sim.flyers.read()), spread };
     };
     const before = await measure();
 
-    await runMany(sim, 2000);
+    // 8,000 supersteps are 33 s: the slowest pair here (water and sand) closes its difference with a time constant of 5 s.
+    await runMany(sim, 8000);
     const after = await measure();
 
     expect(Math.abs(after.heat - before.heat) / before.heat, `heat ${before.heat} before, ${after.heat} after`).toBeLessThan(1e-4);
-    // The heat did flow: the metal and stone ended much closer to each other than they started.
-    expect(after.spread, 'spread of the metal and stone temperatures').toBeLessThan(before.spread / 2);
+    // The heat did flow: touching cells ended much closer than they started.
+    expect(after.spread, 'largest difference between touching cells').toBeLessThan(before.spread / 10);
   }, 120_000);
 });
 
@@ -347,7 +366,7 @@ describe.skipIf(!device)('M5.4 temperature', () => {
     // SLUSH stores 40 °C but has taken in only part of the latent heat it needs to melt at 0 °C: it is at 0 °C and must
     // draw heat from the 20 °C metal beside it. Unclamped, it would give heat to the metal instead.
     const slush: ElementDef = {
-      key: 'SLUSH', id: 201, label: 'Slush', color: [0.8, 0.9, 1], state: 'solid', density: 917, temperature: -20, conductivity: 0.2, heatCapacity: 2,
+      key: 'SLUSH', id: 201, label: 'Slush', color: [0.8, 0.9, 1], state: 'solid', density: 917, temperature: -20, conductivity: 20, heatCapacity: 2,
       above: { temp: 0, becomes: 'METAL', latent: 300 },
     };
     const table = [...ELEMENTS, slush];
@@ -359,7 +378,7 @@ describe.skipIf(!device)('M5.4 temperature', () => {
     const metal = elementByKey(ELEMENTS, 'METAL');
     const [ks, km] = [elementConductivity(slush), elementConductivity(metal)];
     const [cs, cm] = [elementHeatCapacity(slush), elementHeatCapacity(metal)];
-    const flow = ((2 * ks * km) / (ks + km)) * (effectiveTemp(slush, 40) - 20) / (cs + cm);
+    const flow = heatShare(ks, cs, km, cm) * (effectiveTemp(slush, 40) - 20) / (cs + cm);
 
     await runMany(sim, 1);
 
@@ -418,10 +437,10 @@ describe.skipIf(!device)('M5.4b phase changes', () => {
   });
 
   it('carries a large overshoot through the next change in the same direction on the next dispatch', async () => {
-    // Ice at 1,000 °C stored becomes water in the first dispatch at 381 °C, past water's 195, then steam in the second.
-    const first = (1000 - upper(ice)) * elementHeatCapacity(ice) / elementHeatCapacity(water);
+    // Ice at 3,000 °C stored becomes water in the first dispatch at 1,284 °C, past water's 640, then steam in the second.
+    const first = (3000 - upper(ice)) * elementHeatCapacity(ice) / elementHeatCapacity(water);
     expect(first, 'the water cell is already past its own latent range').toBeGreaterThan(upper(water));
-    const { kinds, temps } = await oneSuperstep([{ type: T.ICE, temp: 1000 }, { type: T.WALL, temp: 0 }]);
+    const { kinds, temps } = await oneSuperstep([{ type: T.ICE, temp: 3000 }, { type: T.WALL, temp: 0 }]);
     expect(kinds).toEqual([T.STEAM, T.WALL]);
     expect(temps[0]).toBeCloseTo(100 + ((first - upper(water)) * elementHeatCapacity(water)) / elementHeatCapacity(steam), 2);
   });
@@ -509,23 +528,25 @@ describe.skipIf(!device)('M5.4b phase changes', () => {
   it('AC12: oil on metal at 400 °C ignites, within the measured number of supersteps', async () => {
     const { sim } = oilOnMetal(400);
     let supersteps = 0;
-    while (supersteps < 2000 && !burned(await readCells(sim))) {
-      await runMany(sim, 5);
-      supersteps += 5;
+    while (supersteps < 30000 && !burned(await readCells(sim))) {
+      await runMany(sim, 250);
+      supersteps += 250;
     }
-    // First run: the first fire showed at the sample of superstep 15 (sampled every 5). Limit with a 30% margin: 20.
-    expect(supersteps, 'supersteps until the first fire').toBeLessThanOrEqual(20);
+    // First run (M8.8c): the first fire showed at the sample of superstep 12,000 (50 s, sampled every 250): the oil is three
+    // cells (4 mm) deep and heats by conduction alone. Limit with a 30% margin: 15,600.
+    expect(supersteps, 'supersteps until the first fire').toBeLessThanOrEqual(15600);
   }, 60_000);
 
-  it('AC12: oil on metal at 100 °C does not ignite in 2,000 supersteps', async () => {
+  // 20,000 supersteps: past the 15,600 limit of the 400 °C case above, so the window stays longer than the positive case needs.
+  it('AC12: oil on metal at 100 °C does not ignite in 20,000 supersteps', async () => {
     const { sim, oil } = oilOnMetal(100);
     for (let i = 0; i < 20; i++) {
-      await runMany(sim, 100);
+      await runMany(sim, 1000);
       const kinds = await readCells(sim);
-      expect(burned(kinds), `after ${(i + 1) * 100} supersteps`).toBe(false);
+      expect(burned(kinds), `after ${(i + 1) * 1000} supersteps`).toBe(false);
       expect(kinds.filter((k) => cellType(k) === T.OIL).length).toBe(oil);
     }
-  }, 120_000);
+  }, 180_000);
 });
 
 const count = (kinds: Uint32Array, type: number): number => countTypes(kinds).get(type) ?? 0;
@@ -540,27 +561,31 @@ describe.skipIf(!device)('M5.4c phase changes in scenes', () => {
 
     let firstWater = 0;
     let firstSteam = 0;
-    for (let step = 1; step <= 600; step++) {
-      await runMany(sim, 1);
+    // Sampled every 5 supersteps, for 4,000 (17 s): at real speed the ice melts slowly.
+    for (let step = 5; step <= 4000; step += 5) {
+      await runMany(sim, 5);
       const kinds = await readCells(sim);
       if (!firstWater && count(kinds, T.WATER) > 0) firstWater = step;
       if (!firstSteam && count(kinds, T.STEAM) > 0) firstSteam = step;
     }
     const kinds = await readCells(sim);
     const melted = (iceCells - count(kinds, T.ICE)) / iceCells;
-    // Measured: water at superstep 4, steam at 7 (the 8 ice cells touching the lava melt together and boil together), and
-    // after 600 supersteps a share of 0.65 melted (the steam pushes the lava back, and without air empty space carries no
-    // heat, so the rest of the block stays), 65 steam, 0 water left and 35 stone, with lava's latent heat of 1,200 and
-    // conductivity of 0.04 (M6.6g). Limits: 30% around each.
-    expect(firstWater, 'superstep of the first water').toBeGreaterThan(0);
+    // Measured (M8.8c): water at superstep 100 (0.4 s), steam at 690 (the ice cells touching the lava melt together and
+    // boil together, and boiling takes 2,257 each), and after 4,000 supersteps a share of 0.21 melted (the steam pushes the
+    // lava back, and without air empty space carries no heat, so the rest of the block stays), 13 steam, 8 water and 15
+    // stone. Before: water at 4, steam at 7, 600 supersteps, 0.65 melted, 65 steam, 35 stone. Limits: 30% around each.
+    expect(firstWater, 'superstep of the first water').toBeGreaterThanOrEqual(70);
+    expect(firstWater, 'superstep of the first water').toBeLessThanOrEqual(130);
     expect(firstSteam, 'superstep of the first steam, after the first water').toBeGreaterThan(firstWater);
-    expect(melted, 'share of the ice melted').toBeGreaterThanOrEqual(0.45);
-    expect(melted, 'share of the ice melted').toBeLessThanOrEqual(0.85);
-    expect(count(kinds, T.STEAM), 'steam').toBeGreaterThanOrEqual(45);
-    expect(count(kinds, T.STEAM), 'steam').toBeLessThanOrEqual(85);
-    expect(count(kinds, T.STONE), 'stone').toBeGreaterThanOrEqual(24);
-    expect(count(kinds, T.STONE), 'stone').toBeLessThanOrEqual(46);
-  }, 60_000);
+    expect(firstSteam, 'superstep of the first steam').toBeGreaterThanOrEqual(480);
+    expect(firstSteam, 'superstep of the first steam').toBeLessThanOrEqual(900);
+    expect(melted, 'share of the ice melted').toBeGreaterThanOrEqual(0.15);
+    expect(melted, 'share of the ice melted').toBeLessThanOrEqual(0.3);
+    expect(count(kinds, T.STEAM), 'steam').toBeGreaterThanOrEqual(9);
+    expect(count(kinds, T.STEAM), 'steam').toBeLessThanOrEqual(17);
+    expect(count(kinds, T.STONE), 'stone').toBeGreaterThanOrEqual(10);
+    expect(count(kinds, T.STONE), 'stone').toBeLessThanOrEqual(20);
+  }, 120_000);
 
   function steamCeilingSim(ceilingTemp: number): Simulation {
     const scene = SCENES.steamCeiling();
@@ -575,14 +600,15 @@ describe.skipIf(!device)('M5.4c phase changes in scenes', () => {
   it('AC10: steam under a ceiling at -50 °C condenses', async () => {
     const sim = steamCeilingSim(-50);
     const steamCells = count(await readCells(sim), T.STEAM);
-    // First run: half of the 160 cells were water at the sample of superstep 20 (sampled every 5), all of them at 60.
-    // Limit: 25, a sample after the 20 with a margin of more than 30%.
-    await runMany(sim, 25);
-    expect(count(await readCells(sim), T.WATER), 'water after 25 supersteps').toBeGreaterThanOrEqual(steamCells / 2);
-    await runMany(sim, 175);
+    // First run (M8.8c): 8 of the 40 cells were water at the sample of superstep 450 (sampled every 50), all of them at 600
+    // (2.5 s): each takes 2,257 to condense. Before: half of the 160 cells at 20, all at 60. Limit: 800, a sample after the
+    // 600 with a margin of 30%.
+    await runMany(sim, 800);
     const kinds = await readCells(sim);
-    expect(count(kinds, T.STEAM), 'steam left after 200 supersteps').toBe(0);
-    expect(count(kinds, T.WATER), 'water after 200 supersteps').toBe(steamCells);
+    expect(count(kinds, T.STEAM), 'steam left after 800 supersteps').toBe(0);
+    expect(count(kinds, T.WATER), 'water after 800 supersteps').toBe(steamCells);
+    await runMany(sim, 200);
+    expect(count(await readCells(sim), T.WATER), 'water after 1,000 supersteps').toBe(steamCells);
   });
 
   it('AC10: steam under a ceiling at 150 °C does not', async () => {
@@ -613,11 +639,12 @@ describe.skipIf(!device)('M5.4c phase changes in scenes', () => {
     sim.load(scene.fields);
     const before = countTypes(await readCells(sim));
     expect(before.get(T.MOLTEN_METAL), 'molten metal at the start').toBeGreaterThan(0);
-    // First run: the last molten cell set at the sample of superstep 15 (sampled every 5). Limit with a 30% margin: 20.
-    await runMany(sim, 20);
+    // First run (M8.8c): the last molten cell set between the samples of superstep 300 and 350 (sampled every 50): each
+    // gives 1,944. Before: at 15 (sampled every 5). Limit with a 30% margin: 450.
+    await runMany(sim, 450);
     const kinds = await readCells(sim);
-    expect(count(kinds, T.MOLTEN_METAL), 'molten metal after 20 supersteps').toBe(0);
-    expect(count(kinds, T.METAL), 'metal after 20 supersteps').toBe(before.get(T.METAL)! + before.get(T.MOLTEN_METAL)!);
+    expect(count(kinds, T.MOLTEN_METAL), 'molten metal after 450 supersteps').toBe(0);
+    expect(count(kinds, T.METAL), 'metal after 450 supersteps').toBe(before.get(T.METAL)! + before.get(T.MOLTEN_METAL)!);
   });
 
   it('AC11: lava at 1,300 °C never melts metal', async () => {
@@ -668,13 +695,14 @@ function packedBox(layers: { type: number; temp: number; rows: number }[]): { si
 }
 
 describe.skipIf(!device)('M5.4c settling at a threshold', () => {
-  // Runs 500 supersteps, one at a time, and fails at the first one that changes any cell's element.
-  async function settle(box: ReturnType<typeof packedBox>, threshold: number): Promise<number> {
-    for (let step = 1; step <= 500; step++) {
-      await runMany(box.sim, 1);
+  // Runs `supersteps` in steps of 1,000 (at real speed a 5-cell layer of water takes minutes to level out), and fails at the
+  // first step that shows a changed element in any cell.
+  async function settle(box: ReturnType<typeof packedBox>, threshold: number, supersteps: number): Promise<number> {
+    for (let step = 1000; step <= supersteps; step += 1000) {
+      await runMany(box.sim, 1000);
       const kinds = await readCells(box.sim);
       for (let i = 0; i < kinds.length; i++) {
-        if (kinds[i] !== box.kind[i]) expect.fail(`cell ${i} changed from element ${cellType(box.kind[i])} to ${cellType(kinds[i])} at superstep ${step}`);
+        if (kinds[i] !== box.kind[i]) expect.fail(`cell ${i} changed from element ${cellType(box.kind[i])} to ${cellType(kinds[i])} by superstep ${step}`);
       }
     }
     const temps = tempView({ temp: await box.sim.fields.read('temp') });
@@ -688,17 +716,18 @@ describe.skipIf(!device)('M5.4c settling at a threshold', () => {
   }
 
   it('AC13: ice over water settles at 0 °C and changes no cell', async () => {
-    // 5 rows of water at 10 °C under 5 rows of ice at -20 °C: the ice needs 1,520 to reach 0 °C and the water gives 1,680,
-    // so the 160 left over cannot pay the 300 an ice cell needs to melt. First run: every cell within 0.08 °C of 0 °C.
-    const worst = await settle(packedBox([{ type: T.WATER, temp: 10, rows: 5 }, { type: T.ICE, temp: -20, rows: 5 }]), 0);
+    // 5 rows of water at 10 °C under 5 rows of ice at -20 °C: the ice needs 1,520 (38 a cell) to reach 0 °C and the water gives
+    // 1,672 (41.8 a cell), so the 152 left over cannot pay the 334 an ice cell needs to melt. First run (M8.8c): the layers
+    // level out slowly, the worst cell 1.4 °C from 0 °C after 20,000 supersteps and within 0.15 °C by 60,000 (before: 0.08 °C after 500).
+    const worst = await settle(packedBox([{ type: T.WATER, temp: 10, rows: 5 }, { type: T.ICE, temp: -20, rows: 5 }]), 0, 60_000);
     expect(worst, 'largest distance of a temperature from 0 °C').toBeLessThan(0.15);
   }, 60_000);
 
   it('AC13: steam over water settles at 100 °C and changes no cell', async () => {
-    // 5 rows of steam at 110 °C over 5 rows of water at 90 °C: the water needs 1,680 to reach 100 °C and the steam gives
-    // 800 as steam, the other 880 at most from the 8 cells at the surface (110 each, under the 400 a cell needs to condense).
-    // First run: every cell within 0.09 °C of 100 °C.
-    const worst = await settle(packedBox([{ type: T.WATER, temp: 90, rows: 5 }, { type: T.STEAM, temp: 110, rows: 5 }]), 100);
+    // 5 rows of steam at 110 °C over 5 rows of water at 90 °C: the water needs 1,672 (41.8 a cell) to reach 100 °C and the
+    // steam gives 800 as steam, the other 872 at most from the 8 cells at the surface (109 each, under the 2,257 a cell
+    // needs to condense). First run (M8.8c): the worst cell 0.21 °C from 100 °C after 20,000 supersteps (before: 0.09 °C after 500).
+    const worst = await settle(packedBox([{ type: T.WATER, temp: 90, rows: 5 }, { type: T.STEAM, temp: 110, rows: 5 }]), 100, 30_000);
     expect(worst, 'largest distance of a temperature from 100 °C').toBeLessThan(0.15);
   }, 60_000);
 });

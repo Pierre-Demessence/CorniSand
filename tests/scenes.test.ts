@@ -91,7 +91,7 @@ describe('scenes', () => {
         if (type === T.STEAM) expect([y >= steam.y0 && y < steam.y1, temp[i]], `steam cell (${x}, ${y})`).toEqual([true, 110]);
       }
     }
-    expect([counts.get(T.METAL), counts.get(T.STEAM)]).toEqual([160, 160]);
+    expect([counts.get(T.METAL), counts.get(T.STEAM)]).toEqual([320, 40]);
     expect(ceiling.y1, 'the ceiling touches the top wall').toBe(height - 2);
     expect(steam.y1, 'the steam touches the ceiling').toBe(ceiling.y0);
   });

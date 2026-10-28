@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { NO_PRESSURE, PROP_FIELDS, ROW_BYTES, packElements } from '../src/element-table';
 import {
-  DEFAULT_DRAG, DEFAULT_GRAVITY, ELEMENT, ELEMENTS, MAX_ELEMENTS, STATES, elementByKey, elementConductivity, elementDrag, elementGravity, elementHeatCapacity, elementHoldsHeat, elementInert,
+  DEFAULT_DRAG, ELEMENT, ELEMENTS, MAX_ELEMENTS, PRESSURE_PER_TOUGHNESS, STATES, STONE_TOUGHNESS, crushPressure, elementByKey, elementConductivity, elementDrag, elementGravity, elementHeatCapacity, elementHoldsHeat, elementInert,
   elementTemperature, latentWidth, validateElements, type ElementDef,
 } from '../src/elements';
 import { ABSOLUTE_ZERO, HEAT_TOOL_RATE, MAX_TEMP, NO_THRESHOLD, ROOM_TEMP, effectiveTemp } from '../src/heat';
+import { DEFAULT_GRAVITY } from '../src/physics';
 import { TOOLS, buttonAttributes, toolAttributes, toolbarEntries } from '../src/toolbar';
 import { latentOffsets } from './metrics';
 
@@ -104,8 +105,8 @@ describe('element table', () => {
   it('M5: gives METAL and STONE their conductivity and capacity, and everything else a default', () => {
     const metal = elementByKey(ELEMENTS, 'METAL');
     const stone = elementByKey(ELEMENTS, 'STONE');
-    expect([metal.state, metal.density, elementConductivity(metal), elementHeatCapacity(metal)]).toEqual(['solid', 7870, 1, 3.5]);
-    expect([stone.state, stone.density, elementConductivity(stone), elementHeatCapacity(stone)]).toEqual(['solid', 2700, 0.1, 2.2]);
+    expect([metal.state, metal.density, elementConductivity(metal), elementHeatCapacity(metal)]).toEqual(['solid', 7870, 50, 3.5]);
+    expect([stone.state, stone.density, elementConductivity(stone), elementHeatCapacity(stone)]).toEqual(['solid', 2700, 2.5, 2.2]);
     expect(elementConductivity(MUD)).toBe(0);
     expect(elementHeatCapacity(MUD)).toBe(1);
     expect(ELEMENTS.filter((e) => !elementHoldsHeat(e)).map((e) => e.key).sort()).toEqual(['EMPTY', 'WALL']);
@@ -116,9 +117,9 @@ describe('element table', () => {
     const words = new Uint32Array(buffer);
     const floats = new Float32Array(buffer);
     const at = (id: number, field: string): number => id * PROP_FIELDS.length + PROP_FIELDS.findIndex((f) => f.name === field);
-    expect(floats[at(ELEMENT.METAL, 'conductivity')]).toBe(1);
+    expect(floats[at(ELEMENT.METAL, 'conductivity')]).toBe(50);
     expect(floats[at(ELEMENT.METAL, 'heatCapacity')]).toBe(3.5);
-    expect(floats[at(ELEMENT.STONE, 'conductivity')]).toBeCloseTo(0.1, 7);
+    expect(floats[at(ELEMENT.STONE, 'conductivity')]).toBe(2.5);
     expect(floats[at(200, 'conductivity')]).toBe(0.25);
     expect(floats[at(200, 'heatCapacity')]).toBe(2);
     expect(floats[at(ELEMENT.WALL, 'conductivity')]).toBe(0);
@@ -128,9 +129,10 @@ describe('element table', () => {
   });
 
   it.each([
-    ['a negative conductivity', { conductivity: -0.1 }, /MUD: conductivity must be a number in 0\.\.1/],
-    ['a conductivity above 1', { conductivity: 1.5 }, /MUD: conductivity must be a number in 0\.\.1/],
-    ['a conductivity that is not a number', { conductivity: NaN }, /MUD: conductivity must be a number in 0\.\.1/],
+    ['a negative conductivity', { conductivity: -0.1 }, /MUD: conductivity must be a finite number, 0 or more/],
+    ['an infinite conductivity', { conductivity: Infinity }, /MUD: conductivity must be a finite number, 0 or more/],
+    ['a conductivity that is not a number', { conductivity: NaN }, /MUD: conductivity must be a finite number, 0 or more/],
+    ['an air coupling above 1', { airCoupling: 1.5 }, /MUD: airCoupling must be a number in 0\.\.1/],
     ['a heat capacity of 0', { heatCapacity: 0 }, /MUD: heatCapacity must be a finite number above 0/],
     ['a negative heat capacity', { heatCapacity: -1 }, /MUD: heatCapacity must be a finite number above 0/],
     ['an infinite heat capacity', { heatCapacity: Infinity }, /MUD: heatCapacity must be a finite number above 0/],
@@ -184,6 +186,22 @@ describe('element table', () => {
     expect(() => validateElements([...ELEMENTS, { ...oneWay, above: { temp: 250, becomes: 'FIRE', burst: 0 } }]), 'a burst of 0').not.toThrow();
   });
 
+  it('M8.8 AC5: accepts a latent range past absolute zero or the hottest temperature, and keeps the temperature of a cell inside the range', () => {
+    // Steam condensing runs about 1,130 °C under its 100 °C threshold, and a hot cell taking in latent heat runs past the maximum.
+    const steam = elementByKey(ELEMENTS, 'STEAM');
+    expect(steam.below!.temp - latentWidth(steam, steam.below!), 'the stored end of steam condensing').toBeLessThan(ABSOLUTE_ZERO);
+    expect(() => validateElements(ELEMENTS)).not.toThrow();
+    const pair = (latent: number): ElementDef[] =>
+      [...ELEMENTS, { ...SLUSH, above: { temp: 0, becomes: 'BROTH', latent } }, { ...BROTH, below: { temp: 0, becomes: 'SLUSH', latent } }, VAPOR];
+    expect(() => validateElements(pair(1e5)), 'past the hottest and under absolute zero').not.toThrow();
+    for (const stored of [steam.below!.temp - latentWidth(steam, steam.below!), -5000, 100, 4000]) {
+      const shown = effectiveTemp(steam, stored);
+      expect(shown, `steam stored at ${stored}`).toBeGreaterThanOrEqual(ABSOLUTE_ZERO);
+      expect(shown, `steam stored at ${stored}`).toBeLessThanOrEqual(MAX_TEMP);
+    }
+    expect(effectiveTemp(steam, -1000), 'a steam cell condensing shows its condensing point').toBe(100);
+  });
+
   it.each<[string, ElementDef[], RegExp]>([
     ['a negative latent heat', withRow('SLUSH', { above: { temp: 0, becomes: 'BROTH', latent: -1 } }), /SLUSH: above\.latent must be a finite number/],
     ['an infinite latent heat', withRow('SLUSH', { above: { temp: 0, becomes: 'BROTH', latent: Infinity } }), /SLUSH: above\.latent must be a finite number/],
@@ -198,8 +216,6 @@ describe('element table', () => {
       withRow('VAPOR', { below: { temp: 100, becomes: 'BROTH' } }).map((e) => (e.key === 'BROTH' ? { ...e, above: { temp: 100, becomes: 'VAPOR' } } : e)),
       /BROTH: the pair with VAPOR needs a latent above 0/,
     ],
-    ['an above threshold whose latent width passes the hottest temperature', withRow('SLUSH', { above: { temp: 0, becomes: 'BROTH', latent: 1e5 } }), /SLUSH: above\.temp 0 and its latent width 50000 must stay within/],
-    ['a below threshold whose latent width passes absolute zero', withRow('BROTH', { below: { temp: 0, becomes: 'SLUSH', latent: 2000 } }), /BROTH: below\.temp 0 and its latent width 500 must stay within/],
     ['a negative burst', withRow('SLUSH', { above: { temp: 0, becomes: 'BROTH', latent: 300, burst: -1 } }), /SLUSH: above\.burst must be a finite number/],
     ['an infinite burst', withRow('SLUSH', { above: { temp: 0, becomes: 'BROTH', latent: 300, burst: Infinity } }), /SLUSH: above\.burst must be a finite number/],
     ['a burst that is not a number', withRow('SLUSH', { above: { temp: 0, becomes: 'BROTH', latent: 300, burst: NaN } }), /SLUSH: above\.burst must be a finite number/],
@@ -210,12 +226,12 @@ describe('element table', () => {
   });
 
   describe('M6 AC19: pressure transitions', () => {
-    const CRUSHED: ElementDef = { ...MUD, state: 'solid', pressureAbove: { pressure: 2, becomes: 'SAND' } };
+    const CRUSHED: ElementDef = { ...MUD, state: 'solid', toughness: 1.2, pressureAbove: { becomes: 'SAND' } };
 
     it('M6 AC19: crushes stone into sand, and never counts an element with a pressure transition as inert', () => {
       expect(elementByKey(ELEMENTS, 'STONE').pressureAbove?.becomes).toBe('SAND');
       expect(elementInert(CRUSHED), 'a solid with only a pressure transition').toBe(false);
-      expect(elementInert({ ...CRUSHED, pressureAbove: undefined })).toBe(true);
+      expect(elementInert({ ...CRUSHED, pressureAbove: undefined, toughness: undefined })).toBe(true);
       expect(elementHoldsHeat(CRUSHED), 'a pressure transition gives no temperature').toBe(false);
       expect(() => validateElements([...ELEMENTS, CRUSHED])).not.toThrow();
     });
@@ -225,35 +241,49 @@ describe('element table', () => {
       const words = new Uint32Array(buffer);
       const floats = new Float32Array(buffer);
       const at = (id: number, field: string): number => id * PROP_FIELDS.length + PROP_FIELDS.findIndex((f) => f.name === field);
-      expect(floats[at(ELEMENT.STONE, 'pressureAbove')]).toBe(Math.fround(elementByKey(ELEMENTS, 'STONE').pressureAbove!.pressure));
+      expect(floats[at(ELEMENT.STONE, 'pressureAbove')]).toBe(Math.fround(crushPressure(elementByKey(ELEMENTS, 'STONE'))!));
       expect((words[at(ELEMENT.STONE, 'transitions')] >> 16) & 0xff).toBe(ELEMENT.SAND);
       // The temperature transition of stone keeps its bits.
       expect((words[at(ELEMENT.STONE, 'transitions')] >> 8) & 0xff).toBe(ELEMENT.LAVA);
-      expect(floats[at(200, 'pressureAbove')]).toBe(2);
+      expect(floats[at(200, 'pressureAbove')]).toBe(Math.fround(1.2 * PRESSURE_PER_TOUGHNESS));
       expect(words[at(200, 'inert')]).toBe(0);
       expect(floats[at(ELEMENT.SAND, 'pressureAbove')]).toBe(Math.fround(NO_PRESSURE));
       expect(words[at(ELEMENT.SAND, 'transitions')] >> 16).toBe(0);
     });
 
-    it.each([
-      ['a pressure of 0', { pressure: 0, becomes: 'SAND' }, /MUD: pressureAbove\.pressure must be a finite number above 0/],
-      ['a negative pressure', { pressure: -1, becomes: 'SAND' }, /MUD: pressureAbove\.pressure must be a finite number above 0/],
-      ['an infinite pressure', { pressure: Infinity, becomes: 'SAND' }, /MUD: pressureAbove\.pressure must be a finite number above 0/],
-      ['a pressure that is not a number', { pressure: NaN, becomes: 'SAND' }, /MUD: pressureAbove\.pressure must be a finite number above 0/],
-      ['a target missing from the table', { pressure: 2, becomes: 'GHOST' }, /MUD: pressureAbove\.becomes "GHOST" is not in the table/],
-      ['a target that is the element itself', { pressure: 2, becomes: 'MUD' }, /MUD: pressureAbove\.becomes "MUD" leads back to MUD/],
-    ])('M6 AC19: rejects %s', (_name, pressureAbove, message) => {
-      expect(() => validateElements([...ELEMENTS, { ...CRUSHED, pressureAbove }])).toThrow(message);
+    it('M8.8 AC6: gives a crush pressure of toughness times PRESSURE_PER_TOUGHNESS, anchored so STONE stays at 0.45', () => {
+      const stone = elementByKey(ELEMENTS, 'STONE');
+      expect(stone.toughness).toBe(STONE_TOUGHNESS);
+      expect(crushPressure(stone)).toBeCloseTo(0.45, 12);
+      expect(crushPressure(CRUSHED)).toBeCloseTo(1.2 * PRESSURE_PER_TOUGHNESS, 12);
+      expect(crushPressure({ ...CRUSHED, pressureAbove: undefined }), 'no crush, no pressure').toBeUndefined();
+      // A tougher solid needs a harder blast: glass about 0.75, granite 1.7, alumina ceramic about 4.
+      expect(crushPressure({ ...CRUSHED, toughness: 0.75 })!).toBeLessThan(crushPressure(stone)!);
+      expect(crushPressure({ ...CRUSHED, toughness: 4 })!).toBeGreaterThan(crushPressure(stone)!);
+    });
+
+    it.each<[string, Partial<ElementDef>, RegExp]>([
+      ['a hand-given crush pressure', { pressureAbove: { pressure: 2, becomes: 'SAND' } as never }, /MUD: pressureAbove\.pressure is not allowed: the pressure comes from toughness/],
+      ['a crush without a toughness', { toughness: undefined }, /MUD: toughness must be a finite number above 0 for an element with a pressureAbove/],
+      ['a toughness of 0', { toughness: 0 }, /MUD: toughness must be a finite number above 0/],
+      ['a negative toughness', { toughness: -1 }, /MUD: toughness must be a finite number above 0/],
+      ['an infinite toughness', { toughness: Infinity }, /MUD: toughness must be a finite number above 0/],
+      ['a toughness that is not a number', { toughness: NaN }, /MUD: toughness must be a finite number above 0/],
+      ['a toughness without a crush', { pressureAbove: undefined }, /MUD: toughness is only for an element with a pressureAbove/],
+      ['a target missing from the table', { pressureAbove: { becomes: 'GHOST' } }, /MUD: pressureAbove\.becomes "GHOST" is not in the table/],
+      ['a target that is the element itself', { pressureAbove: { becomes: 'MUD' } }, /MUD: pressureAbove\.becomes "MUD" leads back to MUD/],
+    ])('M6 AC19: rejects %s', (_name, change, message) => {
+      expect(() => validateElements([...ELEMENTS, { ...CRUSHED, ...change }])).toThrow(message);
     });
 
     it('M6 AC19: rejects two elements that crush into each other, and accepts a chain that ends', () => {
-      const CLAY: ElementDef = { ...MUD, key: 'CLAY', id: 201, toolbar: 51, pressureAbove: { pressure: 2, becomes: 'MUD' } };
-      const loop = { ...CRUSHED, pressureAbove: { pressure: 2, becomes: 'CLAY' } };
+      const CLAY: ElementDef = { ...MUD, key: 'CLAY', id: 201, toolbar: 51, toughness: 1.2, pressureAbove: { becomes: 'MUD' } };
+      const loop = { ...CRUSHED, pressureAbove: { becomes: 'CLAY' } };
       expect(() => validateElements([...ELEMENTS, loop, CLAY])).toThrow(/pressureAbove\.becomes "(CLAY|MUD)" leads back to (MUD|CLAY)/);
       // A third element that only leads into the loop is not part of it, and must not hang the check.
-      const FEEDER: ElementDef = { ...MUD, key: 'FEEDER', id: 202, toolbar: 52, pressureAbove: { pressure: 2, becomes: 'CLAY' } };
+      const FEEDER: ElementDef = { ...MUD, key: 'FEEDER', id: 202, toolbar: 52, toughness: 1.2, pressureAbove: { becomes: 'CLAY' } };
       expect(() => validateElements([...ELEMENTS, loop, CLAY, FEEDER])).toThrow(/leads back to/);
-      expect(() => validateElements([...ELEMENTS, { ...CRUSHED, pressureAbove: { pressure: 2, becomes: 'CLAY' } }, { ...CLAY, pressureAbove: { pressure: 2, becomes: 'SAND' } }])).not.toThrow();
+      expect(() => validateElements([...ELEMENTS, { ...CRUSHED, pressureAbove: { becomes: 'CLAY' } }, { ...CLAY, pressureAbove: { becomes: 'SAND' } }])).not.toThrow();
     });
   });
 
@@ -335,11 +365,11 @@ describe('M5.4c latent offsets', () => {
   it('give the elements joined by transitions the heat a phase change leaves in place, and none to those that hold no heat', () => {
     const offsets = latentOffsets(ELEMENTS);
     const offset = (key: keyof typeof ELEMENT): number => offsets.get(ELEMENT[key])!;
-    // Ice -> water at 0 °C (latent 300, capacities 1.9 and 4.2), water -> steam at 100 °C (latent 400, steam 2.0). The
+    // Ice -> water at 0 °C (latent 334, capacities 1.9 and 4.18), water -> steam at 100 °C (latent 2,257, steam 2.0). The
     // offsets are relative: the first element of a group in the table (water) gets 0.
     expect(offset('WATER')).toBe(0);
-    expect(offset('WATER') - offset('ICE')).toBeCloseTo(300, 9);
-    expect(offset('STEAM') - offset('WATER')).toBeCloseTo((4.2 - 2) * 100 + 400, 9);
+    expect(offset('WATER') - offset('ICE')).toBeCloseTo(334, 9);
+    expect(offset('STEAM') - offset('WATER')).toBeCloseTo((4.18 - 2) * 100 + 2257, 9);
     expect(offsets.has(ELEMENT.EMPTY)).toBe(false);
     expect(offsets.has(ELEMENT.WALL)).toBe(false);
     // The same graph walked from another start: the offsets differ only by a constant per group.
