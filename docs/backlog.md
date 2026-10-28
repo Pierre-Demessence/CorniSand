@@ -2,7 +2,7 @@
 
 IDs are stable: B = bug, D = tech debt, I = idea.
 
-Next ID: B15, D36, I26.
+Next ID: B15, D36, I27.
 
 ## Bugs
 
@@ -42,4 +42,5 @@ Next ID: B15, D36, I26.
 - **I23** (M8) Stickmen and fighters, TPT's player characters: a figure steered with the keyboard that walks, carries an element and dies in lava or acid, and fighters that hunt it. A game mechanic of its own (controls, a body that is not a cell); decide after M8 whether it becomes a milestone.
 - **I24** (M8) Viscosity is constant per element; real lava and molten glass stiffen by orders of magnitude as they cool toward setting. `src/shaders/ca.wgsl.ts` `spreadRow`
 - **I25** (M8) Steam released into open air hardly condenses: a cell is one unit of matter, so a steam cell holds the 2,257 MJ/m³ of the water it came from, and air at its physical 0.0012 MJ/m³·K needs about 23,500 cells of itself warmed from 20 to 100 °C to take it (64 steam cells in a 128×192 box cooled to a mean of 96 °C in 15 s and none condensed); steam condenses only against cold solids or as the air is replaced. Real steam condenses within a second because it mixes with a far larger volume of air than its own cell. A mixing exchange for gases (a larger coefficient and capacity share for a gas cell) or an expansion of steam into several cells would restore it. `src/air.ts`, `src/shaders/air.wgsl.ts` `airExchangeWGSL`
+- **I26** (M8) Hot things lose heat only to the air, never by radiation: a dull surface radiates about as much as still air carries away at 150 °C, 3 times as much at 500 °C and 12 times at 1,000 °C, so lava and molten metal stay hot several times too long (the 16×16 metal block of `tests/air-heat.test.ts` is at 944 °C 125 s after 1,000 °C, where an oxidized steel bar would be near 600 °C). A loss per exposed cell by its emissivity fits the cell–air exchange at negligible cost; warming what the radiation reaches waits for the lighting work. `src/shaders/air.wgsl.ts` `airExchangeWGSL`, `docs/research/physical-properties.md` (Radiated heat)
 - **I12** Choose a license for CorniSand. With no license file nobody may reuse the code; a permissive license (MIT, Apache-2.0) lets others reuse it without requiring them, or this project, to publish source. Decide before accepting outside contributions.
