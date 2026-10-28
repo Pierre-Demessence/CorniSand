@@ -250,7 +250,10 @@ export class Simulation {
     // A wind stroke paints nothing; the right button erases as with any tool.
     const blowing = input.mouseActive && input.wind === true && !input.erasing;
     if (input.mouseActive && !blowing) this.recordBrush(passes, input);
-    if (dispatches > 0) this.air.recordMask(passes);
+    if (dispatches > 0) {
+      this.air.recordMask(passes);
+      this.air.recordExchange(passes, supersteps);
+    }
     if (blowing && dispatches > 0) {
       this.air.recordWind(passes, {
         prev: input.prevMousePos,

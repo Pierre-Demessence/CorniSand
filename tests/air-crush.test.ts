@@ -62,7 +62,7 @@ async function crushedAt(options: { wall: boolean; air?: boolean }): Promise<{ c
 describe.skipIf(!device)('M6 pressure transitions', () => {
   describe('AC18: one cell', () => {
     // Three stones at 500 °C, in three air cells whose pressures are below, exactly at and above the limit. The air is at
-    // the temperature the crushed sand starts at, so the air exchange (after the dispatch) moves no heat.
+    // the temperature of the stones, so the air exchange (before the dispatch) moves no heat.
     it('M6 AC18: a cell becomes sand in the dispatch its air cell passes the limit, and keeps its heat, not its temperature', async () => {
       const width = 64;
       const sim = createSim(width, 64, 3);
@@ -76,7 +76,7 @@ describe.skipIf(!device)('M6 pressure transitions', () => {
       const { columns, rows } = sim.air;
       const pressure = new Float32Array(columns * rows);
       for (const [airX, p] of pressures) pressure[9 * columns + airX] = Math.fround(p);
-      sim.air.load({ pressure, temperature: new Float32Array(columns * rows).fill(SAND_TEMP) });
+      sim.air.load({ pressure, temperature: new Float32Array(columns * rows).fill(500) });
       await run(sim, 1);
       const cells = await readCells(sim);
       expect(cellType(cells[at(3)]), 'below the limit').toBe(T.STONE);

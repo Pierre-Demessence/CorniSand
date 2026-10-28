@@ -5,7 +5,7 @@ import { ELEMENT as T, ELEMENTS, elementByKey, elementConductivity, elementHeatC
 import { ROOM_TEMP } from '../src/heat';
 import { PLUME, plume } from '../src/scenes';
 import type { Simulation } from '../src/simulation';
-import { airWords, cell, createSim, device, mulberry32, readCells, runMany, countTypes } from './gpu';
+import { FRAME_SUPERSTEPS, airWords, cell, createSim, device, mulberry32, readCells, run, runMany, countTypes } from './gpu';
 import { heatContent } from './metrics';
 
 // Measured with the constants in `AIR` (docs/plans/m6-air.md, "M6.4 results").
@@ -85,11 +85,13 @@ describe.skipIf(!device)('M6 ambient heat', () => {
   describe('AC14: a cell that holds heat trades heat with the air', () => {
     const metal = elementByKey(ELEMENTS, 'METAL');
     // The temperature a metal cell at `from` has after one exchange with an air cell at room temperature.
-    function exchange(from: number, cellSize: number): number {
+    // `steps` air steps folded into one exchange: a pair that trades a share g per step trades 1 - (1 - g)^steps at once.
+    function exchange(from: number, cellSize: number, steps = 1): number {
       const [km, c] = [elementConductivity(metal), elementHeatCapacity(metal)];
       const capacity = AIR.heatCapacity * cellSize * cellSize;
-      const flow = ((2 * km * AIR.conductivity) / (km + AIR.conductivity)) * (from - ROOM_TEMP) / (c + capacity);
-      return from - flow * capacity;
+      const g = (2 * km * AIR.conductivity) / (km + AIR.conductivity);
+      const share = steps === 1 ? g : 1 - (1 - g) ** steps;
+      return from - (share * (from - ROOM_TEMP) / (c + capacity)) * capacity;
     }
 
     it('M6 AC14: a metal cell and its air cell meet at the harmonic mean of their conductivities, never past the mean of the two', async () => {
@@ -107,6 +109,20 @@ describe.skipIf(!device)('M6 ambient heat', () => {
       expect(metalNow, 'one exchange stops short of the mean').toBeGreaterThan(mean);
       // The air passes that follow spread what the air took across its faces, so only its warming is checked here.
       expect((await sim.air.read()).temperature[0], 'the air cell is warmer').toBeGreaterThan(ROOM_TEMP + 100);
+    });
+
+    it('M6 AC14: a call of several supersteps trades the heat of all its air steps at once, a share of 1 - (1 - g)^steps of the difference', async () => {
+      const supersteps = 4;
+      const world = new World(4, 4).fill(T.METAL, 1, 2, 1, 2, 500);
+      const sim = createSim(4, 4);
+      sim.load(world.data);
+
+      await run(sim, supersteps);
+
+      const steps = supersteps * sim.air.substeps;
+      const folded = exchange(500, 4, steps);
+      expect((await temps(sim))[1 * 4 + 1], 'the metal cell').toBeCloseTo(folded, 3);
+      expect(folded, 'more than one step would take').toBeLessThan(exchange(500, 4));
     });
 
     it('M6 AC14: a solid trades heat with the air cell of its first open neighbor, a solid with none trades none', async () => {
@@ -140,7 +156,7 @@ describe.skipIf(!device)('M6 ambient heat', () => {
       const sim = createSim(96, 128, 1);
       sim.load(world.data);
 
-      await runMany(sim, 1200);
+      await runMany(sim, 1200, FRAME_SUPERSTEPS);
       const early = await sim.air.read();
       const { columns } = sim.air;
       // Over the block's middle, just above it, and the same height at the box's side.
@@ -150,7 +166,7 @@ describe.skipIf(!device)('M6 ambient heat', () => {
       expect(above - beside, 'degrees the air above is warmer than the air beside').toBeGreaterThan(MEASURED.aboveWarmer * 0.7);
       expect(await meanTemp(sim, T.METAL), 'the block has cooled, but not at once').toBeGreaterThan(800);
 
-      await runMany(sim, COOLING_STEPS - 1200);
+      await runMany(sim, COOLING_STEPS - 1200, FRAME_SUPERSTEPS);
       expect(await meanTemp(sim, T.METAL), `block mean after ${COOLING_STEPS} supersteps`).toBeLessThan(200);
     }, 120_000);
   });
@@ -247,7 +263,7 @@ describe.skipIf(!device)('M6 ambient heat', () => {
       const world = new World(128, 192).box().fill(T.STEAM, 60, 68, 20, 28, 110);
       const sim = createSim(128, 192, 1, options);
       sim.load(world.data);
-      await runMany(sim, steps);
+      await runMany(sim, steps, FRAME_SUPERSTEPS);
       return countTypes(await readCells(sim));
     }
 

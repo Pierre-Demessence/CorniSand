@@ -4,7 +4,7 @@ import type { ElementTable } from './element-table';
 import { ROOM_TEMP } from './heat';
 import type { PassRecorder } from './passes';
 import {
-  WIND_UNIFORM_WORDS, airAdvectWGSL, airCouplingWGSL, airDiffuseWGSL, airMaskWGSL, airPressureWGSL, airVelocityWGSL, airWindWGSL,
+  WIND_UNIFORM_WORDS, airAdvectWGSL, airDiffuseWGSL, airExchangeWGSL, airMaskWGSL, airPressureWGSL, airVelocityWGSL, airWindWGSL,
 } from './shaders/air.wgsl';
 
 /**
@@ -40,8 +40,6 @@ export interface WindStroke {
 interface AirPass {
   pipeline: GPUComputePipeline;
   label: string;
-  // The pass also binds the cell fields it reads and writes (group 1) and the element table (group 2).
-  cells?: GPUBindGroup;
 }
 
 // The air grid: its buffers, the passes that step it and the readback for tests (`src/shaders/air.wgsl.ts` has the
@@ -63,7 +61,7 @@ export class AirGrid {
   private readonly arrayHeight: number;
   /** The air state, one vec4f per array position (speed through the right face, through the top face, pressure, temperature); what the CA and the flight pass bind read-only. Absent without air. */
   readonly state?: GPUBuffer;
-  /** Pressure the CA released this superstep, per array position, in fixed point (`AIR.burstScale`); the coupling pass moves it into the pressure. What the CA binds read-write. Absent without air. */
+  /** Pressure the CA released this superstep, per array position, in fixed point (`AIR.burstScale`); the pressure pass moves it into the pressure. What the CA binds read-write. Absent without air. */
   readonly burst?: GPUBuffer;
   private readonly bindGroup?: GPUBindGroup;
   private readonly kindBindGroup?: GPUBindGroup;
@@ -73,6 +71,11 @@ export class AirGrid {
   private readonly windBindGroup?: GPUBindGroup;
   private readonly windUniform?: GPUBuffer;
   private readonly windData = new Float32Array(WIND_UNIFORM_WORDS);
+  private readonly exchangePass?: AirPass;
+  private readonly exchangeBindGroup?: GPUBindGroup;
+  private readonly exchangeUniform?: GPUBuffer;
+  private readonly heatBindGroup?: GPUBindGroup;
+  private readonly exchangeData = new Float32Array(1);
   private readonly stepPasses: AirPass[] = [];
   private readonly mask?: GPUBuffer;
   private readonly rest?: Float32Array<ArrayBuffer>;
@@ -128,8 +131,18 @@ export class AirGrid {
     this.windUniform = device.createBuffer({ label: 'air wind', size: WIND_UNIFORM_WORDS * 4, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.windBindGroup = device.createBindGroup({ layout: windLayout, entries: [{ binding: 0, resource: { buffer: this.windUniform } }] });
     this.windPass = { label: 'air wind', pipeline: pipeline(airWindWGSL(...shape), [layout, windLayout]) };
+    // The heat exchange's uniform, the air steps it folds in: written once per call that records it.
+    const exchangeLayout = device.createBindGroupLayout({
+      entries: [{ binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } }],
+    });
+    this.exchangeUniform = device.createBuffer({ label: 'air exchange', size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.exchangeBindGroup = device.createBindGroup({ layout: exchangeLayout, entries: [{ binding: 0, resource: { buffer: this.exchangeUniform } }] });
+    this.heatBindGroup = heat.bindGroup;
+    this.exchangePass = {
+      label: 'air exchange',
+      pipeline: pipeline(airExchangeWGSL(elements.elements, ...shape), [layout, heat.layout, elements.layout, exchangeLayout]),
+    };
     this.stepPasses = [
-      { label: 'air coupling', pipeline: pipeline(airCouplingWGSL(elements.elements, ...shape), [layout, heat.layout, elements.layout]), cells: heat.bindGroup },
       { label: 'air velocity', pipeline: pipeline(airVelocityWGSL(...shape), [layout]) },
       { label: 'air pressure', pipeline: pipeline(airPressureWGSL(...shape), [layout]) },
       { label: 'air advect', pipeline: pipeline(airAdvectWGSL(...shape), [layout]) },
@@ -150,6 +163,24 @@ export class AirGrid {
     pass.setBindGroup(0, this.bindGroup);
     pass.setBindGroup(1, this.kindBindGroup);
     pass.setBindGroup(2, this.elementBindGroup);
+    this.dispatch(pass);
+  }
+
+  /**
+   * Records the heat exchange between the cells and the air: once per call, before the CA, for the `supersteps` the call
+   * records. It stands for the exchange of each of their air steps (see `airExchangeWGSL`). Writes its uniform first, so
+   * call it at most once per frame.
+   */
+  recordExchange(passes: PassRecorder, supersteps: number): void {
+    if (!this.exchangePass) return;
+    this.exchangeData[0] = supersteps * this.substeps;
+    this.device.queue.writeBuffer(this.exchangeUniform!, 0, this.exchangeData);
+    const pass = passes.pass(this.exchangePass.label);
+    pass.setPipeline(this.exchangePass.pipeline);
+    pass.setBindGroup(0, this.bindGroup);
+    pass.setBindGroup(1, this.heatBindGroup);
+    pass.setBindGroup(2, this.elementBindGroup);
+    pass.setBindGroup(3, this.exchangeBindGroup);
     this.dispatch(pass);
   }
 
@@ -181,14 +212,10 @@ export class AirGrid {
   recordSuperstep(passes: PassRecorder): void {
     if (!this.enabled) return;
     for (let step = 0; step < this.substeps; step++) {
-      for (const { pipeline, label, cells } of this.stepPasses) {
+      for (const { pipeline, label } of this.stepPasses) {
         const pass = passes.pass(label);
         pass.setPipeline(pipeline);
         pass.setBindGroup(0, this.bindGroup);
-        if (cells) {
-          pass.setBindGroup(1, cells);
-          pass.setBindGroup(2, this.elementBindGroup);
-        }
         this.dispatch(pass);
       }
     }

@@ -1,6 +1,6 @@
 # M6 Air
 
-Status: M6.1a to M6.1c, M6.2a to M6.2c, M6.3a to M6.3d, M6.4a to M6.4b and M6.5a to M6.5b and M6.6a to M6.6f done; next open item M6.7a (M6.6's gate, the user's playtest, is still to do: see M6.6's `Needs you:`).
+Status: M6.1a to M6.1c, M6.2a to M6.2c, M6.3a to M6.3d, M6.4a to M6.4b and M6.5a to M6.5b and M6.6a to M6.6f done; M6.7a done (AC24 amended for `thermal`); next open item M6.7b, then M6.8 (M6.6's gate, the user's playtest, is still to do: see M6.6's `Needs you:`).
 
 ## Goal
 
@@ -78,11 +78,11 @@ Tools and views (M6.6)
 - AC22 WHILE the heat view is on, THE SYSTEM SHALL draw empty space in the dimmed color of its air temperature.
 - AC23 WHILE the pointer is over the grid, THE SYSTEM SHALL show the air's temperature and pressure for empty space, and the pressure after a material's temperature.
 - AC26 WHEN a Wind stroke ends, THE SYSTEM SHALL let the air come to rest: 800 supersteps after a stroke of radius 40 swung left and right at the top speed in an open grid (empty, and over a sand floor), every face speed is below 0.02 cells per dispatch and every |pressure| below 0.01, at `s` 4 and 2 (`tests/air-wind.test.ts`).
-- AC27 WHEN a large gunpowder mound under a sand shell (as at the gate: thousands of cells, not the 48 of `explosion`) is heated until it ignites, THE SYSTEM SHALL settle: from a measured time after ignition, at most 1,200 supersteps, no grain rests against the top of the world, the flyers left are under 1% of the peak (the ones D29 jams), no gunpowder ignites, at most 1% of the sand moves per 60 supersteps (from 2,400 supersteps on: the plume over the hot floor keeps blowing loose grains until then, backlog I19), and |pressure| stays within the measured value of the plume over the hot ground (`tests/air-burst.test.ts`).
+- AC27 WHEN a large gunpowder mound under a sand shell (as at the gate: thousands of cells, not the 48 of `explosion`) is heated until it ignites, THE SYSTEM SHALL settle: from a measured time after ignition, at most 1,200 supersteps, no grain rests against the top of the world, the flyers left are under 1% of the peak (the ones D29 jams), no gunpowder ignites, at most 1% of the sand moves per 60 supersteps (from 2,760 supersteps on: the plume over the hot floor keeps blowing loose grains until then, backlog I19), and |pressure| stays within the measured value of the plume over the hot ground (`tests/air-burst.test.ts`).
 
 Budget (M6.7)
 
-- AC24 WHEN `npm run bench` runs on the idle RTX 4080 at the default air resolution, THE SYSTEM SHALL spend at most 1 ms more GPU time per 1x frame at 2560×1340 than the M6.1 baseline on each of `tank`, `mix75`, `full100`, `blast` and `thermal`: air's share of the 7 ms left after the engine and heat (`docs/powder-toy.md`).
+- AC24 WHEN `npm run bench` runs on the idle RTX 4080 at the default air resolution, THE SYSTEM SHALL spend at most 1 ms more GPU time per 1x frame at 2560×1340 than the M6.1 baseline on each of `tank`, `mix75`, `full100` and `blast`, and at most 1.5 ms more on `thermal` (every cell holds heat and moves; the user accepted +1.24 ms there, 2026-10-28): air's share of the 7 ms left after the engine and heat (`docs/powder-toy.md`).
 
 Docs (M6.8)
 
@@ -96,13 +96,12 @@ Docs (M6.8)
 
 **State.** Air cells are `ceil(W / s) × ceil(H / s)`. One `array<vec4f>` holds per air cell the velocity on its right face (x) and its top face (y) (a staggered grid, so pressure and velocity do not decouple into a checkerboard), the pressure and the temperature at its center. A scratch buffer of the same shape, a mask buffer (openness of the right and top faces, the share of powder or liquid cells, the count of cells that hold heat) and a burst buffer (`atomic<i32>`, fixed point) complete it.
 
-**Passes.** Once per frame, after the brush: the **mask** pass (one thread per air cell, reads `kind` only). Per air step, after the superstep's flyer passes, in the frame's one compute pass:
+**Passes.** Once per frame, after the brush: the **mask** pass (one thread per air cell, reads `kind` only). Once per frame, after the mask pass, the **exchange** pass (one thread per air cell, which owns its `s × s` cells): exchanges heat with each cell that holds heat (M6.4), the exchange of all the frame's air steps folded into one (M6.7a). The Wind tool has its own pass (M6.6a). Per air step, after the superstep's flyer passes, in the frame's one compute pass:
 
-1. **Coupling** (one thread per air cell, which owns its `s × s` cells): adds and clears the burst buffer; exchanges heat with each cell that holds heat (M6.4); applies the frame's air tool in the frame's first air step (M6.6).
-2. **Velocity**: each face gains −Δp across it (scaled for `waveSpeed`) and the buoyancy of its air (M6.4), loses `velocityLoss` and the matter share times `matterLoss`, is clamped to `maxSpeed` and multiplied by its openness (0 on a sealed face). In place: it writes only its own velocity words and reads only neighbors' pressure words.
-3. **Pressure**: p −= divergence of the face velocities, times (1 − `pressureLoss`). In place for the same reason.
-4. **Advect**: flux form with upwind values for heat (`C·T` crosses a face as velocity × openness × the upwind temperature), so air heat is conserved exactly; the velocity and pressure are copied unchanged (the air is linear, M6.6e); state → scratch.
-5. **Diffuse**: air temperature across open faces; scratch → state.
+1. **Velocity**: each face gains −Δp across it (scaled for `waveSpeed`, the pressure with the CA's pending burst added) and the buoyancy of its air (M6.4), loses `velocityLoss` and the matter share times `matterLoss`, is clamped to `maxSpeed` and multiplied by its openness (0 on a sealed face). In place: it writes only its own velocity words and reads only neighbors' pressure words.
+2. **Pressure**: adds and clears its cell's burst; p −= divergence of the face velocities, times (1 − `pressureLoss`). In place for the same reason.
+3. **Advect**: flux form with upwind values for heat (`C·T` crosses a face as velocity × openness × the upwind temperature), so air heat is conserved exactly; the velocity and pressure are copied unchanged (the air is linear, M6.6e); state → scratch.
+4. **Diffuse**: air temperature across open faces; scratch → state.
 
 Each air step ends with the state in the same buffer it started in, so no buffer parity is kept in JS across frames (the bug class of D28). The wave speed fixes the substep count: the velocity–pressure pair is stable while `waveSpeed` × 2 / `s` ≤ 0.7 air cells per substep and the heat flux while `maxSpeed` × 2 / `s` ≤ 1; `n` is the smallest count that meets both, computed once.
 
@@ -157,7 +156,7 @@ The gate: the browser check, then the user's playtest (M6.6d).
 
 ### Budget (M6.7)
 
-Measured against "Baseline (M6.1)" per AC24. Levers in order: (1) the coupling pass skips air cells whose mask counts no heat-holding cell (the count is per frame; a cell entering mid-frame waits a frame, which conserves heat); (2) the CA samples the air only in blocks holding a powder, liquid, gas or fire cell; (3) the coupling pass once per frame with its rate scaled; (4) a gate with the numbers.
+Measured against "Baseline (M6.1)" per AC24. Levers in order (M6.7a's outcome is under its item): (1) the coupling pass skips air cells whose mask counts no heat-holding cell (the count is per frame; a cell entering mid-frame waits a frame, which conserves heat); (2) the CA samples the air only in blocks holding a powder, liquid, gas or fire cell; (3) the coupling pass once per frame with its rate scaled; (4) a gate with the numbers.
 
 ### Edge cases and failure modes
 
@@ -299,7 +298,13 @@ Needs you: the playtest gate (stops the run): blow smoke with the Wind tool, lig
 
 ### M6.7 Budget (tasks)
 
-- [ ] M6.7a Bench at the chosen resolution; AC24; the levers per Design if needed; "M6.7 results".
+- [x] M6.7a Bench at the chosen resolution; AC24; the levers per Design if needed; "M6.7 results".
+  Decided during the run: lever 1 (the coupling pass skips air cells whose mask counts no heat holder) is not applied. Why: `thermal`, the one scene over budget, holds heat in every cell, so it skips nothing there; and the mask counts once per frame, so a gas that rises 8 cells in a 1x frame (and 64 at 8x) would leave the counted air cells and stop trading heat for the rest of the frame (steam would not condense while it rises). Alternative: skip with a margin of a few air cells (little gain). Change: none needed.
+  Decided during the run: lever 2 (the CA samples the air only in blocks holding a powder, liquid, gas or fire cell) is already how the CA works (`movesWithAir`, M6.3a). In `thermal` almost every block holds one, so it saves nothing there. Measured with the sampling turned off (throwaway): `thermal` 2.42 to 2.23 ms; the pressure-transition read in phase 8 costs nothing measurable (2.42 either way).
+  Decided during the run: lever 3 applied. The per-step coupling pass is gone: the burst is read by the velocity pass (as part of the pressure) and added and cleared by the pressure pass, which gives the same numbers bit for bit as before; the heat exchange is its own pass (`air exchange`), once per call to `simulate` before the CA, folding the call's air steps `n = supersteps * substeps` into one exchange: a pair that exchanges a share `g` per step exchanges `1 - (1 - g)^n` at once (`g` itself when `n` is 1). Why: `thermal`'s coupling pass was 0.35 ms of 0.49 ms of air passes, run four times a frame, and 32 times a frame at 8x. Cost: heat leaves a hot block more slowly when a call is long, because the air carries heat away between exchanges and meets fresh cells only once a call: a 16x16 metal block at 1,000 °C, mean after 12,000 supersteps in calls of 1, 4, 8 and 32 supersteps: 362.7, 368.7, 378.3 and 436.7 °C. So the game at 1x (4 per frame) is within 1% of before and at 8x (32 per frame) about 13% slower to cool (M6.4a's tuning stands at 1x). Alternative: the exchange at every air step as before (no change in dynamics, about 0.25 ms more on `thermal`). Change: `recordExchange` and `airExchangeWGSL`.
+  Decided during the run: the tests that measure how fast heat moves step in calls of `FRAME_SUPERSTEPS` (4, a 1x frame, `tests/gpu.ts`) instead of 32: AC14's cooling, AC17's steam and AC27's mound (the others pass as before). AC18's one-cell test sets the air to the stones' 500 °C instead of the crushed sand's 846 °C, because the exchange now runs before the CA instead of after it and would warm the stone before it is crushed. AC27's creep bar is read from 2,760 supersteps instead of 2,400: between 2,400 and 2,700 the share of the sand that moves wanders between 0.9% and 1.1% around the 1% bar (measured in frames of 4 supersteps; the code before lever 3 gives 1.10% at 2,400 too), and from 2,760 it is 0.8% to 0.9%. Why: the creep is a noisy plateau around the bar, not a trend; the bar was set from one record. Alternative: relax the bar to 1.2%, or keep 2,400 and fail. Change: `CREEP_FROM` in `tests/air-burst.test.ts`.
+  Measured after the levers (see "M6.7 results"): `tank` +0.26, `mix75` +0.72, `full100` +0.66, `blast` +0.27, `thermal` +1.24 ms over the baseline at 1x. AC24 holds on four scenes and is missed by 0.24 ms on `thermal`.
+  Decided by the user (2026-10-28), following the recommendation: `thermal` stays at +1.24 ms and AC24 allows 1.5 ms for that scene; AC27's creep bar is read from 2,760 supersteps. A rewrite of how the CA samples the air would be its own item if a later milestone needs the time.
 - [ ] M6.7b `docs/powder-toy.md`: the frame budget with the air's measured share and its cost per resolution.
 
 Visible after: nothing new: the frame time with air is measured and within its share.
@@ -388,4 +393,18 @@ Median GPU ms per 1x frame at 2560x1340, air cell size 4, against the baseline a
 
 ## M6.7 results
 
-To be filled by M6.7a.
+Taken at `7e460b3` plus M6.7a, same machine and method as the baseline (`BENCH_AIR=off,4 npm run bench` before lever 3, `BENCH_AIR=4 npm run bench` after it). `nvidia-smi` 5 to 39% desktop load (browser, Discord, Steam, VS Code open), no game; Wallpaper Engine not running.
+
+Median GPU ms per 1x frame at 2560x1340, air cell size 4, before and after lever 3 (`off` is `air: false` in the first run's session):
+
+| Scene | Baseline | off | Before lever 3 | After lever 3 | Above baseline | AC24 |
+| --- | --- | --- | --- | --- | --- | --- |
+| `tank` | 0.46 | 0.46 | 0.72 | 0.72 | 0.26 | met |
+| `mix75` | 1.44 | 1.51 | 2.16 | 2.16 | 0.72 | met |
+| `full100` | 1.31 | 1.38 | 1.97 | 1.97 | 0.66 | met |
+| `blast` | 0.39 | 0.39 | 0.59 | 0.66 | 0.27 | met |
+| `thermal` | 1.05 | 1.05 | 2.42 | 2.29 | 1.24 | met (1.5 ms for this scene) |
+
+The medians barely move with lever 3 because the benchmark's split table (every pass in its own compute pass) overstates the cost of a small pass: the sum of the air passes at 1x on that table falls from 0.17, 0.31, 0.26, 0.17 and 0.49 ms (`tank`, `mix75`, `full100`, `blast`, `thermal`) to 0.17, 0.24, 0.30, 0.14 and 0.30. Where the rest of `thermal`'s excess is, on the split table (ms at 1x, `air: false` then air 4): ca0 and ca1 0.525 and 0.531 to 0.863 and 0.868; flight, retry and landing passes 0.013, 0.008 and 0.009 to 0.092, 0.098 and 0.073 (more grains fly, pushed by the air); the air passes 0 to 0.30. With the CA's sampling of the air turned off (throwaway), ca0 and ca1 fall to 0.585 and 0.635 and the median to 2.23.
+
+At 8x, `thermal` takes 16.6 ms (17.4 before lever 3), `full100` 15.2 (13.6 before lever 3) and `mix75` 10.1 (7.8, 8.45 and 6.29 without the air); the 8x figures move by about 10% between runs, so lever 3's gain there is not resolved. At the top speed the heavy scenes are at or over a 60 FPS frame.

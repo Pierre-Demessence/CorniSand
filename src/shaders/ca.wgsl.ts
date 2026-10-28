@@ -119,7 +119,7 @@ var<private> around: AirAround;
 
 const AIR_SI: i32 = ${air.cellSize};
 const BURST_SCALE: f32 = ${wgslFloat(AIR.burstScale)};
-// Pressure released by the CA, per array position of the air state; the coupling pass moves it into the pressure.
+// Pressure released by the CA, per array position of the air state; the air's pressure pass moves it into the pressure.
 @group(3) @binding(2) var<storage, read_write> airBurst: array<atomic<i32>>;
 ` : ''}
 const W: u32 = ${width}u;

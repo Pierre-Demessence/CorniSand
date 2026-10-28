@@ -92,10 +92,14 @@ export async function run(sim: Simulation, supersteps: number, input: Simulation
   if (error) throw new Error(`WebGPU validation error: ${error.message}`);
 }
 
-// Same as run(), split into encoders of at most MAX_SUPERSTEPS.
-export async function runMany(sim: Simulation, supersteps: number): Promise<void> {
-  for (let left = supersteps; left > 0; left -= MAX_SUPERSTEPS) {
-    await run(sim, Math.min(left, MAX_SUPERSTEPS));
+// Supersteps in one frame of the game at 1x. The heat the air trades with the cells is exchanged once per call to
+// `simulate`, so a test that measures how fast heat moves records frames of this size, as the game does.
+export const FRAME_SUPERSTEPS = 4;
+
+// Same as run(), split into encoders of at most `perCall` supersteps (MAX_SUPERSTEPS by default).
+export async function runMany(sim: Simulation, supersteps: number, perCall = MAX_SUPERSTEPS): Promise<void> {
+  for (let left = supersteps; left > 0; left -= perCall) {
+    await run(sim, Math.min(left, perCall));
   }
 }
 
