@@ -1,5 +1,5 @@
 import {
-  MAX_ELEMENTS, STATES, crushPressure, densityMode, densityProfile, elementByKey, elementConductivity, elementDrag, elementGravity, elementHeatCapacity, elementHoldsHeat, elementInert, elementSpread,
+  MAX_ELEMENTS, STATES, crushPressure, densityMode, densityProfile, elementByKey, elementConductivity, elementDrag, elementGravity, elementHeatCapacity, elementHoldsHeat, elementInert, elementSlide, elementSpread,
   elementTemperature, latentWidth, transitionBurst, validateElements, type ElementDef,
 } from './elements';
 import { NO_THRESHOLD } from './heat';
@@ -64,6 +64,12 @@ export const PROP_FIELDS: readonly PropField[] = [
   ...[0, 1, 2, 3].map((i): PropField => ({ name: `densityKnot${i}`, wgslType: 'f32', value: (e) => densityProfile(e).densities[i] })),
   // The chance per dispatch that a liquid spreads sideways, from its viscosity (1 for everything else).
   { name: 'spread', wgslType: 'f32', value: (e) => elementSpread(e) },
+  // The sideways speed a powder grain gets when it slides off a step, in cells per dispatch, from its angle of repose (0 for everything else).
+  { name: 'slide', wgslType: 'f32', value: (e) => elementSlide(e) },
+  // Padding to a multiple of four words.
+  { name: 'pad1', wgslType: 'u32', value: () => 0 },
+  { name: 'pad2', wgslType: 'u32', value: () => 0 },
+  { name: 'pad3', wgslType: 'u32', value: () => 0 },
 ];
 
 const ROW_WORDS = PROP_FIELDS.length;

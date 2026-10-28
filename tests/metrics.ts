@@ -159,3 +159,36 @@ export function heatContent(
   }
   return total;
 }
+
+/** The height above `floorY` of the highest cell of `kind` in each column, 0 for a column without one. */
+export function columnTops(cells: Uint32Array, width: number, height: number, floorY: number, kind: number): number[] {
+  const tops: number[] = [];
+  for (let x = 0; x < width; x++) {
+    let top = 0;
+    for (let y = floorY; y < height; y++) if (cellTypeAt(cells, width, x, y) === kind) top = y - floorY + 1;
+    tops.push(top);
+  }
+  return tops;
+}
+
+/**
+ * The slope of a pile in degrees: from the highest column, a least-squares line through each side's column tops between
+ * 25% and 80% of the apex height (the apex and the foot are rounded), and the mean of the two sides' angles.
+ */
+export function pileAngle(tops: readonly number[]): number {
+  const apex = Math.max(...tops);
+  const center = tops.indexOf(apex);
+  const angles: number[] = [];
+  for (const direction of [-1, 1]) {
+    const points: [number, number][] = [];
+    for (let x = center + direction; x >= 0 && x < tops.length && tops[x] > 0; x += direction) {
+      if (tops[x] >= 0.25 * apex && tops[x] <= 0.8 * apex) points.push([Math.abs(x - center), tops[x]]);
+    }
+    if (points.length < 3) throw new Error(`the pile has no slope on the ${direction < 0 ? 'left' : 'right'}`);
+    const meanX = points.reduce((sum, [d]) => sum + d, 0) / points.length;
+    const meanY = points.reduce((sum, [, h]) => sum + h, 0) / points.length;
+    const slope = points.reduce((sum, [d, h]) => sum + (d - meanX) * (h - meanY), 0) / points.reduce((sum, [d]) => sum + (d - meanX) ** 2, 0);
+    angles.push((Math.atan(-slope) * 180) / Math.PI);
+  }
+  return (angles[0] + angles[1]) / 2;
+}

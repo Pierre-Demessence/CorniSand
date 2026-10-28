@@ -8,6 +8,7 @@ import {
   countType,
   flatness,
   liquidVolume,
+  pileAngle,
 } from './metrics';
 
 function flat(rows: string[]): [Uint32Array<ArrayBuffer>, number, number] {
@@ -50,5 +51,16 @@ describe('metrics', () => {
     expect(columnsWithAbove(...flat(['w.o', 'o.w', '###']), T.WATER, T.OIL)).toBe(1);
     expect(columnsWithAbove(...flat(['o.o', 'w.w', '###']), T.WATER, T.OIL)).toBe(0);
     expect(columnsWithAbove(...flat(['w.w', 'o.o', '###']), T.WATER, T.OIL)).toBe(2);
+  });
+
+  it('measure the slope of a pile from its column tops', () => {
+    const triangle = (rise: number, run: number): number[] => {
+      const tops: number[] = [];
+      for (let x = -60; x <= 60; x++) tops.push(Math.max(0, Math.round(40 - (Math.abs(x) * rise) / run)));
+      return tops;
+    };
+    expect(pileAngle(triangle(1, 1))).toBeCloseTo(45, 0);
+    expect(pileAngle(triangle(1, 2))).toBeCloseTo(26.57, 0);
+    expect(() => pileAngle([0, 0, 5, 0, 0])).toThrow(/no slope/);
   });
 });

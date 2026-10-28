@@ -309,6 +309,10 @@ ${air ? `  // The air: the cell loses \`drag\` of its speed relative to it, and 
       swapSlots(at, corner); at = corner;
       v.y = 0.0;
       r.y = 0.0;
+      // A powder with an angle of repose leaves the step with a sideways speed, which carries it over the steps below
+      // until friction stops it: that sets the slope of a pile (\`slideSpeed\` in src/physics.ts).
+      let slide = elSlide(cellType(c));
+      if (slide > 0.0) { v.x = select(-slide, slide, corner == 1u); }
     }
   }
   // A cell whose target lies outside the block waits a dispatch; this bounds what it banks meanwhile.

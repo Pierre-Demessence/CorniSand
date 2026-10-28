@@ -237,10 +237,11 @@ describe.skipIf(!device)('M6 bursts', () => {
     // The tagged grains: sand within TAG_RADIUS of the charge, on a lattice, followed by the tag in the variant bits.
     const TAG_RADIUS = 28;
     const STEPS = 8;
-    // Mean distance from the charge the tagged grains gain by STEPS, measured (2.54 at 8 supersteps with a burst of 3,
-    // against 2.6 for the pressure pulse of AC7, tests/air-matter.test.ts; 1.86 with a burst of 2, 2.74 with 4: from 3 up
+    // Mean distance from the charge the tagged grains gain by STEPS, measured (1.71 at 8 supersteps with a burst of 3; 2.54
+    // before sand had an angle of repose, M8.8h: the grains thrown out land on the crater's slope and slide back toward the
+    // charge; the pressure pulse of AC7, tests/air-matter.test.ts, gave 2.6; 1.86 with a burst of 2, 2.74 with 4: from 3 up
     // the blast saturates the air's speed limit), less the 30% the criterion allows.
-    const MEASURED_GROWTH = 2.54;
+    const MEASURED_GROWTH = 1.71;
     const center = { x: (EXPLOSION.charge.x0 + EXPLOSION.charge.x1) / 2, y: (EXPLOSION.charge.y0 + EXPLOSION.charge.y1) / 2 };
 
     interface Grain {

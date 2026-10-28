@@ -62,3 +62,27 @@ export function convectionChance(upper: number, lower: number): number {
   if (!(upper > lower)) return 0;
   return Math.min(1, CONVECTION_GAIN * Math.sqrt((upper - lower) / lower));
 }
+
+// Angle of repose: a pile of grains stands at the angle at which the grains that slide off its steps come to rest. A grain
+// that rests on something and has a free cell diagonally below it slides there (static friction: a step of one cell is
+// stable, so a pile of such grains stands at 45 degrees, one cell of height per column). Giving the grain a sideways speed
+// as it slides carries it on over the steps below until the surface's friction (`MOVEMENT.friction`) stops it, which
+// flattens the pile. Fitted on tests/repose.test.ts (a pile of sand poured from a point, slide speeds from 0.05 to 0.6 cells
+// per dispatch): the angle is about 45 degrees minus `REPOSE_FIT` degrees times the square of the speed, to within 3
+// degrees from 20 to 45 degrees.
+/** The steepest angle of repose a pile can have: a step of one cell is stable. */
+export const MAX_REPOSE = 45;
+
+/** The flattest angle of repose the fit covers (a slide speed of about 0.56 cells per dispatch). */
+export const MIN_REPOSE = 20;
+
+/** Degrees by which the pile's angle falls below `MAX_REPOSE` per (cell per dispatch)² of slide speed. */
+export const REPOSE_FIT = 80;
+
+/**
+ * The sideways speed in cells per dispatch a grain gets when it slides off a step, so that a pile of it stands at the
+ * angle of repose `repose` (degrees, `MIN_REPOSE` to `MAX_REPOSE`): 0 at `MAX_REPOSE`.
+ */
+export function slideSpeed(repose: number): number {
+  return Math.sqrt((MAX_REPOSE - repose) / REPOSE_FIT);
+}

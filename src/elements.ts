@@ -1,5 +1,5 @@
 import { ABSOLUTE_ZERO, MAX_TEMP, ROOM_TEMP } from './heat';
-import { DEFAULT_GRAVITY, spreadSpeed } from './physics';
+import { DEFAULT_GRAVITY, MAX_REPOSE, MIN_REPOSE, slideSpeed, spreadSpeed } from './physics';
 
 // The element table: one row per material, the single source of the IDs, colors, movement class, density, lifetimes
 // and toolbar entries that the shaders, the brush, the display and the toolbar are generated from.
@@ -39,6 +39,11 @@ export interface ElementDef {
    * spreads at the cap.
    */
   viscosity?: number;
+  /**
+   * Angle of repose in degrees, `MIN_REPOSE` to `MAX_REPOSE`: the slope a pile of this powder poured from a point stands
+   * at (`slideSpeed`). Powders only. Without it a powder piles at `MAX_REPOSE`, the steepest the grid allows.
+   */
+  repose?: number;
   /** Downward acceleration in cells per dispatch² of a powder or liquid; default `DEFAULT_GRAVITY` for those states, 0 for the others. Gases rise at a fixed speed and ignore it. */
   gravity?: number;
   /** Share of its velocity a flying cell of this element loses per dispatch; default `DEFAULT_DRAG`. */
@@ -176,6 +181,11 @@ export function elementSpread(e: ElementDef): number {
   return e.viscosity === undefined ? 1 : Math.min(1, spreadSpeed(e.density, e.viscosity));
 }
 
+/** The speed in cells per dispatch a powder grain gets when it slides off a step: 0 for a row without a repose (it keeps its own speed, as at `MAX_REPOSE`). */
+export function elementSlide(e: ElementDef): number {
+  return e.repose === undefined ? 0 : slideSpeed(e.repose);
+}
+
 /** The gravity of a row with its default for the state applied. */
 export function elementGravity(e: ElementDef): number {
   return e.gravity ?? (e.state === 'powder' || e.state === 'liquid' ? DEFAULT_GRAVITY : 0);
@@ -256,7 +266,8 @@ export const ELEMENTS = [
   // Empty space is air: 1.2 kg/m³ at 20 °C, and its density at its air cell's temperature follows the ideal-gas law.
   { key: 'EMPTY', id: 0, label: 'Empty', color: [0.06, 0.06, 0.08], state: 'empty', density: 1.2 },
   // Dry sand: 0.27 W/m·K (0.25 to 0.35 for dry quartz sand) and 1.3 MJ/m³·K (1,600 kg/m³ at 0.8 kJ/kg·K).
-  { key: 'SAND', id: 1, label: 'Sand', color: [0.80, 0.70, 0.48], state: 'powder', density: 1600, conductivity: 0.27, heatCapacity: 1.3, toolbar: 1 },
+  // Angle of repose 34° (dry sand 30 to 35°: Wikipedia's table 34°, Dartmouth's engineering notes 35° for dry irregular sand).
+  { key: 'SAND', id: 1, label: 'Sand', color: [0.80, 0.70, 0.48], state: 'powder', density: 1600, conductivity: 0.27, heatCapacity: 1.3, repose: 34, toolbar: 1 },
   // The engine's invincible wall and the world's edge, not a real material: it never conducts, so heat never leaves the world.
   { key: 'WALL', id: 2, label: 'Wall', color: [0.43, 0.45, 0.47], state: 'solid', density: 2500, toolbar: 6 },
   // Water: 0.6 W/m·K and 4.18 MJ/m³·K (4.18 kJ/kg·K at 1,000 kg/m³). Freezes and boils at the physical 0 and 100 °C, with the
@@ -443,6 +454,7 @@ export const ELEMENTS = [
   // a capacity of about 0.8 kJ/kg·K at 1,700 kg/m³ gives 1.4 MJ/m³·K. It burns into FIRE, by heat or by touching fire
   // (flammable), and releases `burst` into the air as each cell goes: a charge of about 50 cells is a blast that throws the
   // sand over it (tuned against the `explosion` scene, tests/air-burst.test.ts).
+  // Angle of repose 30°: an estimate, not read from a source (glazed, rounded grains flow freely, like dry sand's 30 to 35°).
   {
     key: 'GUNPOWDER',
     id: 13,
@@ -453,6 +465,7 @@ export const ELEMENTS = [
     flammable: true,
     conductivity: 0.2,
     heatCapacity: 1.4,
+    repose: 30,
    
     above: { temp: 427, becomes: 'FIRE', burst: GUNPOWDER_BURST },
     toolbar: 12,
@@ -484,6 +497,10 @@ export function validateElements(elements: readonly ElementDef[]): void {
     if (e.viscosity !== undefined) {
       if (e.state !== 'liquid') throw new Error(`element ${e.key}: viscosity is only for a liquid`);
       if (!(Number.isFinite(e.viscosity) && e.viscosity > 0)) throw new Error(`element ${e.key}: viscosity must be a finite number above 0`);
+    }
+    if (e.repose !== undefined) {
+      if (e.state !== 'powder') throw new Error(`element ${e.key}: repose is only for a powder`);
+      if (!(e.repose >= MIN_REPOSE && e.repose <= MAX_REPOSE)) throw new Error(`element ${e.key}: repose must be a number in ${MIN_REPOSE}..${MAX_REPOSE}`);
     }
     if (!(elementGravity(e) >= 0 && elementGravity(e) < Infinity)) throw new Error(`element ${e.key}: gravity must be a finite number, 0 or more`);
     if (!(elementConductivity(e) >= 0 && elementConductivity(e) < Infinity)) throw new Error(`element ${e.key}: conductivity must be a finite number, 0 or more`);

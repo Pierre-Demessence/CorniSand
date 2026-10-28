@@ -46,8 +46,8 @@ describe('element table', () => {
     expect(density('WATER')).toBeLessThan(density('SAND'));
   });
 
-  it('packs one 128-byte row per element ID, at the offset the ID gives', () => {
-    expect(ROW_BYTES).toBe(128);
+  it('packs one 144-byte row per element ID, at the offset the ID gives', () => {
+    expect(ROW_BYTES).toBe(144);
     expect(ROW_BYTES % 16, 'a uniform array stride').toBe(0);
     const buffer = packElements(ELEMENTS);
     const words = new Uint32Array(buffer);
