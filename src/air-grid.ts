@@ -131,7 +131,7 @@ export class AirGrid {
     this.windUniform = device.createBuffer({ label: 'air wind', size: WIND_UNIFORM_WORDS * 4, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.windBindGroup = device.createBindGroup({ layout: windLayout, entries: [{ binding: 0, resource: { buffer: this.windUniform } }] });
     this.windPass = { label: 'air wind', pipeline: pipeline(airWindWGSL(...shape), [layout, windLayout]) };
-    // The heat exchange's uniform, the air steps it folds in: written once per call that records it.
+    // The heat exchange's uniform, the supersteps it folds in: written once per call that records it.
     const exchangeLayout = device.createBindGroupLayout({
       entries: [{ binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } }],
     });
@@ -168,12 +168,12 @@ export class AirGrid {
 
   /**
    * Records the heat exchange between the cells and the air: once per call, before the CA, for the `supersteps` the call
-   * records. It stands for the exchange of each of their air steps (see `airExchangeWGSL`). Writes its uniform first, so
+   * records. It stands for the exchange of each of them (see `airExchangeWGSL`). Writes its uniform first, so
    * call it at most once per frame.
    */
   recordExchange(passes: PassRecorder, supersteps: number): void {
     if (!this.exchangePass) return;
-    this.exchangeData[0] = supersteps * this.substeps;
+    this.exchangeData[0] = supersteps;
     this.device.queue.writeBuffer(this.exchangeUniform!, 0, this.exchangeData);
     const pass = passes.pass(this.exchangePass.label);
     pass.setPipeline(this.exchangePass.pipeline);

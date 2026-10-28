@@ -163,9 +163,10 @@ describe.skipIf(!device)('M6 bursts', () => {
     const HEIGHT = 96;
     // Measured with the water pouring onto lava below: the largest pressure and the fastest air in 1,000 supersteps. (M8.8c:
     // boiling takes 2,257 a cell at real heat speed, so the water boils over about 900 supersteps; before, the peak 0.175 and
-    // the speed 0.21 came within 60.)
-    const MEASURED_PEAK = 0.14;
-    const MEASURED_SPEED = 0.18;
+    // the speed 0.21 came within 60. M8.8d, with the air's physical heat capacity and surface coefficient: peak 0.052 and
+    // speed 0.063; with M6's exchange, 0.14 and 0.18.)
+    const MEASURED_PEAK = 0.052;
+    const MEASURED_SPEED = 0.063;
     const POUR_SUPERSTEPS = 1000;
 
     // A tank with a layer of lava on the floor and, when `water`, a block of water hanging above it.

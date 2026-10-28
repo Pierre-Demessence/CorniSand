@@ -232,12 +232,13 @@ ${ENTRY} {
 `;
 
 /**
- * The exchange pass, one thread per air cell, once per call to `simulate` (the air steps of the call are folded into it):
+ * The exchange pass, one thread per air cell, once per call to `simulate` (the supersteps of the call are folded into it):
  * exchanges heat between the air cell and the cells that hold heat and belong to it, one after the other in row-major
  * order (every cell at its own turn sees the air as the cells before it left it, so the exchange conserves heat and
- * never overshoots). A powder or liquid moving at `AIR.stillSpeed` or faster takes no part, as a flyer. A pair that
- * would exchange `g` of its difference at each of `steps` air steps exchanges `1 - (1 - g)^steps` at once, what the
- * steps would leave of it if the air stood still between them. A cell that is not solid belongs to the air cell it is
+ * never overshoots). A powder or liquid moving at `AIR.stillSpeed` or faster takes no part, as a flyer. A pair exchanges
+ * the share `airShare` (`src/air.ts`: the surface coefficient `AIR.surfaceCoefficient`, the same for every material) per
+ * superstep, so over `n` supersteps `1 - (1 - g)^n` at once, what they would leave of it if the air stood still between
+ * them. A cell that is not solid belongs to the air cell it is
  * in. A solid cell belongs to the air cell of its first neighbor (up, left, right, down) that is empty space, a gas or
  * fire: the air cells inside a block of metal are closed off, and its surface must reach the open air next to it. A
  * solid with no such neighbor belongs to none and a cell on the grid's edge counts the outside as no neighbor. The
@@ -253,9 +254,9 @@ ${prelude(width, height, cellSize, substeps, nx, ny)}
 
 const NONE: u32 = 0xffffffffu;
 
-// The number of air steps this call folds into the exchange.
+// The number of supersteps this call folds into the exchange.
 struct Exchange {
-  steps: f32,
+  supersteps: f32,
 };
 @group(3) @binding(0) var<uniform> exchange: Exchange;
 
@@ -304,14 +305,12 @@ ${ENTRY} {
       if (!inside && elState(t) != ST_SOLID) { continue; }
       if (airOf(x, y, t) != k) { continue; }
       // The pair's exchange, as \`exchangeHeat\`: the cell's temperature is its stored one clamped to its thresholds.
-      let kc = elAirCoupling(t);
-      if (kc <= 0.0) { continue; }
       let d = clamp(field_temp[i], elBelowTemp(t), elAboveTemp(t)) - airTemp;
       if (d == 0.0) { continue; }
       let c = elHeatCapacity(t);
-      let g = 2.0 * kc * AIR_CONDUCTIVITY / (kc + AIR_CONDUCTIVITY);
+      let g = min(1.0, AIR_SURFACE * (1.0 / c + 1.0 / AIR_CAPACITY));
       var share = g;
-      if (exchange.steps > 1.0) { share = 1.0 - pow(1.0 - g, exchange.steps); }
+      if (exchange.supersteps > 1.0) { share = 1.0 - pow(1.0 - g, exchange.supersteps); }
       let flow = share * d / (c + AIR_CAPACITY);
       field_temp[i] -= flow * AIR_CAPACITY;
       airTemp += flow * c;

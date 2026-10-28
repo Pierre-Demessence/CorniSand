@@ -1,5 +1,6 @@
 import type { RampKnot } from './heat';
 import { wgslFloat } from './movement';
+import { CELL_SIZE, HEAT_UNIT, PAIR_TIME } from './physics';
 
 /** The shape of the air grid a shader that reads it needs: grid cells per air cell and air cells across and up. */
 export interface AirShape {
@@ -27,14 +28,15 @@ export const AIR = {
   edgeDamping: 0.02,
   // Share of the temperature difference to a neighbor an air cell closes per dispatch, across a fully open face.
   diffusion: 0.02,
-  // Share of the temperature difference that evens out when a cell that holds heat exchanges with its air: the pair
-  // meets at the harmonic mean of this and the cell's own conductivity (`exchangeHeat`'s rule). Tuned in M6.4a against
-  // the cooling targets of the M6 plan (`git log --all -- docs/plans/m6-air.md`).
-  conductivity: 0.5,
-  // Heat per degree of the air over one grid cell, in the units of the elements' heat capacity (a cell is one unit of
-  // matter, water 4.2): air's volumetric heat capacity is about 1/3,500 of water's, so about 0.0012. An air cell holds
-  // this times `cellSize` squared. Tuned in M6.4a.
-  heatCapacity: 0.04,
+  // Surface coefficient in W/m²·K between a cell that holds heat and its air cell: the heat that crosses a cell's face per
+  // second per degree per square meter, the same for every material (`airShare`). It is the near half of the cooling
+  // in still air: the other half is how fast the air removes the heat (diffusion across air cells and the rising plume),
+  // so the two in series are tuned to the effective 5 to 10 W/m²·K of natural convection from a warm surface
+  // (tests/air-heat.test.ts, M8.8 AC7: a steel block 7 cm wide cools at 9 W/m²·K with 40, 7 with 20, 5 with 10).
+  surfaceCoefficient: 40,
+  // Volumetric heat capacity of air in MJ/m³·K (1.2 kJ/m³·K, 1.005 kJ/kg·K at 1.2 kg/m³): about 1/3,500 of water's. An air
+  // cell holds this times `cellSize` squared; a cell's heat per degree in the table's units (a cell is one unit of matter).
+  heatCapacity: 0.0012,
   // A powder or liquid moving at least this fast (cells per dispatch) trades no heat with the air, as a flyer does: the
   // exchange stands for a cell warming the still air beside it, and a cell crossing a new air cell every few dispatches
   // would mix with a whole air cell of fresh air each frame (a lone falling lava cell would lose about 160 °C a frame,
@@ -117,6 +119,20 @@ export function windVelocity(from: { x: number; y: number }, to: { x: number; y:
   return { x: dx / length * speed, y: dy / length * speed };
 }
 
+// Share of the temperature difference per unit of 1 / capacity (MJ/m³·K) that a cell and its air close in one superstep
+// (PAIR_TIME): the surface coefficient h W/m²·K over the cell's face (CELL_SIZE wide per unit depth) heats a volume of
+// CELL_SIZE² per unit depth, so dΔT/ΔT = h · PAIR_TIME / CELL_SIZE × (1 / C_cell + 1 / C_air).
+const AIR_SURFACE = (AIR.surfaceCoefficient * PAIR_TIME) / CELL_SIZE / HEAT_UNIT;
+
+/**
+ * The share of the way to their capacity-weighted mean that a cell of heat capacity `cellCapacity` (MJ/m³·K) and its air
+ * cell (`AIR.heatCapacity` × `airCellSize`²) move in one superstep, at most 1 (never past the mean). Mirrors the share in
+ * `airExchangeWGSL`.
+ */
+export function airShare(cellCapacity: number, airCellSize: number): number {
+  return Math.min(1, AIR_SURFACE * (1 / cellCapacity + 1 / (AIR.heatCapacity * airCellSize * airCellSize)));
+}
+
 /** The air cell sizes: grid cells per air cell along each axis. */
 export const AIR_CELL_SIZES = [1, 2, 4, 8] as const;
 export type AirCellSize = (typeof AIR_CELL_SIZES)[number];
@@ -162,7 +178,8 @@ const KEEP_VELOCITY: f32 = ${wgslFloat(keep(AIR.velocityLoss))};
 const KEEP_MATTER: f32 = ${wgslFloat(keep(AIR.matterLoss))};
 const KEEP_EDGE: f32 = ${wgslFloat(keep(AIR.edgeDamping))};
 const DIFFUSION: f32 = ${wgslFloat(diffusion)};
-const AIR_CONDUCTIVITY: f32 = ${wgslFloat(AIR.conductivity)};
+// The share of a cell's difference to the air per unit of 1 / capacity (\`airShare\`).
+const AIR_SURFACE: f32 = ${wgslFloat(AIR_SURFACE)};
 // The heat an air cell takes per degree: its \`S x S\` grid cells' worth.
 const AIR_CAPACITY: f32 = ${wgslFloat(AIR.heatCapacity * cellSize * cellSize)};
 const STILL_SPEED: f32 = ${wgslFloat(AIR.stillSpeed)};

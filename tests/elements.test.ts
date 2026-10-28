@@ -132,7 +132,6 @@ describe('element table', () => {
     ['a negative conductivity', { conductivity: -0.1 }, /MUD: conductivity must be a finite number, 0 or more/],
     ['an infinite conductivity', { conductivity: Infinity }, /MUD: conductivity must be a finite number, 0 or more/],
     ['a conductivity that is not a number', { conductivity: NaN }, /MUD: conductivity must be a finite number, 0 or more/],
-    ['an air coupling above 1', { airCoupling: 1.5 }, /MUD: airCoupling must be a number in 0\.\.1/],
     ['a heat capacity of 0', { heatCapacity: 0 }, /MUD: heatCapacity must be a finite number above 0/],
     ['a negative heat capacity', { heatCapacity: -1 }, /MUD: heatCapacity must be a finite number above 0/],
     ['an infinite heat capacity', { heatCapacity: Infinity }, /MUD: heatCapacity must be a finite number above 0/],

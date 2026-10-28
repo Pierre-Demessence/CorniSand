@@ -716,18 +716,20 @@ describe.skipIf(!device)('M5.4c settling at a threshold', () => {
   }
 
   it('AC13: ice over water settles at 0 °C and changes no cell', async () => {
-    // 5 rows of water at 10 °C under 5 rows of ice at -20 °C: the ice needs 1,520 (38 a cell) to reach 0 °C and the water gives
-    // 1,672 (41.8 a cell), so the 152 left over cannot pay the 334 an ice cell needs to melt. First run (M8.8c): the layers
-    // level out slowly, the worst cell 1.4 °C from 0 °C after 20,000 supersteps and within 0.15 °C by 60,000 (before: 0.08 °C after 500).
-    const worst = await settle(packedBox([{ type: T.WATER, temp: 10, rows: 5 }, { type: T.ICE, temp: -20, rows: 5 }]), 0, 60_000);
+    // 2 rows of water at 10 °C under 2 rows of ice at -20 °C: the ice needs 608 (38 a cell) to reach 0 °C and the water gives
+    // 669 (41.8 a cell), so the 61 left over cannot pay the 334 an ice cell needs to melt. At real speed the layers level out
+    // slowly: the worst cell is 0.16 °C from 0 °C after 20,000 supersteps, 0.03 after 30,000 (M8.8c, 5 rows each: 1.4 after
+    // 20,000; M8.8d: 1.05 after 60,000, since the air no longer mixes the cells of an air cell; before M8.8c: 0.08 after 500).
+    const worst = await settle(packedBox([{ type: T.WATER, temp: 10, rows: 2 }, { type: T.ICE, temp: -20, rows: 2 }]), 0, 30_000);
     expect(worst, 'largest distance of a temperature from 0 °C').toBeLessThan(0.15);
   }, 60_000);
 
   it('AC13: steam over water settles at 100 °C and changes no cell', async () => {
-    // 5 rows of steam at 110 °C over 5 rows of water at 90 °C: the water needs 1,672 (41.8 a cell) to reach 100 °C and the
-    // steam gives 800 as steam, the other 872 at most from the 8 cells at the surface (109 each, under the 2,257 a cell
-    // needs to condense). First run (M8.8c): the worst cell 0.21 °C from 100 °C after 20,000 supersteps (before: 0.09 °C after 500).
-    const worst = await settle(packedBox([{ type: T.WATER, temp: 90, rows: 5 }, { type: T.STEAM, temp: 110, rows: 5 }]), 100, 30_000);
+    // 2 rows of steam at 110 °C over 2 rows of water at 90 °C: the water needs 669 (41.8 a cell) to reach 100 °C and the
+    // steam gives 320 as steam, the other 349 at most from the 8 cells at the surface (109 each, under the 2,257 a cell
+    // needs to condense). Measured (M8.8d): the worst cell 0.25 °C from 100 °C after 20,000 supersteps, 0.04 after 30,000
+    // (M8.8c, 5 rows each: 0.21 after 20,000; before: 0.09 after 500).
+    const worst = await settle(packedBox([{ type: T.WATER, temp: 90, rows: 2 }, { type: T.STEAM, temp: 110, rows: 2 }]), 100, 30_000);
     expect(worst, 'largest distance of a temperature from 100 °C').toBeLessThan(0.15);
   }, 60_000);
 });

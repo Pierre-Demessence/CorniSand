@@ -1,29 +1,32 @@
 import { describe, expect, it } from 'vitest';
-import { AIR, type AirCellSize } from '../src/air';
+import { AIR, airShare, type AirCellSize } from '../src/air';
 import { emptyCellData, tempView } from '../src/cell-fields';
-import { ELEMENT as T, ELEMENTS, elementByKey, elementAirCoupling, elementHeatCapacity } from '../src/elements';
+import { ELEMENT as T, ELEMENTS, elementByKey, elementHeatCapacity } from '../src/elements';
 import { packHalf2 } from '../src/half';
 import { ROOM_TEMP } from '../src/heat';
+import { CELL_SIZE, HEAT_UNIT, PAIR_TIME } from '../src/physics';
 import { PLUME, plume } from '../src/scenes';
 import type { Simulation } from '../src/simulation';
 import { FRAME_SUPERSTEPS, airWords, cell, cellType, createSim, device, idleInput, mulberry32, readCells, run, runMany, countTypes } from './gpu';
 import { heatContent } from './metrics';
 
-// Measured with the constants in `AIR` (M6.4 results of the deleted plan, `git log --all -- docs/plans/m6-air.md`).
+// Measured with the constants in `AIR` (the M6.4 results are in the deleted plan, `git log --all -- docs/plans/m6-air.md`; re-measured
+// in M8.8d with the air's physical capacity and surface coefficient).
 const MEASURED = {
   // Degrees the air just above a 1,000 °C metal block is warmer than the air at the box's side, after 1,200 supersteps.
-  aboveWarmer: 466,
-  // Heat the air took from the cells of the sealed box in 2,000 supersteps (the box holds about 4.2 million).
-  airShare: 80_000,
+  aboveWarmer: 364,
+  // Heat the air took from the cells of the sealed box in 2,000 supersteps (the box holds about 4.2 million; the air holds
+  // 1/33 of what it held in M6).
+  airShare: 2_080,
   // Mean upward speed of the air over the plume scene's plate after `PLUME_STEPS`, in cells per dispatch.
-  plumeSpeed: 0.077,
+  plumeSpeed: 0.055,
 };
-// A block of metal at 1,000 °C cools below 200 °C after about 27,600 supersteps (115 s at 1x).
+// A block of metal at 1,000 °C cools to 944 °C in 30,000 supersteps (125 s at 1x): a time constant of about 35 minutes.
 const COOLING_STEPS = 30_000;
 // Supersteps the plume has had to develop.
 const PLUME_STEPS = 960;
-// All 64 steam cells have condensed after about 2,800 supersteps (M8.8c: each gives the air 2,257 as it condenses; before,
-// about 840). Limit with a 30% margin: 3,600.
+// Supersteps the steam in open air has to give its heat to the air (M8.8d: it has reached 96 °C by then; it condensed in
+// about 2,800 before the air's capacity was physical).
 const STEAM_STEPS = 3600;
 
 // A world of cells at room temperature, edited by rectangles; row y = 0 is the bottom.
@@ -87,12 +90,12 @@ describe.skipIf(!device)('M6 ambient heat', () => {
   describe('AC14: a cell that holds heat trades heat with the air', () => {
     const metal = elementByKey(ELEMENTS, 'METAL');
     // The temperature a metal cell at `from` has after one exchange with an air cell at room temperature.
-    // `steps` air steps folded into one exchange: a pair that trades a share g per step trades 1 - (1 - g)^steps at once.
-    function exchange(from: number, cellSize: number, steps = 1): number {
-      const [km, c] = [elementAirCoupling(metal), elementHeatCapacity(metal)];
+    // `supersteps` folded into one exchange: a pair that trades a share g per superstep trades 1 - (1 - g)^supersteps at once.
+    function exchange(from: number, cellSize: number, supersteps = 1): number {
+      const c = elementHeatCapacity(metal);
       const capacity = AIR.heatCapacity * cellSize * cellSize;
-      const g = (2 * km * AIR.conductivity) / (km + AIR.conductivity);
-      const share = steps === 1 ? g : 1 - (1 - g) ** steps;
+      const g = airShare(c, cellSize);
+      const share = supersteps === 1 ? g : 1 - (1 - g) ** supersteps;
       return from - (share * (from - ROOM_TEMP) / (c + capacity)) * capacity;
     }
 
@@ -110,10 +113,10 @@ describe.skipIf(!device)('M6 ambient heat', () => {
       const mean = (500 * elementHeatCapacity(metal) + ROOM_TEMP * AIR.heatCapacity * 16) / (elementHeatCapacity(metal) + AIR.heatCapacity * 16);
       expect(metalNow, 'one exchange stops short of the mean').toBeGreaterThan(mean);
       // The air passes that follow spread what the air took across its faces, so only its warming is checked here.
-      expect((await sim.air.read()).temperature[0], 'the air cell is warmer').toBeGreaterThan(ROOM_TEMP + 100);
+      expect((await sim.air.read()).temperature[0], 'the air cell is warmer').toBeGreaterThan(ROOM_TEMP + 1);
     });
 
-    it('M6 AC14: a call of several supersteps trades the heat of all its air steps at once, a share of 1 - (1 - g)^steps of the difference', async () => {
+    it('M6 AC14: a call of several supersteps trades the heat of all of them at once, a share of 1 - (1 - g)^steps of the difference', async () => {
       const supersteps = 4;
       const world = new World(4, 4).fill(T.METAL, 1, 2, 1, 2, 500);
       const sim = createSim(4, 4);
@@ -121,8 +124,7 @@ describe.skipIf(!device)('M6 ambient heat', () => {
 
       await run(sim, supersteps);
 
-      const steps = supersteps * sim.air.substeps;
-      const folded = exchange(500, 4, steps);
+      const folded = exchange(500, 4, supersteps);
       expect((await temps(sim))[1 * 4 + 1], 'the metal cell').toBeCloseTo(folded, 3);
       expect(folded, 'more than one step would take').toBeLessThan(exchange(500, 4));
     });
@@ -139,7 +141,7 @@ describe.skipIf(!device)('M6 ambient heat', () => {
       expect((await temps(sim))[1 * 8 + 3], 'the metal cell').toBeCloseTo(expected, 3);
       const air = await sim.air.read();
       expect(air.temperature[0], 'the air cell the cell is in, closed off by the walls').toBe(ROOM_TEMP);
-      expect(air.temperature[1], 'the air cell of its open neighbor').toBeGreaterThan(ROOM_TEMP + 100);
+      expect(air.temperature[1], 'the air cell of its open neighbor').toBeGreaterThan(ROOM_TEMP + 1);
 
       // Shut in by walls on all four sides: no air cell.
       const shut = new World(4, 4).fill(T.METAL, 1, 2, 1, 2, 500).fill(T.WALL, 1, 2, 2, 3).fill(T.WALL, 0, 1, 1, 2).fill(T.WALL, 2, 3, 1, 2).fill(T.WALL, 1, 2, 0, 1);
@@ -153,7 +155,7 @@ describe.skipIf(!device)('M6 ambient heat', () => {
 
     // A 16x16 block of metal at 1,000 °C in a box open at the top, aligned with the air cells or not (the block's
     // surface cuts the air cells differently).
-    it.each([0, 2])('M6 AC14: a 16x16 metal block at 1,000 °C cools to under 200 °C in air, and the air above it is warmer than beside it (offset %i)', async (offset) => {
+    it.each([0, 2])('M6 AC14: a 16x16 metal block at 1,000 °C cools slowly in air, and the air above it is warmer than beside it (offset %i)', async (offset) => {
       const world = new World(96, 128).box().fill(T.METAL, 40 + offset, 56 + offset, 2 + offset, 18 + offset, 1000);
       const sim = createSim(96, 128, 1);
       sim.load(world.data);
@@ -166,11 +168,38 @@ describe.skipIf(!device)('M6 ambient heat', () => {
       const above = airMean(early.temperature, columns, 11, 13, top, top + 2);
       const beside = airMean(early.temperature, columns, 4, 6, top, top + 2);
       expect(above - beside, 'degrees the air above is warmer than the air beside').toBeGreaterThan(MEASURED.aboveWarmer * 0.7);
-      expect(await meanTemp(sim, T.METAL), 'the block has cooled, but not at once').toBeGreaterThan(800);
+      expect(await meanTemp(sim, T.METAL), 'the block has cooled, but not at once').toBeGreaterThan(980);
 
       await runMany(sim, COOLING_STEPS - 1200, FRAME_SUPERSTEPS);
-      expect(await meanTemp(sim, T.METAL), `block mean after ${COOLING_STEPS} supersteps`).toBeLessThan(200);
+      expect(await meanTemp(sim, T.METAL), `block mean after ${COOLING_STEPS} supersteps`).toBeLessThan(960);
     }, 120_000);
+  });
+
+  describe('M8.8 AC7: cooling in still air', () => {
+    // A steel block 50 cells (68 mm) wide at 500 °C hangs in a large box of room-temperature air. Its surface coefficient
+    // is read from the cooling of its mean temperature in the lumped form: T - T_air falls as exp(-h P t / (C A)) with P
+    // the perimeter of cells that touch the air (4 x 50 - 4, a corner cell touches it once), A the area and C the capacity.
+    it('M8.8 AC7: a steel block 50 cells wide at 500 °C cools with an effective surface coefficient within a factor of 2 of still-air natural convection (10 W/m²·K)', async () => {
+      const [width, height, side, supersteps] = [160, 160, 50, 9000];
+      const world = new World(width, height).fill(T.METAL, 55, 55 + side, 55, 55 + side, 500);
+      const sim = createSim(width, height, 1);
+      sim.load(world.data);
+
+      await runMany(sim, supersteps, FRAME_SUPERSTEPS);
+
+      const mean = await meanTemp(sim, T.METAL);
+      const capacity = elementHeatCapacity(elementByKey(ELEMENTS, 'METAL')) * HEAT_UNIT;
+      const heatPerKelvin = capacity * side * side * CELL_SIZE ** 2;
+      const perimeter = (4 * side - 4) * CELL_SIZE;
+      const h = (-Math.log((mean - ROOM_TEMP) / (500 - ROOM_TEMP)) * heatPerKelvin) / (perimeter * supersteps * PAIR_TIME);
+      // Measured: 9.2 W/m²·K (mean 497.3 °C after 9,000 supersteps, 37.5 s).
+      expect(h, `effective surface coefficient, W/m²·K (mean ${mean} °C)`).toBeGreaterThan(5);
+      expect(h, `effective surface coefficient, W/m²·K (mean ${mean} °C)`).toBeLessThan(20);
+    }, 120_000);
+
+    it('M8.8 AC7: the air has the heat capacity of air, 1.2 kJ/m³·K per cell', () => {
+      expect(AIR.heatCapacity * HEAT_UNIT).toBeCloseTo(1200, 6);
+    });
   });
 
   describe('AC15: the total heat', () => {
@@ -183,8 +212,10 @@ describe.skipIf(!device)('M6 ambient heat', () => {
       const next = mulberry32(15);
       const rand = (): number => next() / 2 ** 32;
       // Start temperatures straddle each element's thresholds (and the latent ends beyond them), so phases change both ways.
+      // The water reaches 1,500 °C so that enough of it flashes into steam at once: at the physical heat speed the rest boils
+      // too slowly for the pressure to build up to the stone's crush pressure (M8.8d; with 300 °C, no stone was crushed).
       const range: [number, number, number][] = [
-        [T.ICE, -100, 300], [T.WATER, -100, 300], [T.STEAM, -150, 300], [T.STONE, 800, 1500],
+        [T.ICE, -100, 300], [T.WATER, -100, 1500], [T.STEAM, -150, 300], [T.STONE, 800, 1500],
         [T.LAVA, 900, 1500], [T.METAL, 1300, 1900], [T.MOLTEN_METAL, 1200, 1900], [T.EMPTY, 0, 0],
       ];
       const world = new World(width, height).sealed();
@@ -260,24 +291,29 @@ describe.skipIf(!device)('M6 ambient heat', () => {
   });
 
   describe('AC17: steam in open air', () => {
-    // 64 cells of steam at 110 °C in a box open at the top.
-    async function release(options: { air: boolean }, steps: number): Promise<Map<number, number>> {
+    // 64 cells of steam at 110 °C in a box open at the top: how many cells of each element are left after `steps`
+    // supersteps, and the mean stored temperature of the steam.
+    async function release(options: { air: boolean }, steps: number): Promise<{ counts: Map<number, number>; steam: number }> {
       const world = new World(128, 192).box().fill(T.STEAM, 60, 68, 20, 28, 110);
       const sim = createSim(128, 192, 1, options);
       sim.load(world.data);
       await runMany(sim, steps, FRAME_SUPERSTEPS);
-      return countTypes(await readCells(sim));
+      return { counts: countTypes(await readCells(sim)), steam: await meanTemp(sim, T.STEAM) };
     }
 
-    it('M6 AC17: steam released into open air at room temperature condenses into water within the measured number of supersteps', async () => {
-      const counts = await release({ air: true }, STEAM_STEPS);
-      expect(counts.get(T.STEAM) ?? 0, 'steam left').toBe(0);
-      expect(counts.get(T.WATER), 'water').toBe(64);
+    // M8.8d: a steam cell holds the latent heat of a cell of water, 2,257 MJ/m³, and air holds 0.0012 MJ/m³·K: warming a
+    // cell's worth of air from 20 to 100 °C takes it 23,500 cells of air, so 64 cells of steam in a box of 24,576 cells
+    // (the world's open edge aside) condense only as the air is replaced, which is far slower than the test runs.
+    it('M8.8 AC8: steam released into open air at room temperature gives its heat to the air down to its condensing point within the measured number of supersteps', async () => {
+      const { counts, steam } = await release({ air: true }, STEAM_STEPS);
+      expect(counts.get(T.STEAM), 'steam left').toBe(64);
+      expect(steam, 'mean stored temperature of the steam, measured 96.3').toBeLessThan(100);
     }, 60_000);
 
-    it('M6 AC17: without the air the same steam stays steam', async () => {
-      const counts = await release({ air: false }, STEAM_STEPS);
+    it('M6 AC17: without the air the same steam stays steam, at its temperature', async () => {
+      const { counts, steam } = await release({ air: false }, STEAM_STEPS);
       expect(counts.get(T.STEAM), 'steam').toBe(64);
+      expect(steam, 'mean stored temperature of the steam').toBe(110);
     }, 60_000);
   });
 
@@ -302,11 +338,11 @@ describe.skipIf(!device)('M6 ambient heat', () => {
       const kinds = await readCells(sim);
       const at = kinds.findIndex((c) => cellType(c) === T.LAVA);
       const temp = (await temps(sim))[at];
-      if (trades) expect(temp, 'the lava cell has warmed its air').toBeLessThan(1240);
+      if (trades) expect(temp, 'the lava cell has warmed its air').toBeLessThan(1249.99);
       else expect(temp, 'the lava cell kept its heat').toBe(1250);
     });
 
-    // Measured: 544 (size 4) and 599 (size 2) lava cells within 10 rows of the floor, and 4 and 0 stone cells above row 40.
+    // Measured: 558 (size 4) and 562 (size 2) lava cells within 10 rows of the floor, and 0 stone cells above row 40.
     it.each([4, 2] as AirCellSize[])('M6 AC28: lava poured from 380 cells up reaches the floor molten and hangs no stone in the air (air cell size %i)', async (airCellSize) => {
       const [width, height] = [160, 400];
       const sim = createSim(width, height, 3, { airCellSize });
@@ -323,7 +359,7 @@ describe.skipIf(!device)('M6 ambient heat', () => {
       expect(hanging, 'stone above row 40').toBeLessThanOrEqual(20);
     }, 60_000);
 
-    // Measured: 4.1% stone after 5 s and 23.8% after 20 s.
+    // Measured: no stone after 5 s or 20 s (before M8.8d: 4.1% and 23.8%).
     it('M6 AC28: a pile of lava on the floor sets slowly: under a third of it is stone after 20 s at 1x', async () => {
       const sim = createSim(160, 160, 3);
       await pour(sim, { x: 80, y: 30 }, 30, 60);

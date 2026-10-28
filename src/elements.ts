@@ -33,12 +33,6 @@ export interface ElementDef {
   conductivity?: number;
   /** Volumetric heat capacity in MJ/m³·K, above 0; default 1. A cell of a high capacity changes temperature less for the same heat. A gas row's is its specific heat times its liquid's density, as a cell is one unit of matter in every state. */
   heatCapacity?: number;
-  /**
-   * Interim, until the air's heat is physical (M8.8d): the share of the temperature difference that evens out when a
-   * cell of this element exchanges heat with its air cell, as a rank from 0 to 1 (the pair meets at the harmonic mean
-   * of this and `AIR.conductivity`); default 0, which trades none.
-   */
-  airCoupling?: number;
   /** Becomes the element `becomes` (a key) when its stored temperature drops below `temp` minus the latent width. */
   below?: Transition;
   /** Becomes the element `becomes` (a key) when its stored temperature rises above `temp` plus the latent width. */
@@ -117,11 +111,6 @@ export function elementConductivity(e: ElementDef): number {
   return e.conductivity ?? 0;
 }
 
-/** The air coupling of a row with its default applied. */
-export function elementAirCoupling(e: ElementDef): number {
-  return e.airCoupling ?? 0;
-}
-
 /** The heat capacity of a row with its default applied. */
 export function elementHeatCapacity(e: ElementDef): number {
   return e.heatCapacity ?? 1;
@@ -186,12 +175,12 @@ const IRON_FUSION = 1944;
 // Conductivity (W/m·K), heat capacity (MJ/m³·K) and latent heat (MJ/m³) are physical data, the source named in each row's
 // comment; the pace they give is in `heatShare` (`src/heat.ts`). A cell is one unit of matter whatever its state, so a gas
 // row's capacity is its specific heat times its liquid's density, and a latent heat is per kilogram times the density of the
-// denser phase. Empty space holds no heat itself: its temperature is its air cell's. Each row's `airCoupling` is the rank it
-// traded heat with the air at before the physical scale (M6.4a), until M8.8d.
+// denser phase. Empty space holds no heat itself: its temperature is its air cell's. Every row trades heat with its air cell at the
+// air's surface coefficient (`AIR.surfaceCoefficient`), whatever the material.
 export const ELEMENTS = [
   { key: 'EMPTY', id: 0, label: 'Empty', color: [0.06, 0.06, 0.08], state: 'empty', density: 1.2 },
   // Dry sand: 0.27 W/m·K (0.25 to 0.35 for dry quartz sand) and 1.3 MJ/m³·K (1,600 kg/m³ at 0.8 kJ/kg·K).
-  { key: 'SAND', id: 1, label: 'Sand', color: [0.80, 0.70, 0.48], state: 'powder', density: 1600, conductivity: 0.27, heatCapacity: 1.3, airCoupling: 0.05, toolbar: 1 },
+  { key: 'SAND', id: 1, label: 'Sand', color: [0.80, 0.70, 0.48], state: 'powder', density: 1600, conductivity: 0.27, heatCapacity: 1.3, toolbar: 1 },
   // The engine's invincible wall and the world's edge, not a real material: it never conducts, so heat never leaves the world.
   { key: 'WALL', id: 2, label: 'Wall', color: [0.43, 0.45, 0.47], state: 'solid', density: 2500, toolbar: 6 },
   // Water: 0.6 W/m·K and 4.18 MJ/m³·K (4.18 kJ/kg·K at 1,000 kg/m³); its convection comes from M8.8e. Freezes and boils at
@@ -205,7 +194,7 @@ export const ELEMENTS = [
     density: 1000,
     conductivity: 0.6,
     heatCapacity: 4.18,
-    airCoupling: 0.3,
+   
     below: { temp: 0, becomes: 'ICE', latent: WATER_FUSION },
     // The burst is a flash into steam pushing the air out; tuned in the M6.3c tests (tests/air-burst.test.ts): one cell
     // flashing barely stirs the air, a layer poured onto lava visibly pushes it.
@@ -214,7 +203,7 @@ export const ELEMENTS = [
   },
   // A placeholder for every fire's smoke (backlog I16, M8.8f): a hot combustion gas, 0.04 W/m·K at a few hundred °C, with a
   // capacity of 1.0 MJ/m³·K as a stand-in per cell (1.1 kJ/kg·K times the ~900 kg/m³ of the oil it mostly comes from).
-  { key: 'SMOKE', id: 4, label: 'Smoke', color: [0.72, 0.72, 0.74], state: 'gas', density: 0.6, conductivity: 0.04, heatCapacity: 1, airCoupling: 0.05, toolbar: 5 },
+  { key: 'SMOKE', id: 4, label: 'Smoke', color: [0.72, 0.72, 0.74], state: 'gas', density: 0.6, conductivity: 0.04, heatCapacity: 1, toolbar: 5 },
   // Oil: 0.14 W/m·K (mineral oil 0.13 to 0.15) and 1.7 MJ/m³·K (1.9 kJ/kg·K at 900 kg/m³). Catches fire at 250 °C, which is
   // a stand-in for the flash point of a lamp oil, and burns on its own from there (no latent heat: the fire rule heats the
   // cell the next dispatch).
@@ -228,7 +217,7 @@ export const ELEMENTS = [
     flammable: true,
     conductivity: 0.14,
     heatCapacity: 1.7,
-    airCoupling: 0.1,
+   
     above: { temp: 250, becomes: 'FIRE' },
     toolbar: 3,
   },
@@ -247,7 +236,7 @@ export const ELEMENTS = [
     // sets how fast it heats a neighbor. It lights what it touches through `flammable`, not through this.
     conductivity: 0.1,
     heatCapacity: 1,
-    airCoupling: 0.5,
+   
     rule: 'fire',
     graphics: 'fire',
     toolbar: 4,
@@ -263,7 +252,7 @@ export const ELEMENTS = [
     density: 7870,
     conductivity: 50,
     heatCapacity: 3.5,
-    airCoupling: 1,
+   
     above: { temp: 1538, becomes: 'MOLTEN_METAL', latent: IRON_FUSION },
     toolbar: 7,
   },
@@ -278,7 +267,7 @@ export const ELEMENTS = [
     density: 2700,
     conductivity: 2.5,
     heatCapacity: 2.2,
-    airCoupling: 0.1,
+   
     above: { temp: 1200, becomes: 'LAVA', latent: LAVA_LATENT },
     // Crushed rock: a blast turns stone into sand, its stand-in, above the pressure that granite's fracture toughness (about
     // 1.7 MPa·√m) gives. It anchors the scale (`PRESSURE_PER_TOUGHNESS`), tuned in tests/air-crush.test.ts so that a
@@ -298,7 +287,7 @@ export const ELEMENTS = [
     temperature: -20,
     conductivity: 2.2,
     heatCapacity: 1.9,
-    airCoupling: 0.2,
+   
     above: { temp: 0, becomes: 'WATER', latent: WATER_FUSION },
     toolbar: 9,
   },
@@ -317,7 +306,7 @@ export const ELEMENTS = [
     temperature: 110,
     conductivity: 42,
     heatCapacity: 2,
-    airCoupling: 0.2,
+   
     below: { temp: 100, becomes: 'WATER', latent: WATER_VAPORIZATION },
     toolbar: 11,
   },
@@ -335,7 +324,7 @@ export const ELEMENTS = [
     temperature: 1300,
     conductivity: 1,
     heatCapacity: 4,
-    airCoupling: 0.04,
+   
     below: { temp: 1200, becomes: 'STONE', latent: LAVA_LATENT },
     toolbar: 10,
   },
@@ -351,7 +340,7 @@ export const ELEMENTS = [
     temperature: 1600,
     conductivity: 35,
     heatCapacity: 5.7,
-    airCoupling: 0.6,
+   
     below: { temp: 1538, becomes: 'METAL', latent: IRON_FUSION },
   },
   // Black powder: grains of 1.7 to 1.82 g/cm³ (safety data sheets; 1,700 kg/m³ here, so it sinks through sand and water),
@@ -370,7 +359,7 @@ export const ELEMENTS = [
     flammable: true,
     conductivity: 0.2,
     heatCapacity: 1.4,
-    airCoupling: 0.03,
+   
     above: { temp: 427, becomes: 'FIRE', burst: GUNPOWDER_BURST },
     toolbar: 12,
   },
@@ -399,7 +388,6 @@ export function validateElements(elements: readonly ElementDef[]): void {
     if (!Number.isFinite(e.density)) throw new Error(`element ${e.key}: density must be a number`);
     if (!(elementGravity(e) >= 0 && elementGravity(e) < Infinity)) throw new Error(`element ${e.key}: gravity must be a finite number, 0 or more`);
     if (!(elementConductivity(e) >= 0 && elementConductivity(e) < Infinity)) throw new Error(`element ${e.key}: conductivity must be a finite number, 0 or more`);
-    if (!(elementAirCoupling(e) >= 0 && elementAirCoupling(e) <= 1)) throw new Error(`element ${e.key}: airCoupling must be a number in 0..1`);
     if (!(elementHeatCapacity(e) > 0 && elementHeatCapacity(e) < Infinity)) throw new Error(`element ${e.key}: heatCapacity must be a finite number above 0`);
     if (!(elementDrag(e) >= 0 && elementDrag(e) < 1)) throw new Error(`element ${e.key}: drag must be at least 0 and below 1`);
     if (!(elementTemperature(e) >= ABSOLUTE_ZERO && elementTemperature(e) <= MAX_TEMP)) {
