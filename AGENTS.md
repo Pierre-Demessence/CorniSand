@@ -91,6 +91,46 @@ The GPU suites in `tests/` run the real WGSL through Dawn's Node bindings (`webg
 3. A color that depends on the cell (fire's life) is a function in `src/shaders/graphics.wgsl.ts`, named by `graphics: '<name>'`.
 4. Add a scene test of its main behavior (`tests/element-table.test.ts` shows how to run a table with an extra row), and update the density order and the phase list in `docs/simulation.md`.
 
+## Real-world scenarios
+
+A scenario is a real experiment the game should reproduce, written as a test whose target is computed from physical data, not from the game's own output, so a later change shows whether the game got more or less realistic. Most other scene tests guard against change with bars measured from the game.
+
+- **One experiment**: a scene registered in `SCENES` (so `?scene=<name>` opens it), a run of supersteps, one measurement and a target with a tolerance. The scene's name is the scenario's ID in test titles, plans and backlog lines.
+- **Measured as a player sees it**: a height, a position, a temperature the readout would show, a count of cells, a time; never an internal value such as a stored latent offset. The test then needs only the elements, and stays valid whichever design passes it.
+- **A fast and a full version** when the full experiment is slow: the fast one isolates one rule, the full one chains several, so when the full one fails the fast one tells which link broke. A minute of game time is 14,400 supersteps.
+- **Sealed when the air is not part of it**: a heat balance runs in a box of WALL (which holds no heat) filled so that no empty cell trades heat with the air, or with `air: false`.
+- **What it leaves out** is stated in the test: a real effect the game leaves out on purpose either shifts the target or stays outside the scenario's claim.
+
+States:
+
+| State | In the suite | Means |
+| --- | --- | --- |
+| Passes | a normal test | A failure is a regression |
+| Waits for an item | `test.fails`, titled `<name> [waits for <ID>]: <outcome>` | Vitest passes it while it fails and fails it once it passes, so the suite stays green and the item that makes it pass also turns it into a normal test |
+| Not built | `test.todo`, titled with its target | Not picked yet, or its elements do not exist |
+| Out of reach | no test | A decision or a limit rules it out; the scenario is named beside it so nobody keeps trying |
+
+- `test.fails` also passes when the test crashes, so each waiting scenario has a normal companion test: the scene loads and the measurement is a finite number in a stated range. Both attach the measured value and the target to the report (`context.annotate`), so progress shows without opening the code.
+- The item a waiting scenario names is a roadmap or backlog ID. A mechanic without one that a waiting scenario needs gets a backlog line when the scenario is built.
+- The GPU suites skip themselves without an adapter, so these tests run on a machine with a GPU only, never in CI (backlog D11).
+
+Rules:
+
+- The target is a calculation from cited physical data, written in the test with its sources, never a value the game produced.
+- The tolerance is fixed before the mechanic exists, from the spread of the data (the range between sources, or the row's own cited range) and of the measurement (several seeds). Only the user changes a scenario's target or tolerance, and the plan logs it; agents keep re-measuring the regression bars of other tests as before.
+- Each scenario has a control: the same scene on a test table with one property deliberately wrong (ice with half its latent heat) must miss the target. A scenario that cannot fail proves nothing.
+- A constant fitted to pass one scenario is checked by another scenario, of a different size or material, that it was not fitted on (held-out checks, below).
+- A scenario that starts passing before its item, through another change, is promoted in that change's commit, and the item's plan notes it.
+
+Held-out checks:
+
+| Constant | Fitted on | Checked by |
+| --- | --- | --- |
+| `CONVECTION_GAIN` | a 4×4 block of water at 90 °C in a 20 °C tank (`heatedPot`) | `heatedLayer`: other depths, and differences of 1 and 2 °C instead of 70 |
+| `REF_DEPTH` | lava creeping visibly with oil slower than water | `viscousSpread` |
+| `REPOSE_FIT` | piles poured from a brush 3 cells wide (`sandPile`) | the lower pile of `hourglass`, poured by a wider stream |
+| `AIR.surfaceCoefficient` | the 50-cell steel block (`coolingBlock`) | `coolingBlock` at a second size: real natural convection grows as a body shrinks, the game's coefficient does not (inferred) |
+
 ## Working with the user
 
 The user is an experienced web developer, not a physics, numerics or GPU specialist.
