@@ -11,7 +11,7 @@ npm run typecheck # tsc --noEmit (strict; covers src, tests, vite.config.ts)
 npm run lint      # ESLint (typescript-eslint, type-aware)
 npm test          # Vitest
 npm run preview   # Serve dist/
-npm run bench     # GPU time per frame (timestamp queries) at 2560×1340 at 1x to 8x for `tank`, `mix75`, `full100`, `blast` and `thermal` (heat everywhere), the 1x time of each pass, and the simulation creation time (tests/bench.gpu.ts); needs a GPU adapter. BENCH_SCENES=mix75,blast and BENCH_SPLIT_ONLY=1 narrow it; BENCH_AIR=off,8,4,2,1 runs it at each air cell size (`off` is `air: false`; default 4)
+npm run bench     # GPU time per frame (timestamp queries) at 2560×1340 at 1x to 8x for `tank`, `mix75`, `full100`, `blast`, `thermal` (heat everywhere) and `pot` (a screen-wide tank heated from below, convecting), the 1x time of each pass, and the simulation creation time (tests/bench.gpu.ts); needs a GPU adapter. BENCH_SCENES=mix75,blast and BENCH_SPLIT_ONLY=1 narrow it; BENCH_AIR=off,8,4,2,1 runs it at each air cell size (`off` is `air: false`; default 4)
 ```
 
 CI (`.github/workflows/deploy-pages.yml`) runs lint, test and build before deploying.

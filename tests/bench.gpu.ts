@@ -97,6 +97,28 @@ function thermalScene(): Fields {
   return { kind, temp: data.temp };
 }
 
+const POT_PLATE_ROWS = 8;
+const POT_PLATE_TEMP = 700;
+const ROOM = 20;
+
+// A screen-wide tank, water in the bottom quarter of its interior on a metal plate at 700 C (the `physics` scene's
+// pot, scaled up): the plate heats the water from below, which convects and boils at the plate.
+function potScene(): Fields {
+  const kind = new Uint32Array(WIDTH * HEIGHT);
+  const fill = (type: number, x0: number, x1: number, y0: number, y1: number): void => {
+    for (let y = y0; y < y1; y++) kind.fill(cell(type), y * WIDTH + x0, y * WIDTH + x1);
+  };
+  frame(kind, WIDTH, HEIGHT);
+  const plateTop = WALL + POT_PLATE_ROWS;
+  fill(T.METAL, WALL, WIDTH - WALL, WALL, plateTop);
+  fill(T.WATER, WALL, WIDTH - WALL, plateTop, WALL + Math.floor((HEIGHT - WALL) / 4));
+  const data = { temp: new Uint32Array(WIDTH * HEIGHT) };
+  tempView(data).forEach((_, i, temps) => {
+    temps[i] = i < plateTop * WIDTH ? POT_PLATE_TEMP : ROOM;
+  });
+  return { kind, temp: data.temp };
+}
+
 // The `blast` scene at screen size: a sand layer a fifth of the height deep, hit by five blasts along its surface at
 // once, each throwing every grain within BLAST_RADIUS away from its center (BLAST_SPEED cells per dispatch at the
 // center, falling to 0 at the edge), as `src/scenes.ts` does for one.
@@ -198,6 +220,8 @@ describe.skipIf(!device)('bench', () => {
       { name: 'full100', build: full100Scene, warmup: WARMUP_FRAMES },
       { name: 'blast', build: blastScene, warmup: 0 },
       { name: 'thermal', build: thermalScene, warmup: WARMUP_FRAMES },
+      // The plate starts convection at once; 100 frames let the plumes and the boiling at the plate develop.
+      { name: 'pot', build: potScene, warmup: 100 },
     ];
     const only = process.env.BENCH_SCENES?.split(',');
     const splitOnly = process.env.BENCH_SPLIT_ONLY === '1';
