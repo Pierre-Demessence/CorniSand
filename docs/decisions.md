@@ -41,7 +41,7 @@ Rejected: keeping FLIP as a "realistic liquids" setting, off by default. Every p
 
 ## Heat moves by pairwise exchanges inside the Margolus block
 
-Heat conduction is phase 7 of the CA dispatch: the four cells of a block exchange heat in four pairs, rows then columns at one offset and columns then rows at the other. Each exchange moves both cells toward their capacity-weighted mean, so it conserves heat exactly (up to float rounding) and is stable for any conductivity from 0 to 1, and it reads and writes only the block's cells, so it keeps the CA's race-free in-place update (`tests/block-locality.test.ts` guards that). Over a superstep every cell exchanges with each of its four neighbors. Measured cost on the RTX 4080 at 2560×1340: 0.06 to 0.52 ms more per 1x frame than before heat on the engine's four scenes, 1.11 ms for a screen where everything conducts and changes phase (`docs/powder-toy.md`, "Frame budget").
+Heat conduction is phase 7 of the CA dispatch: the four cells of a block exchange heat in four pairs, rows then columns at one offset and columns then rows at the other. Each exchange moves both cells toward their capacity-weighted mean, so it conserves heat exactly (up to float rounding) and is stable for any conductivity (the share of the way to the mean is capped at 1), and it reads and writes only the block's cells, so it keeps the CA's race-free in-place update (`tests/block-locality.test.ts` guards that). Over a superstep every cell exchanges with each of its four neighbors. Measured cost on the RTX 4080 at 2560×1340: 0.06 to 0.52 ms more per 1x frame than before heat on the engine's four scenes, 1.11 ms for a screen where everything conducts and changes phase (`docs/powder-toy.md`, "Frame budget").
 
 Rejected: a separate stencil pass over the grid. Reading the four neighbors of every cell needs a second temperature buffer (or a red-black order of two half passes, which breaks per-step energy conservation), plus an extra pass over every cell, awake or not.
 
@@ -91,6 +91,12 @@ Rejected: copying TPT's feel where it contradicts physics, loading TPT saves as 
 One cell is 1.36 mm and one dispatch 2.08 ms, the only pair for which the default gravity (1/32 cell per dispatch²) is 9.81 m/s² at 1x (4 supersteps per frame at 60 fps, 480 dispatches per second). Every physical property is converted to cells and dispatches from this pair in one module (`src/physics.ts`), so heat spreads at its real speed and a change of scale is one place.
 
 Rejected: hand-tuned ranks for heat (no way to say what a value means or to check it against data), a speed-up factor on heat (it breaks the match with gravity and every later property built on the scale).
+
+## A cell is one unit of matter in every state
+
+A cell holds one unit of matter whatever its state, so a gas row's heat capacity is its specific heat times its liquid's density, and a latent heat is per kilogram times the density of the denser phase (water: 334 and 2,257 MJ/m³). STEAM's conductivity of 42 W/m·K is the consequence: steam's real 0.025 W/m·K is for a cell of steam's own mass, and a cell of the water's mass (capacity 2.0 MJ/m³·K) keeps steam's real diffusivity (0.025 / (0.59 kg/m³ × 2.0 kJ/kg·K) × 2.0 MJ/m³·K), so the row is about 1,700 times the literal value. With the literal value a steam cell would outlast a cold plate for minutes where real steam gives its heat up within a second. The cost is that steam released into open air hardly condenses, since the air cannot take a whole cell's latent heat (backlog I25).
+
+Rejected: the literal 0.025 W/m·K for STEAM; a conserved amount of matter per cell with volume changes (research in `docs/research/volume-changes.md`, backlog I22).
 
 ## No code or data tables from The Powder Toy
 
