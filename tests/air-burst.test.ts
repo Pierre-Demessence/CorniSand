@@ -1,12 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import { AIR } from '../src/air';
 import { CELL_FIELDS, tempView } from '../src/cell-fields';
 import { ELEMENT as T, ELEMENTS, elementByKey } from '../src/elements';
 import { caWGSL } from '../src/shaders/ca.wgsl';
 import { RULES } from '../src/shaders/rules';
-import { EXPLOSION, explosion } from '../src/scenes';
+import { EXPLOSION, MOUND, explosion, mound } from '../src/scenes';
 import type { Simulation } from '../src/simulation';
-import { cell, cellType, createSim, device, airWords, readCells, run, runMany } from './gpu';
+import { TOOLS } from '../src/toolbar';
+import { cell, cellType, createSim, device, airWords, idleInput, readCells, run, runMany } from './gpu';
 
 // Bursts (M6.3c): a cell that passes an `above` threshold with a `burst`, or that ignites into FIRE by touching fire,
 // adds the burst to the pressure of its air cell. GUNPOWDER and WATER carry one.
@@ -312,5 +313,92 @@ describe.skipIf(!device)('M6 bursts', () => {
       }
       expect(changed, 'cells that changed behind the wall').toBe(0);
     }, 60_000);
+  });
+  describe('AC27: the mound', () => {
+    // The gate's setup (docs/plans/m6-air.md, M6.6f): a gunpowder mound under a sand shell, heated with the Heat tool at
+    // its left foot until the first cells ignite, then 3,000 supersteps (12.5 s at 1x) with the pointer released, recorded
+    // every 60.
+    const WINDOW = 60;
+    const RECORDS = 50;
+    // Measured (seed 7): the grains on the ceiling are gone by 600 supersteps after ignition and the flyers have landed but
+    // the 13 to 17 that jam (backlog D29) by 840.
+    const SETTLED = 840;
+    // The creep bar is read from here: the sliding of loose grains under the plume falls below 1% of the sand per 60
+    // supersteps at about this time (the plan asked for 1,200; M6.6f, option (a)).
+    const CREEP_FROM = 2400;
+
+    interface Sample {
+      flyers: number;
+      sand: number;
+      moved: number;
+      gunpowder: number;
+      ceiling: number;
+      pressure: number;
+    }
+    let records: Sample[] = [];
+    let peakFlyers = 0;
+
+    beforeAll(async () => {
+      const scene = mound();
+      const sim = createSim(scene.width, scene.height, 7);
+      sim.load(scene.fields);
+      const count = (cells: Uint32Array, type: number): number => cells.filter((c) => cellType(c) === type).length;
+      await runMany(sim, 600);
+      const gunpowder0 = count(await readCells(sim), T.GUNPOWDER);
+      const heat = TOOLS.find((tool) => tool.id === 'heat')!;
+      const stroke = { ...idleInput, mouseActive: true, brushSize: 12, heating: heat.heating, prevMousePos: MOUND.foot, mousePos: MOUND.foot };
+      for (let frame = 0; frame < 200; frame++) {
+        await run(sim, 4, stroke);
+        if (count(await readCells(sim), T.GUNPOWDER) < gunpowder0 - 20) break;
+      }
+      let before = await readCells(sim);
+      expect(count(before, T.GUNPOWDER), 'the heat lit the mound').toBeLessThan(gunpowder0);
+      records = [];
+      for (let i = 0; i < RECORDS; i++) {
+        await runMany(sim, WINDOW);
+        const cells = await readCells(sim);
+        let moved = 0;
+        let ceiling = 0;
+        for (let k = 0; k < cells.length; k++) {
+          const type = cellType(cells[k]);
+          if ((type === T.SAND || type === T.GUNPOWDER) && cells[k] !== before[k]) moved++;
+          if (type === T.SAND && Math.floor(k / scene.width) >= scene.height - 2) ceiling++;
+        }
+        const { pressure } = await sim.air.read();
+        records.push({
+          flyers: (await sim.flyers.read()).length,
+          sand: count(cells, T.SAND),
+          moved,
+          gunpowder: count(cells, T.GUNPOWDER),
+          ceiling,
+          pressure: pressure.reduce((m, p) => Math.max(m, Math.abs(p)), 0),
+        });
+        before = cells;
+      }
+      peakFlyers = Math.max(...records.map((r) => r.flyers));
+    }, 120_000);
+
+    const after = (supersteps: number): Sample[] => records.slice(supersteps / WINDOW - 1);
+
+    it('M6 AC27: the blast does not throw grains up against the top of the world, leaves under 1% of its flyers, and lights no more gunpowder once it has settled', () => {
+      expect(peakFlyers, 'the blast threw grains into the air').toBeGreaterThan(1000);
+      for (const r of after(SETTLED)) {
+        expect(r.ceiling, 'grains resting against the top of the world').toBe(0);
+        expect(r.flyers, 'flyers left').toBeLessThan(0.01 * peakFlyers);
+      }
+      const settled = after(SETTLED);
+      expect(settled.every((r) => r.gunpowder === settled[0].gunpowder), 'no gunpowder ignites once settled').toBe(true);
+    });
+
+    it('M6 AC27: the air over the hot ground stays within the pressure of its plume (measured 0.124 at 840 supersteps, falling)', () => {
+      for (const r of after(SETTLED)) expect(r.pressure, '|pressure|').toBeLessThan(0.2);
+    });
+
+    // Measured: 134 grains moved in the 60 supersteps ending at 1,200 (2.0% of the sand), 107 at 1,560, 86 at 1,920, 57
+    // at 2,400 (0.9%): the plume over the hot floor (backlog I19) keeps blowing the grains that landed loose on the floor,
+    // so the bar holds from 2,400 on, not from the 1,200 the plan first asked for.
+    it('M6 AC27: at most 1% of the sand moves per 60 supersteps from 2,400 supersteps on', () => {
+      for (const r of after(CREEP_FROM)) expect(r.moved / r.sand, 'share of the sand that moved in 60 supersteps').toBeLessThanOrEqual(0.01);
+    });
   });
 });

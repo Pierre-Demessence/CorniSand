@@ -35,9 +35,18 @@ fn uAt(a: i32, b: i32) -> f32 { if (!inArray(a, b)) { return 0.0; } return ${arr
 fn vAt(a: i32, b: i32) -> f32 { if (!inArray(a, b)) { return 0.0; } return ${array}[airIndex(a, b)].y; }
 fn pressureAt(a: i32, b: i32) -> f32 { if (!inArray(a, b)) { return 0.0; } return ${array}[airIndex(a, b)].z; }
 
-// The pressure difference across the right face of (a, b), and across its top face: what accelerates the air there.
-fn dpxAt(a: i32, b: i32) -> f32 { return pressureAt(a + 1, b) - pressureAt(a, b); }
-fn dpyAt(a: i32, b: i32) -> f32 { return pressureAt(a, b + 1) - pressureAt(a, b); }
+// The pressure difference across the right face of (a, b), and across its top face: what accelerates the air there. The
+// faces on the world's edge (the left faces of column 0's cells, the right faces of the last column, likewise rows) carry
+// none: the air through them leaves at the speed of a wave, as the velocity pass has it, and matter must not be pushed by
+// the pressure beside the edge against the ghost air beyond it.
+fn dpxAt(a: i32, b: i32) -> f32 {
+  if (a <= 0 || a >= AW - 1) { return 0.0; }
+  return pressureAt(a + 1, b) - pressureAt(a, b);
+}
+fn dpyAt(a: i32, b: i32) -> f32 {
+  if (b <= 0 || b >= AH - 1) { return 0.0; }
+  return pressureAt(a, b + 1) - pressureAt(a, b);
+}
 
 // Bilinear samples at a point of the two speed fields; the right faces sit at (a + 1, b + 1/2), the top faces at
 // (a + 1/2, b + 1).
@@ -366,9 +375,9 @@ ${ENTRY} {
   // The right face of cell (a, b); the ghost row has none.
   if (b >= 1) {
     if (a == 0) {
-      air[k].x = (0.0 - WAVE_SPEED * air[airIndex(1, b)].z) * faceGate(m.x);
+      air[k].x = clamp(0.0 - WAVE_SPEED * air[airIndex(1, b)].z, -MAX_AIR_SPEED, MAX_AIR_SPEED) * faceGate(m.x);
     } else if (a == NX) {
-      air[k].x = (WAVE_SPEED * air[k].z) * faceGate(m.x);
+      air[k].x = clamp(WAVE_SPEED * air[k].z, -MAX_AIR_SPEED, MAX_AIR_SPEED) * faceGate(m.x);
     } else if (a < NX) {
       let u = (air[k].x - GRADIENT * (air[airIndex(a + 1, b)].z - air[k].z)) * KEEP_VELOCITY * edge * matterKeep(0.5 * (m.z + mask[airIndex(a + 1, b)].z));
       air[k].x = clamp(u, -MAX_AIR_SPEED, MAX_AIR_SPEED) * faceGate(m.x);
@@ -377,9 +386,9 @@ ${ENTRY} {
   // The top face; the ghost column has none.
   if (a >= 1) {
     if (b == 0) {
-      air[k].y = (0.0 - WAVE_SPEED * air[airIndex(a, 1)].z) * faceGate(m.y);
+      air[k].y = clamp(0.0 - WAVE_SPEED * air[airIndex(a, 1)].z, -MAX_AIR_SPEED, MAX_AIR_SPEED) * faceGate(m.y);
     } else if (b == NY) {
-      air[k].y = (WAVE_SPEED * air[k].z) * faceGate(m.y);
+      air[k].y = clamp(WAVE_SPEED * air[k].z, -MAX_AIR_SPEED, MAX_AIR_SPEED) * faceGate(m.y);
     } else if (b < NY) {
       // Hot air rises: the face gains BUOYANCY per degree the mean of the two air cells it joins is above room temperature,
       // less the share of them that powder or liquid fills (the hot air in a pile or a pool is not free to rise).

@@ -364,6 +364,33 @@ export function plume(): Scene {
   return { name: 'plume', width, height, fields: canvas.fields, floorY: WALL, chambers: [] };
 }
 
+/**
+ * `mound`: a triangle of sand with a triangle of gunpowder inside it on the floor of a tank, as drawn at the M6.6 gate:
+ * `base` cells wide at the floor and `height` tall, centered on the tank. Light the gunpowder at its left foot (`foot`).
+ */
+export const MOUND = {
+  width: 640,
+  height: 320,
+  sand: { base: 250, height: 125 },
+  gunpowder: { base: 200, height: 90 },
+  foot: { x: 224, y: WALL + 2 },
+};
+
+/** A 640x320 tank holding a 250-by-125 triangle of sand over a 200-by-90 triangle of gunpowder (about 9,000 cells), both on the floor. */
+export function mound(): Scene {
+  const { width, height, sand, gunpowder } = MOUND;
+  const canvas = tank(width, height);
+  const triangle = (type: number, shape: { base: number; height: number }): void => {
+    for (let row = 0; row < shape.height; row++) {
+      const half = Math.round((shape.base / 2) * (1 - row / shape.height));
+      canvas.fill(type, width / 2 - half, width / 2 + half, WALL + row, WALL + row + 1);
+    }
+  };
+  triangle(T.SAND, sand);
+  triangle(T.GUNPOWDER, gunpowder);
+  return { name: 'mound', width, height, fields: canvas.fields, floorY: WALL, chambers: [] };
+}
+
 export const SCENES: Record<string, () => Scene> = {
   uTube,
   basin,
@@ -378,6 +405,7 @@ export const SCENES: Record<string, () => Scene> = {
   moltenMetal,
   explosion,
   plume,
+  mound,
 };
 
 /** The scene registered under `name`; own keys only, so `?scene=constructor` does not match. */
