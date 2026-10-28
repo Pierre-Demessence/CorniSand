@@ -39,7 +39,7 @@ The GPU updates millions of cells at once, so a rule may only change cells it ow
 
 60 fps leaves 16.7 ms a frame. Keep about 12 ms of GPU time for the simulation; the rest goes to drawing, the browser's compositing and spikes.
 
-The element engine (M4) is held to 4 ms of the 12, which leaves 8 ms for heat, air, electricity, gravity and light. Heat is held to 1 ms of those 8, per 1x frame, on top of the engine.
+The element engine (M4) is held to 4 ms of the 12, which leaves 8 ms for heat, air, electricity, gravity and light. Heat is held to 1 ms of those 8, per 1x frame, on top of the engine, and so is the air (1.5 ms on `thermal`, where every cell holds heat and moves).
 
 **Measured** (RTX 4080, 2560×1340 = 3.4M cells, `npm run bench`: GPU timestamp queries, frames submitted back to back after a 1 s burn-in, median of 60 frames; the GPU must be otherwise idle, since a game or a live wallpaper made timings 3 to 8 times too high). The scenes: `tank` (a sand block over a quarter-full tank of water), `mix75` (75% of the cells a random mix of sand, water, oil and smoke, so everything keeps moving), `full100` (every cell inside a wall frame holds such a mix, so density swaps never stop), `blast` (five blasts under a sand layer, 46,000 flyers launched in the first 1x frame) and `thermal` (every cell inside a wall frame a random mix of metal, stone, water, ice, lava and sand, the top half at 1,300 °C and the bottom half at −20 °C, so heat flows and phases change throughout). The bench runs the same code as the game, with the cells moving by velocity and the flyer passes.
 
@@ -52,6 +52,7 @@ The element engine (M4) is held to 4 ms of the 12, which leaves 8 ms for heat, a
 | `thermal` | 1.11 ms (max 2.75) | 2.16 | 4.13 | 9.18 |
 
 - Heat's share at 1x, from the same-day idle baseline taken before heat (`tank` 0.39, `mix75` 1.05, `full100` 0.98, `blast` 0.33 ms): +0.07, +0.52, +0.40 and +0.06 ms, inside the 1 ms. `thermal`, where every cell conducts and changes phase, costs 1.11 ms, 0.13 ms over the baseline's `full100`. The whole increase is in the two CA dispatches (the fifth field's loads, conduction, phase changes); the flyer passes did not change. These numbers were taken with Chrome using the GPU at about 30% (the idle baseline at 1 to 4%), so they are upper bounds: a second run agreed within 0.07 ms.
+- The air's share at 1x with 4×4 air cells (the default), above the baseline taken before the air (`tank` 0.46, `mix75` 1.44, `full100` 1.31, `blast` 0.39, `thermal` 1.05 ms): +0.26, +0.72, +0.66, +0.27 and +1.24 ms. The air passes themselves are 0.14 to 0.30 ms of that. The rest is the CA reading the air for each block that holds a mover (about 0.2 ms on `thermal`) and the flyer passes, which have more grains to fly because the air pushes them (about 0.2 ms on `thermal`). The heat exchange between cells and air runs once per frame, folding the frame's air steps into one (`docs/simulation.md`, "Heat and the air"). At 2×2 air cells the air passes cost about 0.8 ms more again, and at 1×1 about 17 ms, so 1×1 is not usable at screen size. `BENCH_AIR=off,8,4,2,1 npm run bench` measures each size.
 - Time grows about linearly with the speed. A 1x frame is 8 CA dispatches plus 4 rounds of flyer passes: the CA dispatches take most of it, the flyer launch scan 0.06 to 0.08 ms.
 - A cell is 20 bytes (five fields). Each field adds its loads and stores to every awake block: the fifth, the temperature, added about a quarter to the CA's time (0.2 ms per 1x frame on `mix75` and `full100`). A dispatch over a busy screen with four fields (16 bytes) cost about 0.12 ms, three times the 0.04 ms of a CA with 4-byte cells and no velocity. That 0.04 ms per full-grid pass over 4-byte cells, close to the card's memory bandwidth (inferred), is the anchor of the estimates below for passes that only move data.
 - Two changes made the engine fit, both without changing a single cell: a thread skips a block of four inert cells (empty or solid, no lifetime, no rule) after reading only their `kind` words, which cuts `tank` and `blast` by 40 to 50%; and the CA keeps its block in four variables instead of an array indexed by a run-time slot, which put the array in slow per-thread memory and made `mix75` and `full100` three times slower (`docs/simulation.md`, "Margolus neighborhood").
@@ -64,9 +65,6 @@ The element engine (M4) is held to 4 ms of the 12, which leaves 8 ms for heat, a
 | System | 3.4M cells on the RTX 4080 | Notes |
 | --- | --- | --- |
 | TPT-parity base (movement, element updates, transitions, heat) | 3–8 ms | The engine above, heat included, costs about 1.4–1.6 ms on a busy screen at 20 bytes per cell; TPT's cell is 56 bytes, 2.8× the data, with far more logic |
-| Air at TPT's 4×4 resolution | under 0.1 ms | |
-| Air at 2×2 | about 0.2 ms | |
-| Air at full resolution | about 0.6 ms | |
 | Newtonian gravity on a 4×4 grid, updated every 4 frames | 0.5–1 ms averaged | A multigrid solve is dispatch-heavy (about 300 dispatches a frame cost the previous liquids about 0.04 ms each, idle) |
 | 2D lighting at half resolution | about 1 ms | See "Beyond TPT" |
 | More CA steps per frame | multiplies the base cost | Only worth it for fast-moving things, ideally only where they are |

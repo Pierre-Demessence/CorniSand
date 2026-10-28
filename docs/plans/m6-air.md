@@ -1,6 +1,6 @@
 # M6 Air
 
-Status: M6.1a to M6.1c, M6.2a to M6.2c, M6.3a to M6.3d, M6.4a to M6.4b and M6.5a to M6.5b and M6.6a to M6.6f done; M6.7a done (AC24 amended for `thermal`); next open item M6.7b, then M6.8 (M6.6's gate, the user's playtest, is still to do: see M6.6's `Needs you:`).
+Status: M6.1a to M6.1c, M6.2a to M6.2c, M6.3a to M6.3d, M6.4a to M6.4b and M6.5a to M6.5b and M6.6a to M6.6f done; M6.7a and M6.7b done (AC24 amended for `thermal`); next open item M6.8a (M6.6's gate, the user's playtest, is still to do: see M6.6's `Needs you:`).
 
 ## Goal
 
@@ -305,7 +305,7 @@ Needs you: the playtest gate (stops the run): blow smoke with the Wind tool, lig
   Decided during the run: the tests that measure how fast heat moves step in calls of `FRAME_SUPERSTEPS` (4, a 1x frame, `tests/gpu.ts`) instead of 32: AC14's cooling, AC17's steam and AC27's mound (the others pass as before). AC18's one-cell test sets the air to the stones' 500 °C instead of the crushed sand's 846 °C, because the exchange now runs before the CA instead of after it and would warm the stone before it is crushed. AC27's creep bar is read from 2,760 supersteps instead of 2,400: between 2,400 and 2,700 the share of the sand that moves wanders between 0.9% and 1.1% around the 1% bar (measured in frames of 4 supersteps; the code before lever 3 gives 1.10% at 2,400 too), and from 2,760 it is 0.8% to 0.9%. Why: the creep is a noisy plateau around the bar, not a trend; the bar was set from one record. Alternative: relax the bar to 1.2%, or keep 2,400 and fail. Change: `CREEP_FROM` in `tests/air-burst.test.ts`.
   Measured after the levers (see "M6.7 results"): `tank` +0.26, `mix75` +0.72, `full100` +0.66, `blast` +0.27, `thermal` +1.24 ms over the baseline at 1x. AC24 holds on four scenes and is missed by 0.24 ms on `thermal`.
   Decided by the user (2026-10-28), following the recommendation: `thermal` stays at +1.24 ms and AC24 allows 1.5 ms for that scene; AC27's creep bar is read from 2,760 supersteps. A rewrite of how the CA samples the air would be its own item if a later milestone needs the time.
-- [ ] M6.7b `docs/powder-toy.md`: the frame budget with the air's measured share and its cost per resolution.
+- [x] M6.7b `docs/powder-toy.md`: the frame budget with the air's measured share and its cost per resolution.
 
 Visible after: nothing new: the frame time with air is measured and within its share.
 Needs you: a decision only if the budget is still missed after the levers (stops the run).
