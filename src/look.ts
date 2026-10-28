@@ -54,6 +54,15 @@ export interface LookSettings {
   depthScale: number;
   /** The direction toward the light on the screen, x to the right and y up: shadows fall the opposite way. Any non-zero vector. */
   lightDirection: readonly [number, number];
+  /**
+   * How far hot air shifts the picture behind it, in cells: at `SHIMMER_SPAN` degrees above room temperature or more, each
+   * pixel reads the picture up to this far from its place, by a noise that rises with time. 0 draws no heat shimmer.
+   */
+  shimmer: number;
+  /** Cells the picture shifts per unit of pressure gradient (pressure per cell): about 2 cells across a blast's front. 0 draws none. */
+  shimmerPressure: number;
+  /** The most the shimmer shifts a pixel, in cells, heat and pressure together. */
+  shimmerMax: number;
 }
 
 export const LOOK: Readonly<LookSettings> = {
@@ -69,7 +78,17 @@ export const LOOK: Readonly<LookSettings> = {
   liquidSurface: 0.35,
   depthScale: 40,
   lightDirection: [-1, 1],
+  shimmer: 1.5,
+  shimmerPressure: 10,
+  shimmerMax: 3,
 };
+
+/** Degrees above room temperature at which the air's heat shimmer reaches its full amplitude, and the dead zone below which air is at rest. */
+export const SHIMMER_SPAN = 500;
+export const SHIMMER_DEAD = 1;
+/** Cells between the lattice points of the shimmer's noise, and cells per second its pattern rises. */
+export const SHIMMER_SIZE = 6;
+export const SHIMMER_RISE = 12;
 
 /** Rows at the top of a liquid that carry the surface line (the first brightest, the last a third as bright). */
 export const SURFACE_ROWS = 3;
@@ -101,7 +120,14 @@ export function lookSettings(overrides: Partial<LookSettings> = {}): LookSetting
     depthScale: Number.isFinite(settings.depthScale) ? Math.max(0, settings.depthScale) : LOOK.depthScale,
     shadowLength: Math.min(MAX_SHADOW_LENGTH, Math.max(1, Math.round(settings.shadowLength))),
     lightDirection: unitVector(settings.lightDirection) ?? unitVector(LOOK.lightDirection)!,
+    shimmer: nonNegative(settings.shimmer, LOOK.shimmer),
+    shimmerPressure: nonNegative(settings.shimmerPressure, LOOK.shimmerPressure),
+    shimmerMax: nonNegative(settings.shimmerMax, LOOK.shimmerMax),
   };
+}
+
+function nonNegative(value: number, fallback: number): number {
+  return Number.isFinite(value) ? Math.max(0, value) : fallback;
 }
 
 function unitVector([x, y]: readonly [number, number]): readonly [number, number] | undefined {

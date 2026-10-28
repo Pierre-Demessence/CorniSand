@@ -1,6 +1,6 @@
 # M11 Rendering quick wins
 
-Status: running; M11.1 to M11.6 done, next open item M11.7 (air shimmer). Runs before M8.1, beside M8.9 (`docs/plans/m8.9-real-world-scenarios.md`): it touches only the drawing code, never a cell, a rule or a test of the simulation.
+Status: running; M11.1 to M11.7 done, next open item M11.8 (budget and docs). Runs before M8.1, beside M8.9 (`docs/plans/m8.9-real-world-scenarios.md`): it touches only the drawing code, never a cell, a rule or a test of the simulation.
 
 ## Goal
 
@@ -170,10 +170,17 @@ Needs you: run `npm test` (the AC12 tests in `tests/look.test.ts`; none was run,
 
 ### M11.7 Air shimmer
 
-- [ ] The time uniform and the offset in the composite; AC13, AC14. Verify: lint, typecheck, `npm test`, build, bench.
+- [x] The time uniform and the offset in the composite; AC13, AC14. Verify: lint, typecheck, `npm test`, build, bench.
+
+Done in the run (not ticked, checks left to the user): `DisplayOptions.time` (seconds; `main.ts` passes `now / 1000`) and four uniform words (`time`, `shimmer`, `shimmerPressure`, `shimmerMax`; the uniform grows to 24 floats); `LookSettings` `shimmer` (1.5), `shimmerPressure` (10) and `shimmerMax` (3) and the constants `SHIMMER_SPAN`, `SHIMMER_DEAD`, `SHIMMER_SIZE`, `SHIMMER_RISE` in `src/look.ts`; `shimmerShift` and `warpedUv` in `src/shaders/display.wgsl.ts` (generated with air only; without air `warpedUv` returns its argument), `fs_main` reads the picture at the shifted uv in the finished look outside the views, the brush ring stays at the pointer; `docs/simulation.md` (Air shimmer). Tests: `tests/look.test.ts` (AC13: rest at any time and shimmer off, no air; AC14: hot air changes with time and every pixel is found within 3 cells of the unshifted frame within 2 steps, hotter shifts more, a pressure pulse, the cells look and views unshifted), `tests/glow.test.ts` (settings, no shimmer code without air, the shader's gates). Lint, typecheck, build and `tests/glow.test.ts` pass; the GPU tests, the bench and every visual check were not run (the GPU was busy with a game).
+
+Decided during the run: the shimmer reads the air at the pixel whatever the cell there is (the wall, stone and lava are shifted too, as the air cell under them is hot or not), not only over empty space. Why: AC14 measures it on a striped backdrop of walls, and a pixel's own cell is not known before the shift. Alternative: shift only empty and gas pixels. To change: `warpedUv` in `src/shaders/display.wgsl.ts`.
+Decided during the run: air within 1 degree of room temperature (`SHIMMER_DEAD`) shifts nothing, and the shift is returned as exactly zero then, so AC13's bit-identical frame holds despite rounding in the air's interpolation. Alternative: no dead zone, a shift of about 1e-6 cells. To change: `SHIMMER_DEAD` in `src/look.ts`.
+Decided during the run: the pressure gain is 10 cells per unit of pressure gradient (a pulse of peak 2 and sigma 6 has a gradient of about 0.2 per cell, so about 2 cells), the noise has a lattice of 6 cells and rises at 12 cells per second; none was tuned by sight. Alternative: other values. To change: `LOOK.shimmerPressure`, `SHIMMER_SIZE`, `SHIMMER_RISE`.
+Decided during the run: the shimmer is three settings of `LOOK` (`shimmer`, `shimmerPressure`, `shimmerMax`), passed as uniform words so a test can switch them off. Alternative: constants in the shader. To change: `LookSettings`.
 
 Visible after: the air wavers above lava and fire, and a blast sends a ripple ahead of its debris (`?scene=explosion`).
-Needs you: nothing.
+Needs you: run `npm test` (the AC13 and AC14 tests in `tests/look.test.ts`; none of the GPU ones was run, the GPU was busy; a shader that fails to compile shows at the first `Display`) and `npm run bench`, and record the `render:composite` change under this item (at the end); look at `?scene=showcase` over the lava and the fire, and at `?scene=explosion`, and say whether the waver is too faint or too strong at 1.5 cells and 10 (at the end).
 
 ### M11.8 Budget and docs
 

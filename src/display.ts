@@ -23,6 +23,8 @@ export interface DisplayOptions {
   airView?: boolean;
   /** `finished` (the default) or `cells`: each cell as itself, with its grain and the wall, and no halo. The heat and air views look the same in both. */
   look?: Look;
+  /** The frame's time in seconds, which animates the air shimmer of the finished look (default 0). */
+  time?: number;
 }
 
 /** What a `Display` takes beyond the simulation's buffers. */
@@ -33,8 +35,8 @@ export interface DisplayExtras {
   settings?: Partial<LookSettings>;
 }
 
-// Uniform: 19 f32 used, padded to 20 f32 = 80 bytes
-const UNIFORM_FLOATS = 20;
+// Uniform: 23 f32 used, padded to 24 f32 = 96 bytes
+const UNIFORM_FLOATS = 24;
 const UNIFORM_SIZE = UNIFORM_FLOATS * 4;
 
 export class Display {
@@ -157,6 +159,10 @@ export class Display {
     d[16] = this.settings.gasOpacity; // gas
     d[17] = this.settings.liquidSurface; // surface
     d[18] = this.settings.depthScale; // depthScale
+    d[19] = opts.time ?? 0; // time
+    d[20] = this.settings.shimmer; // shimmer
+    d[21] = this.settings.shimmerPressure; // shimmerPressure
+    d[22] = this.settings.shimmerMax; // shimmerMax
 
     this.device.queue.writeBuffer(this.uniformBuffer, 0, this.uniformData);
 

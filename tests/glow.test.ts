@@ -186,3 +186,29 @@ describe('M11.6 liquid depth and surface', () => {
     }
   });
 });
+
+describe('M11.7 air shimmer without a GPU', () => {
+  const shape = { cellSize: 4, columns: 16, rows: 8 };
+
+  it('keeps the shimmer settings at 0 or more', () => {
+    expect(lookSettings().shimmer).toBe(LOOK.shimmer);
+    expect(lookSettings().shimmerPressure).toBe(LOOK.shimmerPressure);
+    expect(lookSettings().shimmerMax).toBe(LOOK.shimmerMax);
+    expect(lookSettings({ shimmer: -1 }).shimmer).toBe(0);
+    expect(lookSettings({ shimmerPressure: -1 }).shimmerPressure).toBe(0);
+    expect(lookSettings({ shimmerMax: Number.NaN }).shimmerMax).toBe(LOOK.shimmerMax);
+    expect(lookSettings({ shimmerMax: 2 }).shimmerMax).toBe(2);
+  });
+
+  it('M11 AC13: generates no shimmer code without air', () => {
+    expect(displayWGSL(ELEMENTS, GRAPHICS)).not.toContain('fn shimmerShift');
+    expect(displayWGSL(ELEMENTS, GRAPHICS, shape)).toContain('fn shimmerShift');
+  });
+
+  it('shifts the picture in the finished look only, from the unshifted place', () => {
+    const wgsl = displayWGSL(ELEMENTS, GRAPHICS, shape);
+    expect(wgsl).toContain('if (u.cellsLook < 0.5 && !heatView && !airView) {\n    uv = warpedUv(rawUv);');
+    // The brush ring is drawn where the pointer is, not where the picture was read from.
+    expect(wgsl).toContain('rawUv * u.simResolution - u.mousePos');
+  });
+});

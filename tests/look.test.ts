@@ -5,6 +5,7 @@ import { ELEMENT as T, ELEMENTS, type ElementDef } from '../src/elements';
 import { effectiveTemp, GLOW_START, ROOM_TEMP } from '../src/heat';
 import type { Look, LookSettings } from '../src/look';
 import type { Simulation } from '../src/simulation';
+import { gaussian } from './air-pulse';
 import { cell, createSim, device, runMany } from './gpu';
 
 // M11's tests of the finished look (docs/plans/m11-rendering.md). One grid cell per pixel; the width is a multiple of 64
@@ -18,6 +19,8 @@ interface RenderOptions {
   heatView?: boolean;
   airView?: boolean;
   settings?: Partial<LookSettings>;
+  /** The frame's time in seconds. */
+  time?: number;
 }
 
 // The picture of a sim, RGBA bytes, the first row the world's top.
@@ -45,6 +48,7 @@ async function render(sim: Simulation, width: number, height: number, options: R
     heatView: options.heatView,
     airView: options.airView,
     look: options.look,
+    time: options.time,
   });
   encoder.copyTextureToBuffer({ texture: target }, { buffer: staging, bytesPerRow: width * 4 }, [width, height]);
   dev.queue.submit([encoder.finish()]);
@@ -625,5 +629,108 @@ describe.skipIf(!device)('M11.6 liquid depth and surface', () => {
     }
     // The settings do not reach the cells look.
     expect(await render(sim, width, height, { look: 'cells', settings: { liquidSurface: 0, depthScale: 0 } })).toEqual(cells);
+  });
+});
+
+describe.skipIf(!device)('M11.7 air shimmer', () => {
+  const width = 128;
+  const height = 64;
+  // Without the effects that spread light over the wall, so a shifted pixel is found in the unshifted picture within the
+  // wall's own slow gradient.
+  const PLAIN: Partial<LookSettings> = { shadowDarkness: 0, glowStrength: 0, gasOpacity: 0, depthScale: 0, liquidSurface: 0 };
+  const OFF: Partial<LookSettings> = { ...PLAIN, shimmer: 0, shimmerPressure: 0 };
+  const TOLERANCE = 2;
+
+  // A striped backdrop: a 4 cell wide column of WALL at every other 4 cells, over the full height.
+  function stripedSim(options: { air?: boolean } = {}): Simulation {
+    const kind = new Uint32Array(width * height);
+    const temp = new Uint32Array(width * height);
+    tempView({ temp }).fill(ROOM_TEMP);
+    for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) if (Math.floor(x / 4) % 2 === 0) kind[y * width + x] = cell(T.WALL);
+    const sim = createSim(width, height, 1, options.air === false ? { air: false } : {});
+    sim.load({ kind, temp });
+    return sim;
+  }
+
+  const hotAir = (sim: Simulation, celsius: number): void => {
+    sim.air.load({ temperature: new Float32Array(sim.air.columns * sim.air.rows).fill(celsius) });
+  };
+
+  // How many pixels of `shifted` have no pixel of `reference` within `radius` cells that has their color within `TOLERANCE`.
+  function unmatched(shifted: Uint8Array, reference: Uint8Array, radius: number): number {
+    let count = 0;
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        let found = false;
+        for (let dy = -radius; dy <= radius && !found; dy++) {
+          for (let dx = -radius; dx <= radius && !found; dx++) {
+            const sx = Math.min(width - 1, Math.max(0, x + dx));
+            const sy = Math.min(height - 1, Math.max(0, y + dy));
+            found = [0, 1, 2].every((c) => Math.abs(shifted[(y * width + x) * 4 + c] - reference[(sy * width + sx) * 4 + c]) <= TOLERANCE);
+          }
+        }
+        if (!found) count++;
+      }
+    }
+    return count;
+  }
+
+  const differing = (a: Uint8Array, b: Uint8Array): number => a.reduce((n, value, i) => n + (value === b[i] ? 0 : 1), 0);
+
+  it('M11 AC13: air at rest at room temperature gives the same frame at any time, and with the shimmer off', async () => {
+    const sim = stripedSim();
+    sim.air.load();
+    const start = await render(sim, width, height, { time: 0 });
+    expect(await render(sim, width, height, { time: 5 })).toEqual(start);
+    expect(await render(sim, width, height, { time: 0, settings: { shimmer: 0, shimmerPressure: 0 } })).toEqual(start);
+  });
+
+  it('M11 AC13: without air the frame does not depend on time either', async () => {
+    const sim = stripedSim({ air: false });
+    expect(await render(sim, width, height, { time: 5 })).toEqual(await render(sim, width, height, { time: 0 }));
+  });
+
+  it('M11 AC14: over air at 600 °C the frame changes with time, and every pixel is found within 3 cells of its place', async () => {
+    const sim = stripedSim();
+    hotAir(sim, 600);
+    const reference = await render(sim, width, height, { settings: OFF });
+    const first = await render(sim, width, height, { time: 0, settings: PLAIN });
+    const later = await render(sim, width, height, { time: 0.5, settings: PLAIN });
+    expect(differing(first, later), 'bytes that differ between time 0 and 0.5 s').toBeGreaterThan(0);
+    // The stripes move: a good part of the picture is not what the unshifted frame shows.
+    expect(differing(first, reference), 'bytes that differ from the unshifted frame').toBeGreaterThan(width * height / 10);
+    expect(unmatched(first, reference, 3), 'pixels not found within 3 cells (time 0)').toBe(0);
+    expect(unmatched(later, reference, 3), 'pixels not found within 3 cells (time 0.5)').toBe(0);
+  });
+
+  it('M11 AC14: hotter air shifts more than air a few degrees above room temperature', async () => {
+    const warm = stripedSim();
+    hotAir(warm, ROOM_TEMP + 20);
+    const hot = stripedSim();
+    hotAir(hot, 600);
+    const reference = await render(warm, width, height, { settings: OFF });
+    const warmShift = differing(await render(warm, width, height, { time: 1, settings: PLAIN }), reference);
+    const hotShift = differing(await render(hot, width, height, { time: 1, settings: PLAIN }), reference);
+    expect(hotShift).toBeGreaterThan(warmShift);
+  });
+
+  it('M11 AC14: a pressure pulse shifts pixels too, within 3 cells', async () => {
+    const sim = stripedSim();
+    sim.air.load({ pressure: gaussian(sim, 16, 8, 6, undefined, 2) });
+    const reference = await render(sim, width, height, { settings: OFF });
+    const pulsed = await render(sim, width, height, { settings: PLAIN });
+    expect(differing(pulsed, reference), 'bytes that differ from the unshifted frame').toBeGreaterThan(0);
+    expect(unmatched(pulsed, reference, 3)).toBe(0);
+    // It does not move with time: the pulse's shift comes from the gradient alone.
+    expect(await render(sim, width, height, { time: 3, settings: PLAIN })).toEqual(pulsed);
+  });
+
+  it('M11 AC14: the cells look and the views are not shifted', async () => {
+    const sim = stripedSim();
+    hotAir(sim, 600);
+    for (const options of [{ look: 'cells' as const }, { heatView: true }, { airView: true }]) {
+      const off = await render(sim, width, height, { ...options, settings: { shimmer: 0, shimmerPressure: 0 } });
+      expect(await render(sim, width, height, { ...options, time: 0.7 }), JSON.stringify(options)).toEqual(off);
+    }
   });
 });

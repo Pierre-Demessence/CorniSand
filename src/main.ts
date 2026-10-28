@@ -341,6 +341,7 @@ async function main(): Promise<void> {
       heatView: views.heat,
       airView: views.air,
       look,
+      time: now / 1000,
     });
     // The probe copies the cell under the pointer at the end of the frame's encoder; an earlier one still in flight skips this frame.
     let probed = false;

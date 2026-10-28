@@ -1,7 +1,7 @@
 import { AIR, AIR_VIEW, PRESSURE_RAMP, type AirShape } from '../air';
 import type { ElementDef } from '../elements';
 import { ROOM_TEMP } from '../heat';
-import { DEPTH_TEXELS, LOOK, SURFACE_ROWS, WALL_LEVEL, WALL_RANGE } from '../look';
+import { DEPTH_TEXELS, LOOK, SHIMMER_DEAD, SHIMMER_RISE, SHIMMER_SIZE, SHIMMER_SPAN, SURFACE_ROWS, WALL_LEVEL, WALL_RANGE } from '../look';
 import { wgslFloat } from '../movement';
 import { COVER_CELLS } from './glow.wgsl';
 import { airSamplersWGSL } from './air.wgsl';
@@ -17,6 +17,7 @@ const airDisplayWGSL = (shape: AirShape | undefined): string => !shape ? /* wgsl
 const HAS_AIR: bool = false;
 fn airCentersAt(pos: vec2f) -> vec2f { return vec2f(0.0, ${wgslFloat(ROOM_TEMP)}); }
 fn airWindAt(pos: vec2f) -> vec2f { return vec2f(0.0); }
+fn warpedUv(uv: vec2f) -> vec2f { return uv; }
 ` : /* wgsl */`
 const HAS_AIR: bool = true;
 // Array columns and rows: one more than the air cells (the ghost column and row).
@@ -47,6 +48,41 @@ fn airWindAt(pos: vec2f) -> vec2f {
   let x = pos.x / AIR_S + 1.0;
   let y = pos.y / AIR_S + 1.0;
   return vec2f(sampleU(x, y), sampleV(x, y));
+}
+
+// The finished look's air shimmer: the picture at a pixel is read from a point shifted by the air there, in cells. Hot air
+// (above room temperature by more than the dead zone, so air at rest shifts nothing exactly) shifts it by a noise that rises
+// with time, by up to \`u.shimmer\` cells at \`SHIMMER_SPAN\` degrees; a pressure gradient shifts it along the gradient by
+// \`u.shimmerPressure\` cells per unit. The shift is at most \`u.shimmerMax\` cells.
+const SHIMMER_SPAN: f32 = ${wgslFloat(SHIMMER_SPAN)};
+const SHIMMER_DEAD: f32 = ${wgslFloat(SHIMMER_DEAD)};
+const SHIMMER_SIZE: f32 = ${wgslFloat(SHIMMER_SIZE)};
+const SHIMMER_RISE: f32 = ${wgslFloat(SHIMMER_RISE)};
+
+fn shimmerShift(simPos: vec2f) -> vec2f {
+  var shift = vec2f(0.0);
+  let heat = clamp((airCentersAt(simPos).y - ${wgslFloat(ROOM_TEMP)} - SHIMMER_DEAD) / SHIMMER_SPAN, 0.0, 1.0);
+  if (heat > 0.0) {
+    let q = vec2f(simPos.x, simPos.y - u.time * SHIMMER_RISE) / SHIMMER_SIZE;
+    let noise = vec2f(valueNoise(q), valueNoise(q + vec2f(31.7, 17.3)));
+    shift = (noise * 2.0 - 1.0) * (u.shimmer * heat);
+  }
+  if (u.shimmerPressure > 0.0) {
+    let gradient = 0.5 * vec2f(
+      airCentersAt(simPos + vec2f(1.0, 0.0)).x - airCentersAt(simPos - vec2f(1.0, 0.0)).x,
+      airCentersAt(simPos + vec2f(0.0, 1.0)).x - airCentersAt(simPos - vec2f(0.0, 1.0)).x,
+    );
+    shift += gradient * u.shimmerPressure;
+  }
+  let length_ = length(shift);
+  if (length_ > u.shimmerMax) { shift *= u.shimmerMax / length_; }
+  return shift;
+}
+
+fn warpedUv(uv: vec2f) -> vec2f {
+  let shift = shimmerShift(uv * u.simResolution);
+  if (shift.x == 0.0 && shift.y == 0.0) { return uv; }
+  return clamp(uv + shift / u.simResolution, vec2f(0.0), vec2f(1.0));
 }
 `;
 
@@ -240,6 +276,12 @@ struct DisplayUniforms {
   surface: f32,
   // How much deeper than it is a liquid is tinted: 0 draws no tint.
   depthScale: f32,
+  // The frame's time in seconds, which animates the air shimmer.
+  time: f32,
+  // Cells the hot air shifts the picture by at most (0: none), cells per unit of pressure gradient, and the most in all.
+  shimmer: f32,
+  shimmerPressure: f32,
+  shimmerMax: f32,
 };
 
 struct VertexOutput {
@@ -289,7 +331,15 @@ ${windMarkWGSL}
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4f {
-  let uv = in.uv;
+  // The air view takes the place of the heat view when both are asked for.
+  let airView = u.airView > 0.5;
+  let heatView = u.heatView > 0.5 && !airView;
+  // The finished look reads the picture through the air's shimmer; the cells look and the views are not shifted.
+  let rawUv = in.uv;
+  var uv = rawUv;
+  if (u.cellsLook < 0.5 && !heatView && !airView) {
+    uv = warpedUv(rawUv);
+  }
   let w = u32(u.simResolution.x);
   let h = u32(u.simResolution.y);
   let cellX = min(u32(uv.x * u.simResolution.x), w - 1u);
@@ -305,9 +355,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {
   let pType = cellType(cell);
 
   let simPos = uv * u.simResolution;
-  // The air view takes the place of the heat view when both are asked for.
-  let airView = u.airView > 0.5;
-  let heatView = u.heatView > 0.5 && !airView;
   let air = airCentersAt(simPos);
   // The finished look draws gas as a soft layer over the wall, not as cells.
   let softGas = u.cellsLook < 0.5 && !heatView && !airView && u.gas > 0.0 && pType != EL_EMPTY && elState(pType) == ST_GAS;
@@ -382,7 +429,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {
 
   // Brush cursor
   if (u.showBrush > 0.5) {
-    let dist = length(simPos - u.mousePos);
+    let dist = length(rawUv * u.simResolution - u.mousePos);
     let pixelSize = u.simResolution.x / u.screenResolution.x;
     let ringWidth = max(1.0, 1.5 * pixelSize);
 
