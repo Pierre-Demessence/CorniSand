@@ -38,6 +38,22 @@ export const HEAT_UNIT = 1e6;
 /** The swap chance of a pair per dispatch is this times the square root of the relative density difference, at most 1. */
 export const CONVECTION_GAIN = 2;
 
+// Viscosity: a thin layer of liquid of depth h spreads under its own weight at about rho * g * h^2 / (3 mu) (a gravity
+// current on a floor, mu the dynamic viscosity). The grid does not track depth, so every liquid spreads as a layer of
+// this many cells deep (5.4 mm). Set so that water (mu 1e-3 Pa·s) stays at the cap of one cell per dispatch, oil (0.2 Pa·s)
+// flows a little slower (0.67) and lava (30 Pa·s) creeps at a few cells per second at 1x (tests/viscosity.test.ts).
+/** The depth in cells of the layer whose spreading speed a liquid's viscosity gives. */
+export const REF_DEPTH = 4;
+
+/**
+ * Speed in cells per dispatch at which a liquid of density `density` (kg/m³) and dynamic viscosity `viscosity` (Pa·s)
+ * spreads as a layer `REF_DEPTH` cells deep: rho g h² / (3 mu) in m/s, times the dispatch time over the cell size.
+ */
+export function spreadSpeed(density: number, viscosity: number): number {
+  const h = REF_DEPTH * CELL_SIZE;
+  return ((density * G * h * h) / (3 * viscosity)) * (DISPATCH_TIME / CELL_SIZE);
+}
+
 /**
  * Chance per dispatch that the denser cell (`upper`, kg/m³) above a lighter one (`lower`) swaps places with it: 0 when
  * the upper is not denser. Mirrors `convectionChance` in `src/shaders/ca.wgsl.ts`.

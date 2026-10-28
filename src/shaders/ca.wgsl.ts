@@ -139,6 +139,9 @@ ${SLOTS.map((n) => `var<private> orig${n}: Cell;`).join('\n')}
 // The density of the air at the block being processed (kg/m³): the air cell's temperature when there is air, else room
 // temperature. What a gas of the block is lighter or heavier than.
 var<private> airDensity: f32;
+// A random word of the block being processed, for the draws that sit in functions without one (a liquid's slide down a
+// slope); it is derived from the block's word without advancing it.
+var<private> blockWord: u32;
 
 fn cellState(c: Cell) -> u32 { return elState(cellType(c)); }
 // A liquid's density follows its temperature and a gas's the ideal-gas law (\`elDensityAt\`); everything else has one density.
@@ -302,7 +305,7 @@ ${air ? `  // The air: the cell loses \`drag\` of its speed relative to it, and 
       r.x = 0.0;
     }
     let corner = 1u - (at & 1u);
-    if (!didMove && canDisplace(c, blkAt(corner))) {
+    if (!didMove && canDisplace(c, blkAt(corner)) && (!isLiquid(c) || viscousGo(c, pcg(blockWord ^ (i * 0x9e3779b9u))))) {
       swapSlots(at, corner); at = corner;
       v.y = 0.0;
       r.y = 0.0;
@@ -315,6 +318,13 @@ ${air ? `  // The air: the cell loses \`drag\` of its speed relative to it, and 
 
 // Whether a random word falls below a probability.
 fn chance(r: u32, p: f32) -> bool { return f32(r >> 8u) * (1.0 / 16777216.0) < p; }
+
+// A liquid cell moves sideways (or slides down a slope) only with the chance its viscosity gives (\`elSpread\`, \`spreadSpeed\`
+// in src/physics.ts): water's is 1, a thick liquid's a small share of the dispatches. \`w\` is a random word of its own.
+fn viscousGo(c: Cell, w: u32) -> bool {
+  let p = elSpread(cellType(c));
+  return p >= 1.0 || chance(w, p);
+}
 
 // -- Convection --
 
@@ -379,19 +389,24 @@ fn spreads(slot: u32) -> bool {
 
 // A liquid cell that did not move this dispatch spreads along one row of the block, slot l left of slot r. It tries the
 // direction it remembers (a fresh random pick when it has none); the other cell's side is outside the block, so
-// that cell gets its turn when the offset alternates. Facing anything but empty space, and one time in TURN_ONE_IN
-// facing it, it turns around instead. Side by side, two liquids never swap, so a layered body stays layered.
+// that cell gets its turn when the offset alternates. Facing anything but empty space it turns around instead, and so
+// does one move in TURN_ONE_IN. A thick liquid tries to move only with the chance of its viscosity (\`viscousGo\`), so
+// it keeps the same mean free path of cells, not of dispatches. Side by side, two liquids never swap, so a layered body
+// stays layered.
 fn spreadRow(l: u32, r: u32, rnd: u32) {
   let turn = (rnd & (TURN_ONE_IN - 1u)) == 0u;
   if (spreads(l)) {
     var dir = cellLife(blkAt(l));
     if (dir == 0u) { dir = select(DIR_LEFT, DIR_RIGHT, pickRight(rnd)); }
     if (dir == DIR_RIGHT) {
-      if (turn || !isEmpty(blkAt(r))) { setBlk(l, withLife(blkAt(l), DIR_LEFT)); }
-      else if (isEmpty(blkAt(r))) {
-        setBlk(l, withLife(blkAt(l), DIR_RIGHT));
-        swapSlots(l, r);
-        return;
+      if (!isEmpty(blkAt(r))) { setBlk(l, withLife(blkAt(l), DIR_LEFT)); }
+      else if (viscousGo(blkAt(l), pcg(rnd ^ 0xa511e9b3u))) {
+        if (turn) { setBlk(l, withLife(blkAt(l), DIR_LEFT)); }
+        else {
+          setBlk(l, withLife(blkAt(l), DIR_RIGHT));
+          swapSlots(l, r);
+          return;
+        }
       }
     }
   }
@@ -399,10 +414,13 @@ fn spreadRow(l: u32, r: u32, rnd: u32) {
     var dir = cellLife(blkAt(r));
     if (dir == 0u) { dir = select(DIR_LEFT, DIR_RIGHT, pickRight(rnd)); }
     if (dir == DIR_LEFT) {
-      if (turn || !isEmpty(blkAt(l))) { setBlk(r, withLife(blkAt(r), DIR_RIGHT)); }
-      else if (isEmpty(blkAt(l))) {
-        setBlk(r, withLife(blkAt(r), DIR_LEFT));
-        swapSlots(l, r);
+      if (!isEmpty(blkAt(l))) { setBlk(r, withLife(blkAt(r), DIR_RIGHT)); }
+      else if (viscousGo(blkAt(r), pcg(rnd ^ 0x63d83595u))) {
+        if (turn) { setBlk(r, withLife(blkAt(r), DIR_RIGHT)); }
+        else {
+          setBlk(r, withLife(blkAt(r), DIR_LEFT));
+          swapSlots(l, r);
+        }
       }
     }
   }
@@ -541,6 +559,7 @@ ${loadBlock}
 
     var rnd = hash2(gid.x, gid.y, u.seed);
     airDensity = elDensity(EL_EMPTY);
+    blockWord = pcg(rnd ^ 0x1b873593u);
 ${air ? `    around = AirAround(vec2f(0.0), vec2f(0.0));
     if (movesWithAir(blk0) || movesWithAir(blk1) || movesWithAir(blk2) || movesWithAir(blk3)) {
       around = airAround(f32(ox) + 1.0, f32(oy) + 1.0);

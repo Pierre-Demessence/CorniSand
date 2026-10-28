@@ -571,21 +571,23 @@ describe.skipIf(!device)('M5.4c phase changes in scenes', () => {
     }
     const kinds = await readCells(sim);
     const melted = (iceCells - count(kinds, T.ICE)) / iceCells;
-    // Measured (M8.8c): water at superstep 100 (0.4 s), steam at 690 (the ice cells touching the lava melt together and
-    // boil together, and boiling takes 2,257 each), and after 4,000 supersteps a share of 0.21 melted (the steam pushes the
-    // lava back, and without air empty space carries no heat, so the rest of the block stays), 13 steam, 8 water and 15
-    // stone. Before: water at 4, steam at 7, 600 supersteps, 0.65 melted, 65 steam, 35 stone. Limits: 30% around each.
+    // Measured (M8.8g): water at superstep 100 (0.4 s), steam at 1,005 (the ice cells touching the lava melt together and
+    // boil together, and boiling takes 2,257 each; the lava creeps at its viscosity's pace, so fresh lava reaches the water
+    // later), and after 4,000 supersteps a share of 0.26 melted (the steam pushes the lava back, and without air empty
+    // space carries no heat, so the rest of the block stays), 17 steam, 9 water and 24 stone. Before M8.8g: steam at 690,
+    // 0.21 melted, 13 steam, 8 water, 15 stone (limits 9 to 17 steam, 10 to 20 stone). Before M8.8c: water at 4, steam at 7, 600 supersteps, 0.65 melted, 65 steam,
+    // 35 stone. Limits: 30% around each.
     expect(firstWater, 'superstep of the first water').toBeGreaterThanOrEqual(70);
     expect(firstWater, 'superstep of the first water').toBeLessThanOrEqual(130);
     expect(firstSteam, 'superstep of the first steam, after the first water').toBeGreaterThan(firstWater);
-    expect(firstSteam, 'superstep of the first steam').toBeGreaterThanOrEqual(480);
-    expect(firstSteam, 'superstep of the first steam').toBeLessThanOrEqual(900);
-    expect(melted, 'share of the ice melted').toBeGreaterThanOrEqual(0.15);
-    expect(melted, 'share of the ice melted').toBeLessThanOrEqual(0.3);
-    expect(count(kinds, T.STEAM), 'steam').toBeGreaterThanOrEqual(9);
-    expect(count(kinds, T.STEAM), 'steam').toBeLessThanOrEqual(17);
-    expect(count(kinds, T.STONE), 'stone').toBeGreaterThanOrEqual(10);
-    expect(count(kinds, T.STONE), 'stone').toBeLessThanOrEqual(20);
+    expect(firstSteam, 'superstep of the first steam').toBeGreaterThanOrEqual(700);
+    expect(firstSteam, 'superstep of the first steam').toBeLessThanOrEqual(1300);
+    expect(melted, 'share of the ice melted').toBeGreaterThanOrEqual(0.18);
+    expect(melted, 'share of the ice melted').toBeLessThanOrEqual(0.34);
+    expect(count(kinds, T.STEAM), 'steam').toBeGreaterThanOrEqual(12);
+    expect(count(kinds, T.STEAM), 'steam').toBeLessThanOrEqual(22);
+    expect(count(kinds, T.STONE), 'stone').toBeGreaterThanOrEqual(17);
+    expect(count(kinds, T.STONE), 'stone').toBeLessThanOrEqual(31);
   }, 120_000);
 
   function steamCeilingSim(ceilingTemp: number): Simulation {

@@ -1,5 +1,5 @@
 import {
-  MAX_ELEMENTS, STATES, crushPressure, densityMode, densityProfile, elementByKey, elementConductivity, elementDrag, elementGravity, elementHeatCapacity, elementHoldsHeat, elementInert,
+  MAX_ELEMENTS, STATES, crushPressure, densityMode, densityProfile, elementByKey, elementConductivity, elementDrag, elementGravity, elementHeatCapacity, elementHoldsHeat, elementInert, elementSpread,
   elementTemperature, latentWidth, transitionBurst, validateElements, type ElementDef,
 } from './elements';
 import { NO_THRESHOLD } from './heat';
@@ -62,8 +62,8 @@ export const PROP_FIELDS: readonly PropField[] = [
   // The four points of the density by temperature (`densityProfile`): temperatures, then densities.
   ...[0, 1, 2, 3].map((i): PropField => ({ name: `densityTemp${i}`, wgslType: 'f32', value: (e) => densityProfile(e).temps[i] })),
   ...[0, 1, 2, 3].map((i): PropField => ({ name: `densityKnot${i}`, wgslType: 'f32', value: (e) => densityProfile(e).densities[i] })),
-  // Padding up to the next multiple of four words.
-  { name: 'pad1', wgslType: 'u32', value: () => 0 },
+  // The chance per dispatch that a liquid spreads sideways, from its viscosity (1 for everything else).
+  { name: 'spread', wgslType: 'f32', value: (e) => elementSpread(e) },
 ];
 
 const ROW_WORDS = PROP_FIELDS.length;

@@ -1,5 +1,5 @@
 import { ABSOLUTE_ZERO, MAX_TEMP, ROOM_TEMP } from './heat';
-import { DEFAULT_GRAVITY } from './physics';
+import { DEFAULT_GRAVITY, spreadSpeed } from './physics';
 
 // The element table: one row per material, the single source of the IDs, colors, movement class, density, lifetimes
 // and toolbar entries that the shaders, the brush, the display and the toolbar are generated from.
@@ -33,6 +33,12 @@ export interface ElementDef {
   densityKnots?: readonly (readonly [number, number])[];
   /** °C that `density` is measured at, default `ROOM_TEMP`. Gases and empty space only: they follow the ideal-gas law from this one point (`densityAt`). */
   densityTemp?: number;
+  /**
+   * Dynamic viscosity in Pa·s, above 0. Liquids only. A liquid spreads sideways at the speed of a viscous layer
+   * (`spreadSpeed`), at most one cell per dispatch: water (1e-3) is at the cap, a thick liquid creeps. Without it a liquid
+   * spreads at the cap.
+   */
+  viscosity?: number;
   /** Downward acceleration in cells per dispatch² of a powder or liquid; default `DEFAULT_GRAVITY` for those states, 0 for the others. Gases rise at a fixed speed and ignore it. */
   gravity?: number;
   /** Share of its velocity a flying cell of this element loses per dispatch; default `DEFAULT_DRAG`. */
@@ -162,6 +168,14 @@ export function densityProfile(e: ElementDef): { temps: number[]; densities: num
   return { temps: points.map(([t]) => t), densities: points.map(([, d]) => d) };
 }
 
+/**
+ * The chance per dispatch that a liquid cell of this row spreads sideways (or slides down a slope) when it could: its
+ * viscous spreading speed in cells per dispatch capped at 1, which is also the value of a row with no viscosity.
+ */
+export function elementSpread(e: ElementDef): number {
+  return e.viscosity === undefined ? 1 : Math.min(1, spreadSpeed(e.density, e.viscosity));
+}
+
 /** The gravity of a row with its default for the state applied. */
 export function elementGravity(e: ElementDef): number {
   return e.gravity ?? (e.state === 'powder' || e.state === 'liquid' ? DEFAULT_GRAVITY : 0);
@@ -247,7 +261,8 @@ export const ELEMENTS = [
   { key: 'WALL', id: 2, label: 'Wall', color: [0.43, 0.45, 0.47], state: 'solid', density: 2500, toolbar: 6 },
   // Water: 0.6 W/m·K and 4.18 MJ/m³·K (4.18 kJ/kg·K at 1,000 kg/m³). Freezes and boils at the physical 0 and 100 °C, with the
   // latent heats above. Its density by temperature is the handbook's (999.84 kg/m³ at 0 °C, 999.97 at 4, 992.2 at 40, 958.4
-  // at 100) at four points: densest at 4 °C, so a pond under a freezing ceiling stirs until it is 4 °C throughout.
+  // at 100) at four points: densest at 4 °C, so a pond under a freezing ceiling stirs until it is 4 °C throughout. Viscosity
+  // 1.0 mPa·s at 20 °C (1.002, handbook).
   {
     key: 'WATER',
     id: 3,
@@ -258,6 +273,7 @@ export const ELEMENTS = [
     densityKnots: [[0, 999.8], [4, 1000], [40, 992.2], [100, 958.4]],
     conductivity: 0.6,
     heatCapacity: 4.18,
+    viscosity: 0.001,
    
     below: { temp: 0, becomes: 'ICE', latent: WATER_FUSION },
     // The burst is a flash into steam pushing the air out; tuned in the M6.3c tests (tests/air-burst.test.ts): one cell
@@ -272,7 +288,8 @@ export const ELEMENTS = [
   // capacity of 1.0 MJ/m³·K as a stand-in per cell (1.1 kJ/kg·K times the ~900 kg/m³ of the oil it mostly comes from).
   { key: 'SMOKE', id: 4, label: 'Smoke', color: [0.72, 0.72, 0.74], state: 'gas', density: 1.2, temperature: 150, conductivity: 0.04, heatCapacity: 1, toolbar: 5 },
   // Oil: 0.14 W/m·K (mineral oil 0.13 to 0.15) and 1.7 MJ/m³·K (1.9 kJ/kg·K at 900 kg/m³). It expands by about 7e-4 per K
-  // (mineral oil 6.4e-4 to 7.5e-4): 900 kg/m³ at 20 °C, 775 at 250. Catches fire at 250 °C, which is
+  // (mineral oil 6.4e-4 to 7.5e-4): 900 kg/m³ at 20 °C, 775 at 250. Viscosity 0.2 Pa·s at 20 °C (motor oil SAE 10
+  // to 30: 0.1 to 0.3; vegetable oil about 0.06). Catches fire at 250 °C, which is
   // a stand-in for the flash point of a lamp oil, and burns on its own from there (no latent heat: the fire rule heats the
   // cell the next dispatch).
   {
@@ -286,6 +303,7 @@ export const ELEMENTS = [
     flammable: true,
     conductivity: 0.14,
     heatCapacity: 1.7,
+    viscosity: 0.2,
    
     above: { temp: 250, becomes: 'FIRE' },
     toolbar: 3,
@@ -384,6 +402,7 @@ export const ELEMENTS = [
   // physical one: about 450 kJ/kg (basalt) at 2,700 kg/m³ is 1,200 MJ/m³. It is what keeps a pile of lava flowing in open
   // air for a while. Molten basalt conducts about 1 W/m·K and holds 4.0 MJ/m³·K (1.5 kJ/kg·K). One molten element per
   // meltable material (backlog I15). Molten silicate expands by about 4e-5 per K: 2,700 kg/m³ at 1,200 °C, 2,668 at 1,500.
+  // Viscosity 30 Pa·s, the middle of basaltic lava at eruption temperatures (10 to 100 Pa·s).
   {
     key: 'LAVA',
     id: 11,
@@ -395,13 +414,14 @@ export const ELEMENTS = [
     temperature: 1300,
     conductivity: 1,
     heatCapacity: 4,
+    viscosity: 30,
    
     below: { temp: 1200, becomes: 'STONE', latent: LAVA_LATENT },
     toolbar: 10,
   },
   // Molten steel: 7,000 kg/m³, painted at 1,600 °C, sets back into METAL at 1,538. Liquid iron conducts about 35 W/m·K and
-  // holds 5.7 MJ/m³·K (0.82 kJ/kg·K). Its density falls by about 0.83 kg/m³ per K from 7,000 at the melting point. Not paintable:
-  // metal melts into it.
+  // holds 5.7 MJ/m³·K (0.82 kJ/kg·K). Its density falls by about 0.83 kg/m³ per K from 7,000 at the melting point. Viscosity
+  // 6 mPa·s (liquid iron, 5 to 7 mPa·s near its melting point). Not paintable: metal melts into it.
   {
     key: 'MOLTEN_METAL',
     id: 12,
@@ -413,6 +433,7 @@ export const ELEMENTS = [
     temperature: 1600,
     conductivity: 35,
     heatCapacity: 5.7,
+    viscosity: 0.006,
    
     below: { temp: 1538, becomes: 'METAL', latent: IRON_FUSION },
   },
@@ -460,6 +481,10 @@ export function validateElements(elements: readonly ElementDef[]): void {
     if (!STATES.includes(e.state)) throw new Error(`element ${e.key}: unknown state "${e.state}"`);
     if (!Number.isFinite(e.density)) throw new Error(`element ${e.key}: density must be a number`);
     validateDensity(e);
+    if (e.viscosity !== undefined) {
+      if (e.state !== 'liquid') throw new Error(`element ${e.key}: viscosity is only for a liquid`);
+      if (!(Number.isFinite(e.viscosity) && e.viscosity > 0)) throw new Error(`element ${e.key}: viscosity must be a finite number above 0`);
+    }
     if (!(elementGravity(e) >= 0 && elementGravity(e) < Infinity)) throw new Error(`element ${e.key}: gravity must be a finite number, 0 or more`);
     if (!(elementConductivity(e) >= 0 && elementConductivity(e) < Infinity)) throw new Error(`element ${e.key}: conductivity must be a finite number, 0 or more`);
     if (!(elementHeatCapacity(e) > 0 && elementHeatCapacity(e) < Infinity)) throw new Error(`element ${e.key}: heatCapacity must be a finite number above 0`);

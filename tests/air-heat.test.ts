@@ -346,7 +346,8 @@ describe.skipIf(!device)('M6 ambient heat', () => {
       else expect(temp, 'the lava cell kept its heat').toBe(1250);
     });
 
-    // Measured: 558 (size 4) and 562 (size 2) lava cells within 10 rows of the floor, and 0 stone cells above row 40.
+    // Measured: 193 (size 4) and 189 (size 2) lava cells within 10 rows of the floor, and 0 stone cells above row 40. The
+    // lava piles up in a mound 22 cells wide, since it spreads at its viscosity's pace (M8.8g; was 558 and 562 spread wide).
     it.each([4, 2] as AirCellSize[])('M6 AC28: lava poured from 380 cells up reaches the floor molten and hangs no stone in the air (air cell size %i)', async (airCellSize) => {
       const [width, height] = [160, 400];
       const sim = createSim(width, height, 3, { airCellSize });
@@ -359,7 +360,7 @@ describe.skipIf(!device)('M6 ambient heat', () => {
         if (cellType(cells[k]) === T.LAVA && y < 10) low++;
         if (cellType(cells[k]) === T.STONE && y >= 40) hanging++;
       }
-      expect(low, 'lava within 10 rows of the floor').toBeGreaterThan(400);
+      expect(low, 'lava within 10 rows of the floor').toBeGreaterThan(100);
       expect(hanging, 'stone above row 40').toBeLessThanOrEqual(20);
     }, 60_000);
 
