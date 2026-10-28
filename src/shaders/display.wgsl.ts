@@ -3,6 +3,7 @@ import type { ElementDef } from '../elements';
 import { ROOM_TEMP } from '../heat';
 import { LOOK, WALL_LEVEL, WALL_RANGE } from '../look';
 import { wgslFloat } from '../movement';
+import { COVER_CELLS } from './glow.wgsl';
 import { airSamplersWGSL } from './air.wgsl';
 import { cellWGSL } from './cell.wgsl';
 import { elementsWGSL } from './elements.wgsl';
@@ -178,7 +179,8 @@ struct DisplayUniforms {
   wall: f32,
   // The strength of the halo: 0 adds none.
   glow: f32,
-  pad1: f32,
+  // How dark the shadow of fully opaque matter is: 0 draws none.
+  shadow: f32,
 };
 
 struct VertexOutput {
@@ -210,6 +212,8 @@ ${displayPropsWGSL}
 // The blurred light of the glow chain (src/glow.ts, linear, world orientation).
 @group(0) @binding(3) var glowTex: texture_2d<f32>;
 @group(0) @binding(4) var glowSampler: sampler;
+// How shaded each texel of the cover grid is (src/shadow.ts), world orientation.
+@group(0) @binding(5) var shadowTex: texture_2d<f32>;
 ${lightWGSL(styled)}
 ${lookWGSL}
 ${airDisplayWGSL(air)}
@@ -285,6 +289,14 @@ ${styled.map((e) => `        case EL_${e.key}: { color = graphics_${e.graphics}(
     let mark = windMark(uv * u.screenResolution);
     color = mix(color, vec3f(0.02), 0.85 * mark.y);
     color = mix(color, vec3f(0.97), mark.x);
+  }
+
+  // The finished look's shadows: matter toward the light darkens the empty space and the gas behind it. Fire shines and
+  // filled cells are lit, so they take none. The shade is read bilinearly at the pixel's place, so the edges are soft.
+  if (u.cellsLook < 0.5 && !heatView && !airView && u.shadow > 0.0 && (pType == EL_EMPTY || elState(pType) == ST_GAS)) {
+    let coverSize = vec2f(textureDimensions(shadowTex));
+    let shade = textureSampleLevel(shadowTex, glowSampler, simPos / (${COVER_CELLS}.0 * coverSize), 0.0).r;
+    color *= 1.0 - u.shadow * shade;
   }
 
   // The finished look: the color in linear light, the halo added, tone mapped, encoded again. The views take today's math

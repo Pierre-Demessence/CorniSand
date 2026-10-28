@@ -1,12 +1,12 @@
 import type { DisplayTable } from './display-table';
-import { coverageWGSL, EMISSION_CELLS, GLOW_FORMAT, glowChainWGSL } from './shaders/glow.wgsl';
+import { COVER_CELLS, COVER_FORMAT, coverageWGSL, EMISSION_CELLS, GLOW_FORMAT, glowChainWGSL } from './shaders/glow.wgsl';
 import type { CellFields } from './cell-field-buffers';
 import type { FlyerOverlay } from './flyers';
 import type { ElementTable } from './element-table';
 import type { PassTimer } from './passes';
 
 /** Cells per thread along each axis of the coverage pass (a thread writes `COVERAGE_CELLS / EMISSION_CELLS` texels per axis). */
-const COVERAGE_CELLS = 4;
+const COVERAGE_CELLS = COVER_CELLS;
 const WORKGROUP = 8;
 
 /** The size of each level of the chain: the emission texture (`EMISSION_CELLS` cells per texel), then half the size of the one before, at least 1 texel. */
@@ -19,17 +19,26 @@ export function glowLevelSizes(width: number, height: number, levels: number): {
   return sizes;
 }
 
+/** The size of the cover texture: one texel per `COVER_CELLS` cells along each axis. */
+export function coverSize(width: number, height: number): { width: number; height: number } {
+  return { width: Math.ceil(width / COVER_CELLS), height: Math.ceil(height / COVER_CELLS) };
+}
+
 /**
- * The halo of the hot cells (M11.3): the coverage pass writes the light every cell radiates into a half-resolution HDR
- * texture, and a chain of downsamples and tent upsamples blurs it. After `record`, `view` holds the blurred light (linear,
+ * The coverage pass and the halo of the hot cells (M11.3): the coverage pass writes the light every cell radiates into a
+ * half-resolution HDR texture, and the cover texture (the opacity of the cells, quarter resolution, M11.4) that the shadow
+ * pass reads; a chain of downsamples and tent upsamples blurs it. After `record`, `view` holds the blurred light (linear,
  * world orientation: texture row = the world's row) that the display's composite adds around the cells that radiate. The
  * sizes follow the grid, fixed at load, not the canvas.
  */
 export class Glow {
   /** The finest level, after the chain has run: the halo, before its strength. */
   readonly view: GPUTextureView;
+  /** What the coverage pass writes at a quarter of the cells' resolution: opacity in red (world orientation). */
+  readonly cover: GPUTextureView;
 
   private readonly textures: GPUTexture[] = [];
+  private readonly coverTexture: GPUTexture;
   private readonly views: GPUTextureView[] = [];
   private readonly coverage: GPUComputePipeline;
   private readonly coverageTable: GPUBindGroup;
@@ -73,6 +82,14 @@ export class Glow {
       this.views.push(texture.createView());
     });
     this.view = this.views[0];
+    const cover = coverSize(width, height);
+    this.coverTexture = device.createTexture({
+      label: 'cover',
+      size: [cover.width, cover.height],
+      format: COVER_FORMAT,
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING,
+    });
+    this.cover = this.coverTexture.createView();
     this.groups = {
       x: Math.ceil(width / (COVERAGE_CELLS * WORKGROUP)),
       y: Math.ceil(height / (COVERAGE_CELLS * WORKGROUP)),
@@ -83,6 +100,7 @@ export class Glow {
       entries: [
         { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
         { binding: 3, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: 'write-only', format: GLOW_FORMAT } },
+        { binding: 4, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: 'write-only', format: COVER_FORMAT } },
       ],
     });
     this.coverageTable = device.createBindGroup({
@@ -90,6 +108,7 @@ export class Glow {
       entries: [
         { binding: 2, resource: { buffer: table.buffer } },
         { binding: 3, resource: this.views[0] },
+        { binding: 4, resource: this.cover },
       ],
     });
     this.coverage = device.createComputePipeline({
@@ -138,8 +157,8 @@ export class Glow {
     for (let level = 0; level < levels; level++) this.ups.push(bind(this.views[level + 1]));
   }
 
-  /** Records the coverage pass and the chain into the caller's encoder; each pass is timed under its label when the bench gives a timer. */
-  record(encoder: GPUCommandEncoder, timer?: PassTimer): void {
+  /** Records the coverage pass (the emission and cover textures) into the caller's encoder; timed as `render:coverage` when the bench gives a timer. */
+  recordCoverage(encoder: GPUCommandEncoder, timer?: PassTimer): void {
     const compute = encoder.beginComputePass(timer ? { timestampWrites: timer.stamp('render:coverage') } : {});
     compute.setPipeline(this.coverage);
     compute.setBindGroup(0, this.coverageTable);
@@ -148,7 +167,10 @@ export class Glow {
     compute.setBindGroup(3, this.flyers.bindGroup);
     compute.dispatchWorkgroups(this.groups.x, this.groups.y);
     compute.end();
+  }
 
+  /** Records the chain that blurs the emission texture into `view`; each pass is timed as `render:glow` when the bench gives a timer. */
+  recordChain(encoder: GPUCommandEncoder, timer?: PassTimer): void {
     // Down the chain: each level is drawn over in full.
     for (let level = 1; level <= this.levels; level++) {
       this.draw(encoder, level === 1 ? this.first : this.down, this.downs[level - 1], this.views[level], 'clear', timer);
@@ -179,5 +201,6 @@ export class Glow {
 
   destroy(): void {
     for (const texture of this.textures) texture.destroy();
+    this.coverTexture.destroy();
   }
 }

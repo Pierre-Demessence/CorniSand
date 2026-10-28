@@ -1,6 +1,7 @@
 import { DisplayTable } from './display-table';
 import { Glow } from './glow';
 import { lookSettings, type Look, type LookSettings } from './look';
+import { Shadow } from './shadow';
 import { displayWGSL } from './shaders/display.wgsl';
 import { GRAPHICS } from './shaders/graphics.wgsl';
 import type { AirGrid } from './air-grid';
@@ -49,6 +50,7 @@ export class Display {
   private readonly simHeight: number;
   private readonly settings: LookSettings;
   private readonly glow: Glow;
+  private readonly shadow: Shadow;
 
   constructor(
     device: GPUDevice,
@@ -77,6 +79,7 @@ export class Display {
     this.uniformData = new Float32Array(UNIFORM_FLOATS);
     const table = new DisplayTable(device, elements.elements, this.settings);
     this.glow = new Glow(device, simWidth, simHeight, cells, elements, flyers, table, GRAPHICS, this.settings.glowLevels);
+    this.shadow = new Shadow(device, simWidth, simHeight, this.glow.cover, this.settings);
     const glowSampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear', addressModeU: 'clamp-to-edge', addressModeV: 'clamp-to-edge' });
 
     const uniformLayout = device.createBindGroupLayout({
@@ -86,6 +89,8 @@ export class Display {
         // The halo of the glow chain and the sampler that reads it.
         { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
         { binding: 4, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
+        // The shadow texture, read with the same sampler.
+        { binding: 5, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
         // The air state, when there is air: binding 1 of group 0, as the generated shader declares it.
         ...(air?.state ? [{ binding: 1, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' as const } }] : []),
       ],
@@ -112,6 +117,7 @@ export class Display {
         { binding: 2, resource: { buffer: table.buffer } },
         { binding: 3, resource: this.glow.view },
         { binding: 4, resource: glowSampler },
+        { binding: 5, resource: this.shadow.view },
         ...(air?.state ? [{ binding: 1, resource: { buffer: air.state } }] : []),
       ],
     });
@@ -141,12 +147,18 @@ export class Display {
     d[12] = opts.look === 'cells' ? 1.0 : 0.0; // cellsLook
     d[13] = this.settings.wall; // wall
     d[14] = this.settings.glowStrength; // glow
+    d[15] = this.settings.shadowDarkness; // shadow
 
     this.device.queue.writeBuffer(this.uniformBuffer, 0, this.uniformData);
 
-    // The halo is only read by the finished look; the cells look and the views record the composite alone.
-    if (opts.look !== 'cells' && !opts.heatView && !opts.airView && this.settings.glowStrength > 0) {
-      this.glow.record(encoder, timer);
+    // The halo and the shadows are only read by the finished look; the cells look and the views record the composite alone.
+    // The coverage pass serves both, so it runs when either is on.
+    if (opts.look !== 'cells' && !opts.heatView && !opts.airView) {
+      const glowing = this.settings.glowStrength > 0;
+      const shadowed = this.settings.shadowDarkness > 0;
+      if (glowing || shadowed) this.glow.recordCoverage(encoder, timer);
+      if (glowing) this.glow.recordChain(encoder, timer);
+      if (shadowed) this.shadow.record(encoder, timer);
     }
 
     const pass = encoder.beginRenderPass({

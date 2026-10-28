@@ -27,6 +27,15 @@ export interface LookSettings {
   glowStrength: number;
   /** Downsamples of the glow chain below the emission texture (half the cells' resolution), 1 to 6; each doubles the halo's reach. */
   glowLevels: number;
+  /**
+   * How dark the shadow of fully opaque matter is on the wall behind it, 0 to 1: the wall under a stone's shadow shows
+   * `1 - shadowDarkness` of its brightness. 0 draws no shadow and records no shadow pass.
+   */
+  shadowDarkness: number;
+  /** How far a shadow reaches, in cover texels (4 cells each), 1 to 64: it fades to nothing over this distance. */
+  shadowLength: number;
+  /** The direction toward the light on the screen, x to the right and y up: shadows fall the opposite way. Any non-zero vector. */
+  lightDirection: readonly [number, number];
 }
 
 export const LOOK: Readonly<LookSettings> = {
@@ -36,15 +45,23 @@ export const LOOK: Readonly<LookSettings> = {
   solidNoise: 0.2,
   glowStrength: 0.08,
   glowLevels: 4,
+  shadowDarkness: 0.5,
+  shadowLength: 24,
+  lightDirection: [-1, 1],
 };
 
 const MAX_GLOW_LEVELS = 6;
+const MAX_SHADOW_LENGTH = 64;
 
 /** The wall's brightness at `wall` 0 and the range above it, at the top center, as a display value (0 to 1). */
 export const WALL_LEVEL = 0.04;
 export const WALL_RANGE = 0.5;
 
-/** The settings with the defaults applied, the wall's brightness and the glow strength kept in 0..1 and the glow levels a whole number in 1..6. */
+/**
+ * The settings with the defaults applied, the wall's brightness, the glow strength and the shadow's darkness kept in 0..1,
+ * the glow levels a whole number in 1..6, the shadow's length a whole number in 1..64 and the light's direction a unit
+ * vector (the default when it is zero or not finite).
+ */
 export function lookSettings(overrides: Partial<LookSettings> = {}): LookSettings {
   const settings = { ...LOOK, ...overrides };
   return {
@@ -52,7 +69,15 @@ export function lookSettings(overrides: Partial<LookSettings> = {}): LookSetting
     wall: Math.min(1, Math.max(0, settings.wall)),
     glowStrength: Math.min(1, Math.max(0, settings.glowStrength)),
     glowLevels: Math.min(MAX_GLOW_LEVELS, Math.max(1, Math.round(settings.glowLevels))),
+    shadowDarkness: Math.min(1, Math.max(0, settings.shadowDarkness)),
+    shadowLength: Math.min(MAX_SHADOW_LENGTH, Math.max(1, Math.round(settings.shadowLength))),
+    lightDirection: unitVector(settings.lightDirection) ?? unitVector(LOOK.lightDirection)!,
   };
+}
+
+function unitVector([x, y]: readonly [number, number]): readonly [number, number] | undefined {
+  const length = Math.hypot(x, y);
+  return Number.isFinite(length) && length > 0 ? [x / length, y / length] : undefined;
 }
 
 /**

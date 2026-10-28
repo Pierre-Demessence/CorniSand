@@ -1,6 +1,6 @@
 # M11 Rendering quick wins
 
-Status: running; M11.1 to M11.3 done, next open item M11.4 (shadows). Runs before M8.1, beside M8.9 (`docs/plans/m8.9-real-world-scenarios.md`): it touches only the drawing code, never a cell, a rule or a test of the simulation.
+Status: running; M11.1 to M11.4 done, next open item M11.5 (soft gases). Runs before M8.1, beside M8.9 (`docs/plans/m8.9-real-world-scenarios.md`): it touches only the drawing code, never a cell, a rule or a test of the simulation.
 
 ## Goal
 
@@ -125,10 +125,17 @@ Needs you: run `npm test` (the new AC7 to AC9 tests, the reworked AC3 and flyer 
 
 ### M11.4 Shadows
 
-- [ ] `cover`'s opacity, the shadow pass, the darkening in the composite; AC10. Verify: lint, typecheck, `npm test`, build, bench.
+- [x] `cover`'s opacity, the shadow pass, the darkening in the composite; AC10. Verify: lint, typecheck, `npm test`, build, bench.
+
+Done in the run (not ticked, checks left to the user): the coverage pass (`src/shaders/glow.wgsl.ts`) also writes the cover texture (`rgba8unorm`, one texel per 4x4 cells, the mean `displayProps` opacity in red, flyers included; green and blue stay 0 for M11.5 and M11.6), `src/glow.ts` owns it (`Glow.cover`, `coverSize`) and splits `record` into `recordCoverage` and `recordChain`; `src/shadow.ts` and `src/shaders/shadow.wgsl.ts` (`Shadow`: a render pass into an `r8unorm` texture at the cover's size, a march of `shadowLength` texels toward the light keeping the strongest `opacity x (1 - step / length)`, a sample beyond the grid blocks nothing); `texelVertexWGSL` is the fullscreen vertex shader the glow chain and the shadow pass share; `LookSettings` gains `shadowDarkness` (0.5), `shadowLength` (24) and `lightDirection` (toward the upper left); the display binds the shadow texture (binding 5) and `shadow` takes the uniform's last padding word; `Display.render` records the coverage pass when the glow or the shadow is on, the chain when the glow is, the shadow pass when the shadow is (all three only in the finished look, outside the views). Tests: `tests/look.test.ts` (AC10, compared against the same picture at `shadowDarkness` 0), `tests/glow.test.ts` (settings, sizes, shader limits). Lint, typecheck, build and `tests/glow.test.ts` pass; the GPU tests, the bench and every visual check were not run (the GPU was busy with a game).
+
+Decided during the run: the composite darkens empty space and gas cells by multiplying their display-space color by `1 - shadowDarkness x shade`, before the halo is added in linear light (so a halo still shines in a shadow). Why: AC10 asks for at least 10 steps next to the block, which a multiplication in linear light (about 27% in display space at 0.5) does not give on a wall of 36 out of 255. Alternative: darken in linear light with a stronger default darkness. To change: the shadow block in `fs_main` (`src/shaders/display.wgsl.ts`), `LOOK.shadowDarkness`.
+Decided during the run: gas cells are shaded like empty space, since the finished look still draws them as cells until M11.5 turns them into a cloud layer; fire (plasma) and filled cells are not. Alternative: shade only empty space. To change: the `pType` test in the shadow block.
+Decided during the run: the light's direction, the shadow's length and its darkness are three settings of `LOOK` (`lightDirection`, `shadowLength`, `shadowDarkness`), the direction a vector toward the light rather than an angle. Alternative: an angle in degrees. To change: `LookSettings`.
+Decided during the run: with `shadowDarkness` 0 neither the shadow pass nor (when the glow is off too) the coverage pass is recorded, and the tests for AC10 compare against that picture, as the glow tests do with `glowStrength` 0. Alternative: render a scene without the block. To change: `withAndWithoutShadows` in `tests/look.test.ts`.
 
 Visible after: matter casts soft shadows on the wall toward the lower right.
-Needs you: nothing.
+Needs you: run `npm test` (the AC10 tests in `tests/look.test.ts` and `tests/glow.test.ts`; none of the GPU ones was run, the GPU was busy; a shader that fails to compile shows at the first `Display`) and `npm run bench`, and record the finished look's `render:shadow` cost and the `render:coverage` change under this item (at the end); look at `?scene=showcase` and say whether the shadows are too faint or too strong at 0.5 (at the end).
 
 ### M11.5 Soft gases
 

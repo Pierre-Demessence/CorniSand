@@ -400,3 +400,81 @@ describe.skipIf(!device)('M11.3 glow', () => {
     });
   });
 });
+
+describe.skipIf(!device)('M11.4 shadows', () => {
+  const width = 192;
+  const height = 192;
+  // Aligned to the cover texels (4 cells) so the shadow's edges fall on texel boundaries; lower right corner at (56, 152).
+  const stone: Block = { x: 24, y: 152, w: 32, h: 16, type: T.STONE, temp: ROOM_TEMP };
+  const fireLife = ROWS.find((e) => e.key === 'FIRE')!.life!.start;
+
+  // The picture with the shadows and the same picture without them (`shadowDarkness` 0): their difference is the shadow alone,
+  // the dither and every other effect cancel.
+  async function withAndWithoutShadows(sim: Simulation): Promise<{ on: Uint8Array; off: Uint8Array }> {
+    return {
+      on: await render(sim, width, height),
+      off: await render(sim, width, height, { settings: { shadowDarkness: 0 } }),
+    };
+  }
+
+  // How much darker pixel (x, y) is with the shadows, y counted from the bottom of the world.
+  const darkening = (p: { on: Uint8Array; off: Uint8Array }, x: number, y: number): number => gainAt(p.off, p.on, width, height, x, y);
+
+  it('M11 AC10: a stone block darkens the empty pixels on its far side by at least 10 steps, fading to 0 beyond 96 cells', async () => {
+    const p = await withAndWithoutShadows(blockSim(width, height, [stone]));
+    // Beside the block (2 cells from its right edge and from its bottom edge), on the side away from the light.
+    expect(darkening(p, 58, 160), 'right of the block').toBeGreaterThanOrEqual(10);
+    expect(darkening(p, 40, 150), 'below the block').toBeGreaterThanOrEqual(10);
+    // Down the diagonal from the lower right corner, the way the light travels: never darker the farther, nothing beyond 96 cells.
+    const fade = [6, 20, 40].map((d) => darkening(p, 56 + d, 151 - d));
+    expect(fade[0], 'near the corner').toBeGreaterThanOrEqual(5);
+    expect(fade[1]).toBeLessThanOrEqual(fade[0] + 1);
+    expect(fade[2]).toBeLessThanOrEqual(fade[1] + 1);
+    // 84 cells along each axis is 119 cells from the corner, 29.7 cover texels against a length of 24.
+    expect(darkening(p, 56 + 84, 151 - 84), 'beyond 96 cells').toBe(0);
+  });
+
+  it('M11 AC10: nothing darkens toward the light', async () => {
+    const p = await withAndWithoutShadows(blockSim(width, height, [stone]));
+    // Left, above and upper left of the block, and above its right: 10 cells from its edges.
+    for (const [x, y] of [[14, 160], [40, 178], [14, 178], [66, 178]]) {
+      expect(darkening(p, x, y), `(${x}, ${y})`).toBe(0);
+    }
+  });
+
+  it('M11 AC10: a water block darkens less than a stone block', async () => {
+    const stoneShade = darkening(await withAndWithoutShadows(blockSim(width, height, [stone])), 58, 160);
+    const waterShade = darkening(await withAndWithoutShadows(blockSim(width, height, [{ ...stone, type: T.WATER }])), 58, 160);
+    expect(waterShade, 'water').toBeGreaterThan(0);
+    expect(waterShade, 'water against stone').toBeLessThan(stoneShade);
+  });
+
+  it('M11 AC10: smoke and fire darken nothing', async () => {
+    for (const block of [{ ...stone, type: T.SMOKE }, { ...stone, type: T.FIRE, life: fireLife }]) {
+      const p = await withAndWithoutShadows(blockSim(width, height, [block]));
+      expect(p.on, ROWS.find((e) => e.id === block.type)!.key).toEqual(p.off);
+    }
+  });
+
+  it('M11 AC10: no filled cell changes, and the cells look changes nothing', async () => {
+    const blocks: Block[] = [
+      stone,
+      { x: 100, y: 100, w: 16, h: 16, type: T.WATER, temp: ROOM_TEMP },
+      { x: 30, y: 60, w: 8, h: 8, type: T.SAND, temp: ROOM_TEMP },
+    ];
+    const sim = blockSim(width, height, blocks);
+    const p = await withAndWithoutShadows(sim);
+    expect(p.on, 'the shadows are there').not.toEqual(p.off);
+    for (const b of blocks) {
+      for (let y = b.y; y < b.y + b.h; y++) {
+        for (let x = b.x; x < b.x + b.w; x++) {
+          const row = height - 1 - y;
+          expect(pixelAt(p.on, width, x, row), `(${x}, ${y})`).toEqual(pixelAt(p.off, width, x, row));
+        }
+      }
+    }
+    const cellsLook = await render(sim, width, height, { look: 'cells' });
+    const cellsLookNoShadow = await render(sim, width, height, { look: 'cells', settings: { shadowDarkness: 0 } });
+    expect(cellsLook).toEqual(cellsLookNoShadow);
+  });
+});

@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { ELEMENTS } from '../src/elements';
-import { glowLevelSizes } from '../src/glow';
+import { coverSize, glowLevelSizes } from '../src/glow';
 import { ABSOLUTE_ZERO, EMISSION_REFERENCE, GLOW_START, emissionShare } from '../src/heat';
 import { LOOK, lookSettings } from '../src/look';
 import { displayWGSL } from '../src/shaders/display.wgsl';
-import { coverageWGSL } from '../src/shaders/glow.wgsl';
+import { COVER_CELLS, coverageWGSL } from '../src/shaders/glow.wgsl';
 import { GRAPHICS } from '../src/shaders/graphics.wgsl';
+import { shadowWGSL } from '../src/shaders/shadow.wgsl';
 
 // M11.3 without a GPU: the emission law, the settings and the generated shaders (docs/plans/m11-rendering.md).
 
@@ -73,5 +74,43 @@ describe('M11.3 shaders', () => {
     expect(wgsl).toContain('flyerWords[2u * idx + 1u]');
     // Five fields and the overlay; the air state is the seventh with air.
     expect(storageBuffers(wgsl)).toBe(6);
+  });
+});
+
+describe('M11.4 shadows', () => {
+  it('keeps the shadow darkness in 0..1, the length a whole number in 1..64 and the light direction a unit vector', () => {
+    expect(lookSettings().shadowDarkness).toBe(LOOK.shadowDarkness);
+    expect(lookSettings().shadowLength).toBe(LOOK.shadowLength);
+    expect(lookSettings({ shadowDarkness: -1 }).shadowDarkness).toBe(0);
+    expect(lookSettings({ shadowDarkness: 2 }).shadowDarkness).toBe(1);
+    expect(lookSettings({ shadowLength: 0 }).shadowLength).toBe(1);
+    expect(lookSettings({ shadowLength: 500 }).shadowLength).toBe(64);
+    const [x, y] = lookSettings().lightDirection;
+    expect(x).toBeCloseTo(-Math.SQRT1_2, 12);
+    expect(y).toBeCloseTo(Math.SQRT1_2, 12);
+    expect(lookSettings({ lightDirection: [0, 3] }).lightDirection).toEqual([0, 1]);
+    expect(lookSettings({ lightDirection: [0, 0] }).lightDirection).toEqual(lookSettings().lightDirection);
+    expect(lookSettings({ lightDirection: [Number.NaN, 1] }).lightDirection).toEqual(lookSettings().lightDirection);
+  });
+
+  it('sizes the cover texture at one texel per 4 cells, rounded up', () => {
+    expect(COVER_CELLS).toBe(4);
+    expect(coverSize(2560, 1340)).toEqual({ width: 640, height: 335 });
+    expect(coverSize(3, 1)).toEqual({ width: 1, height: 1 });
+  });
+
+  it('the coverage pass writes the cover texture beside the emission one, within the default limit of 4 storage textures', () => {
+    const wgsl = coverageWGSL(ELEMENTS, GRAPHICS, 64, 32);
+    expect(wgsl).toContain('var cover: texture_storage_2d<rgba8unorm, write>');
+    expect([...wgsl.matchAll(/texture_storage_2d/g)]).toHaveLength(2);
+  });
+
+  it('the shadow pass marches the set length toward the light, and the composite shades empty space and gas only', () => {
+    const wgsl = shadowWGSL(24, [-Math.SQRT1_2, Math.SQRT1_2]);
+    expect(wgsl).toContain('const LENGTH: i32 = 24;');
+    expect(wgsl).toContain('TOWARD_LIGHT: vec2f = vec2f(-0.70710');
+    const display = displayWGSL(ELEMENTS, GRAPHICS);
+    expect(display).toContain('(pType == EL_EMPTY || elState(pType) == ST_GAS)');
+    expect(display).toContain('color *= 1.0 - u.shadow * shade;');
   });
 });
