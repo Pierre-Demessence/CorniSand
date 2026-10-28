@@ -1,6 +1,8 @@
 import { AIR, AIR_VIEW, PRESSURE_RAMP, type AirShape } from '../air';
-import type { ElementDef } from '../elements';
+import { DISPLAY_FIELDS } from '../display-table';
+import { MAX_ELEMENTS, type ElementDef } from '../elements';
 import { ROOM_TEMP } from '../heat';
+import { LOOK, WALL_LEVEL, WALL_RANGE } from '../look';
 import { wgslFloat } from '../movement';
 import { airSamplersWGSL } from './air.wgsl';
 import { cellWGSL } from './cell.wgsl';
@@ -83,6 +85,84 @@ fn windMark(pixel: vec2f) -> vec2f {
 }
 `;
 
+// The wall behind the field, the grain of the cells and the finished look's color path. The wall is a display value: a
+// tinted grey, brighter toward the top center and darker toward the corners, at the brightness of the `wall` uniform.
+// The dither (interleaved gradient noise, Jimenez 2014) keeps its gradient from banding; it is added to the wall alone, so
+// the cells keep their exact colors.
+const lookWGSL = /* wgsl */`
+const WALL_LEVEL: f32 = ${wgslFloat(WALL_LEVEL)};
+const WALL_RANGE: f32 = ${wgslFloat(WALL_RANGE)};
+const WALL_TINT: vec3f = vec3f(0.94, 0.98, 1.06);
+const SOLID_NOISE: f32 = ${wgslFloat(LOOK.solidNoise)};
+// Cells between the lattice points of the solids' noise.
+const NOISE_SPACING: f32 = 12.0;
+
+fn interleavedNoise(pixel: vec2f) -> f32 {
+  return fract(52.9829189 * fract(dot(pixel, vec2f(0.06711056, 0.00583715))));
+}
+
+fn wallColor(uv: vec2f, pixel: vec2f) -> vec3f {
+  let p = uv * 2.0 - 1.0;
+  let light = 1.0 - 0.30 * p.x * p.x - 0.125 * (1.0 - p.y);
+  let level = WALL_LEVEL + WALL_RANGE * u.wall * sqrt(u.wall);
+  return WALL_TINT * (level * light) + (interleavedNoise(pixel) - 0.5) / 255.0;
+}
+
+// Smooth noise of a place in cells, 0 to 1, from a hash of the lattice points around it.
+fn latticeValue(x: i32, y: i32) -> f32 {
+  return f32(hash2(u32(x), u32(y), 0x6e6f6973u) & 0xffffu) / 65535.0;
+}
+
+fn valueNoise(p: vec2f) -> f32 {
+  let i = floor(p);
+  let f = fract(p);
+  let w = f * f * (3.0 - 2.0 * f);
+  let x = i32(i.x);
+  let y = i32(i.y);
+  return mix(mix(latticeValue(x, y), latticeValue(x + 1, y), w.x), mix(latticeValue(x, y + 1), latticeValue(x + 1, y + 1), w.x), w.y);
+}
+
+// The variant as a signed byte over 128: -1 to 127/128, 0 for variant 0.
+fn cellShade(c: Cell) -> f32 {
+  let v = i32(cellVariant(c));
+  return f32(select(v, v - 256, v >= 128)) / 128.0;
+}
+
+// The cell's color with its grain: brighter or darker by the strength of its element times its shade, a little warmer
+// when brighter. A solid's strength varies slowly with its place (it never moves); variant 0 is the table color.
+fn grainColor(c: Cell, base: vec3f, cellPos: vec2f) -> vec3f {
+  let t = cellType(c);
+  var strength = displayProps[t].grain;
+  if (strength == 0.0) { return base; }
+  if (elState(t) == ST_SOLID) {
+    strength *= 1.0 + SOLID_NOISE * (2.0 * valueNoise(cellPos / NOISE_SPACING) - 1.0);
+  }
+  return base * (1.0 + strength * cellShade(c) * vec3f(1.15, 1.0, 0.85));
+}
+
+// The finished look computes in linear light and encodes at the end (the canvas is not an sRGB format). A table color
+// is a display value, so the round trip leaves it as it was.
+fn srgbToLinear(c: vec3f) -> vec3f {
+  let v = max(c, vec3f(0.0));
+  return select(pow((v + 0.055) / 1.055, vec3f(2.4)), v / 12.92, v <= vec3f(0.04045));
+}
+
+fn linearToSrgb(c: vec3f) -> vec3f {
+  let v = clamp(c, vec3f(0.0), vec3f(1.0));
+  return select(1.055 * pow(v, vec3f(1.0 / 2.4)) - 0.055, v * 12.92, v <= vec3f(0.0031308));
+}
+
+// Light above 1 turns white by how far over it is (after Khronos PBR Neutral, whose compression knee at 0.76 is left out:
+// it would change the table colors that reach 1, such as fire's red). Up to 1 it changes nothing.
+const DESATURATION: f32 = 0.5;
+fn toneMap(c: vec3f) -> vec3f {
+  let peak = max(c.r, max(c.g, c.b));
+  if (peak <= 1.0) { return c; }
+  let toWhite = 1.0 - 1.0 / (DESATURATION * (peak - 1.0) + 1.0);
+  return mix(c / peak, vec3f(1.0), toWhite);
+}
+`;
+
 // `graphics` maps a graphics name (`ElementDef.graphics`) to its WGSL color function.
 export const displayWGSL = (elements: readonly ElementDef[], graphics: Readonly<Record<string, string>>, air?: AirShape): string => {
   const styled = elements.filter((e) => e.graphics !== undefined);
@@ -107,6 +187,16 @@ struct DisplayUniforms {
   replacing: f32,
   heatView: f32,
   airView: f32,
+  // 1 for the cells look, 0 for the finished look.
+  cellsLook: f32,
+  wall: f32,
+  pad0: f32,
+  pad1: f32,
+};
+
+// The visual properties of the elements (src/display-table.ts), one row per element ID.
+struct DisplayProps {
+${DISPLAY_FIELDS.map((f) => `  ${f.name}: f32,`).join('\n')}
 };
 
 struct VertexOutput {
@@ -134,14 +224,12 @@ fn vs_main(@builtin(vertex_index) vertexIndex: u32) -> VertexOutput {
 }
 
 @group(0) @binding(0) var<uniform> u: DisplayUniforms;
+@group(0) @binding(2) var<uniform> displayProps: array<DisplayProps, ${MAX_ELEMENTS}>;
+${lookWGSL}
 ${airDisplayWGSL(air)}
 ${windMarkWGSL}
 // The kind word of the flyer in each cell, 0 where none flies (src/shaders/flyers.wgsl.ts, overlayWGSL).
 @group(3) @binding(0) var<storage, read> flyerKinds: array<u32>;
-
-fn ditherNoise(pos: vec2f) -> f32 {
-  return fract(sin(dot(pos, vec2f(12.9898, 78.233))) * 43758.5453);
-}
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4f {
@@ -166,10 +254,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {
   let heatView = u.heatView > 0.5 && !airView;
   let air = airCentersAt(simPos);
 
-  // Background gradient with dithering
-  let gy = in.position.y / u.screenResolution.y;
-  var color = mix(vec3f(0.06, 0.06, 0.08), vec3f(0.10, 0.10, 0.13), gy);
-  color += (ditherNoise(in.position.xy) - 0.5) / 128.0;
+  // The wall behind the field, dithered.
+  var color = wallColor(uv, in.position.xy);
   // In the heat view empty space shows the temperature of its air, dimmed so the cells that hold heat stand out.
   if (HAS_AIR && heatView && pType == EL_EMPTY) {
     color = heatColor(air.y) * 0.5;
@@ -187,6 +273,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {
         color *= 0.3;
       }
     } else {
+      // The views draw the cells without grain.
+      if (!airView) {
+        color = grainColor(cell, color, vec2f(f32(cellX), f32(cellY)));
+      }
       var hasGraphics = false;
       switch (pType) {
 ${styled.map((e) => `        case EL_${e.key}: { color = graphics_${e.graphics}(cell, color); hasGraphics = true; }`).join('\n')}
@@ -210,6 +300,13 @@ ${styled.map((e) => `        case EL_${e.key}: { color = graphics_${e.graphics}(
     let mark = windMark(uv * u.screenResolution);
     color = mix(color, vec3f(0.02), 0.85 * mark.y);
     color = mix(color, vec3f(0.97), mark.x);
+  }
+
+  // The finished look: the color in linear light, tone mapped, encoded again. The views take today's math as it is. A
+  // cell's own glow is clamped per channel first, as in the cells look, so a lone hot cell is drawn the same in both
+  // looks; only light added in linear light (the halo, M11.3) reaches the tone map above 1.
+  if (u.cellsLook < 0.5 && !heatView && !airView) {
+    color = linearToSrgb(toneMap(srgbToLinear(clamp(color, vec3f(0.0), vec3f(1.0)))));
   }
 
   // Brush cursor

@@ -8,7 +8,6 @@ Next ID: B15, D37, I29.
 
 - **B7** Touch devices cannot erase or change brush size (right click and wheel only), and `pointercancel` is not handled, so a cancelled touch can leave drawing stuck on. `src/input.ts:50-73`
 - **B8** Brush ring states (erase red, replace amber, draw white) differ by color only, which is unreadable with red-green colorblindness; add a second cue (dashed ring, icon, label). `src/shaders/display.wgsl.ts` `fs_main`
-- **B10** No per-grain color variation: `variant` is generated and stored, but the display shader ignores it (the WebGL version shaded sand, wall and water by variant until commit e6a38a9). `src/shaders/display.wgsl.ts` `fs_main`
 - **B11** Number keys ignore modifiers, so Ctrl+1 (browser tab switch) also selects a tool. `src/main.ts` keydown handler
 - **B14** A tall pour of lava can still leave a few stone cells hanging in mid-air: a cell that spreads sideways in the stream moves too slowly to skip the air exchange (`AIR.stillSpeed`), sets, and a solid never moves (4 stone cells above row 40 in AC28's 380-cell pour; a sparse column of them in a 700-cell pour, `tests/air-heat.test.ts`). A liquid that would set while unsupported could wait until it rests on something. `src/shaders/air.wgsl.ts` `airExchangeWGSL`, `src/shaders/ca.wgsl.ts` `transitionCell`
 

@@ -27,7 +27,7 @@ At this size, what acts on surfaces rivals weight: surface tension (water's capi
 | `life` of liquids | bits 2–31 (bits 0–1 hold the spread direction) | a dissolved amount (M8.4); age |
 | `life` of an element with a lifetime (fire) | the bits above the lifetime | none |
 | `kind` bits 24–31 | 8 bits after M8.1's `ctype` in bits 16–23; I22's research proposes them for an amount of matter | peak temperature; the supercooling bit |
-| `kind` bits 8–15 (`variant`) | random at paint time, read by no rule (B10) | the dye view; B10's per-grain shade |
+| `kind` bits 8–15 (`variant`) | random at paint time, read by no rule; the display draws it as the per-grain shade | the dye view, which would share its bits with the shade |
 
 `withType` (through which `retype` goes) writes the whole `kind` and `life` words, `withLife` the whole `life` word, and `cellLife` returns the whole word to its readers (`spreadRow`, the lifetimes, fire's color), so sharing them needs masked writes and reads. The `velocity` and `remainder` words of a solid are not free: the inert-block skip and the launch count rely on their being 0 (`AGENTS.md`, "Invariants").
 
@@ -165,7 +165,7 @@ Free, already in the data:
 
 Free, computed by the display:
 
-- **Dye view**: `variant` moves with its cell and no rule reads it (B10). A dye brush that writes only it, and a view that draws it, shows the convection rolls of a heated pot, the folds of an avalanche, where a dam break's water ends up. B10's per-grain shade and the dye can split its bits.
+- **Dye view**: `variant` moves with its cell and no rule reads it, and the display draws it as the per-grain shade. A dye brush that writes only it, and a view that draws it, shows the convection rolls of a heated pot, the folds of an avalanche, where a dam break's water ends up. The shade and the dye can split its bits.
 - **Speed view**: each cell colored by its speed (`velocity`). A liquid spreading sideways carries no velocity (its motion is in `life`), so the view shows falls and flights, not a liquid's sideways flow; flyers need their velocity in the overlay, as I17 needs their temperature.
 - **Heat flow arrows**: conductivity times the temperature difference to the neighbors, per tile, like the air view's wind arrows.
 - **Crack risk**: a solid's largest temperature difference to a neighbor over its thermal shock limit (M8.1k), or its air cell's pressure over its crush pressure: glass glows before it shatters.

@@ -1,6 +1,6 @@
 # M11 Rendering quick wins
 
-Status: running; M11.1 done, next open item M11.2 (looks, display table, grain, wall). Runs before M8.1, beside M8.9 (`docs/plans/m8.9-real-world-scenarios.md`): it touches only the drawing code, never a cell, a rule or a test of the simulation.
+Status: running; M11.1 and M11.2 done, next open item M11.3 (glow). Runs before M8.1, beside M8.9 (`docs/plans/m8.9-real-world-scenarios.md`): it touches only the drawing code, never a cell, a rule or a test of the simulation.
 
 ## Goal
 
@@ -94,10 +94,19 @@ Needs you: run `npm test` and `npm run bench` (with `nvidia-smi` showing no othe
 
 ### M11.2 Looks, display table, grain, wall
 
-- [ ] `src/look.ts`, `src/display-table.ts`, the `look` rows' defaults, the color path of both looks, grain, the wall, the C key and `?wall=`, the `showcase` scene; `tests/look.test.ts`, `tests/elements.test.ts` (validation of `look`), AC2 to AC6; backlog B10 deleted. Verify: lint, typecheck, `npm test`, build, bench (record the cost).
+- [x] `src/look.ts`, `src/display-table.ts`, the `look` rows' defaults, the color path of both looks, grain, the wall, the C key and `?wall=`, the `showcase` scene; `tests/look.test.ts`, `tests/elements.test.ts` (validation of `look`), AC2 to AC6; backlog B10 deleted. Verify: lint, typecheck, `npm test`, build, bench (record the cost).
+
+Done in the run (not ticked, checks left to the user): `src/look.ts` (`Look`, `LookSettings`, `LOOK`, `parseWall`), `src/display-table.ts` (`DISPLAY_FIELDS`, `packDisplay`, `DisplayTable`; a uniform of 256 rows of 8 words at binding 2 of the display's group 0), `ElementDef.look` with its validation, grain overrides on METAL (0.02) and GUNPOWDER (0.25), the wall, the grain and the finished look's linear-light path in `src/shaders/display.wgsl.ts`, `Display`'s last argument `{ air?, settings? }` and `DisplayOptions.look`, the C key, `?wall=` and the help line, the `showcase` scene (`SHOWCASE`), the bench's look loop (`look` column, `BENCH_LOOKS`), `tests/look.test.ts` (AC2 to AC5), `tests/elements.test.ts` (look validation, display table), `tests/scenes.test.ts` (AC6); backlog B10 deleted. Lint, typecheck and build pass; the GPU tests and the bench were not run (the GPU was busy with a game).
+
+Decided during the run: the finished look's tone map is the identity up to 1 per channel and turns light above 1 toward white (Khronos PBR Neutral's desaturation without its compression knee at 0.76), not Khronos with the knee. Why: FIRE and MOLTEN_METAL have a table channel of 1.0, which a knee at 0.76 would change, and AC3 needs every table color unchanged. Alternative: Khronos as written, with AC3 limited to colors under 0.76 in linear light. To change: edit `toneMap` in `src/shaders/display.wgsl.ts`. The finished look clamps the cell's own color, glow included, to 1 per channel before the conversion to linear light (fix round 1: a lone LAVA or MOLTEN_METAL cell was drawn whiter than in the cells look, which failed AC3 for every element). So the tone map acts only on light added in linear light, the halo from M11.3 on. Alternatives: narrow AC3 to cells without in-cell glow (changes what the criterion promises); drop the in-cell glow from the finished look. To change: the `clamp` in `fs_main`; M11.3 moves the cell's emission into the finished look and revisits it.
+Decided during the run: the solids' world-space noise scales the grain strength (by 1 plus or minus `solidNoise` 0.2) instead of adding to the color. Why: variant 0 must be the table color (AC4) and the existing tests render variant 0 cells at several places and compare them exactly (AC2). Alternative: an additive noise, which breaks both. To change: `grainColor` in `src/shaders/display.wgsl.ts`, `LOOK.solidNoise`.
+Decided during the run: the dither (interleaved gradient noise, plus or minus half a step) is added to the wall alone, not to every pixel as Design says ("dither last"). Why: the existing display tests compare filled cells of different columns exactly. Alternative: dither everything and loosen those tests. To change: move the term from `wallColor` to the end of `fs_main`.
+Decided during the run: the wall is `0.04 + 0.5 × wall^1.5` (a display value, tinted blue-grey) at the top center, times a light factor falling to 0.70 at the top corners and 0.45 at the bottom corners; the default 0.35 is 0.14 (about 36 of 255), 1 is 0.54 (a mid grey). Why: Design fixes only the ends ("0 near black, 1 mid-grey") and the default 0.35. Alternative: other curve and vignette. To change: `WALL_LEVEL`, `WALL_RANGE` in `src/look.ts` and `wallColor`.
+Decided during the run: grain overrides METAL `look.grain` 0.02 and GUNPOWDER 0.25 (the state defaults are 0.03 and 0.10). Why: AC4 asks for 3 to 12 steps on metal (a bright color) and at least 20 on gunpowder (a dark one, 62 of 255 in luminance, so 0.10 gives 12). Alternative: an additive grain for dark colors. To change: the two rows in `src/elements.ts`.
+Decided during the run: `look.opacity`, `look.absorption` and the emission scale are packed in the display table with their defaults but nothing reads them yet; WATER's and OIL's absorption values are written in M11.6, with the coverage pass and the depth march that use them. Alternative: write them now with nothing to show or test them. To change: add the rows' `look` in M11.6.
 
 Visible after: sand, gunpowder and stone show grains; a medium-dark wall behind the field; C switches looks (they differ only by the wall's effects from M11.3 on); `?scene=showcase`.
-Needs you: look at `?scene=showcase` at the default wall, `&wall=0` and `&wall=1` (at the end).
+Needs you: run `npm test` (the new `tests/look.test.ts` and the display, elements and scenes tests; none was run, the GPU was busy) and `npm run bench`, and record the finished and cells looks' `render:composite` cost under this item (at the end); look at `?scene=showcase` at the default wall, `&wall=0` and `&wall=1` (at the end).
 
 ### M11.3 Glow
 

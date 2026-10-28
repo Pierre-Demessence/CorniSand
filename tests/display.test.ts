@@ -20,7 +20,7 @@ interface RowOptions {
 // Renders a sim `WIDTH` columns wide, one pixel per cell, flyers included; 64 pixels are one 256-byte row, the alignment a copy needs.
 async function renderSim(sim: Simulation, height: number, heatView = false, airView = false): Promise<Uint8Array> {
   const dev = device!;
-  const display = new Display(dev, 'rgba8unorm', WIDTH, height, sim.fields, sim.elements, sim.flyers.overlay, sim.air);
+  const display = new Display(dev, 'rgba8unorm', WIDTH, height, sim.fields, sim.elements, sim.flyers.overlay, { air: sim.air });
   const target = dev.createTexture({
     size: [WIDTH, height],
     format: 'rgba8unorm',

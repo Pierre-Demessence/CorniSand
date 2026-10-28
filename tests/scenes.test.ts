@@ -3,7 +3,7 @@ import { CELL_FIELDS, tempView } from '../src/cell-fields';
 import { ELEMENT as T, ELEMENTS, elementByKey, elementTemperature } from '../src/elements';
 import { unpackHalf2 } from '../src/half';
 import {
-  BLAST, BLAST_CENTER, BLAST_MARK, EXPLOSION, explosion, findScene, HEAT_BARS, heatBars, ICE_LAVA, iceLava, MOLTEN_METAL, moltenMetal, packCell, PHYSICS, PHYSICS_ROOMS, physicsRooms, PLUME, plume, SCENES, STEAM_CEILING, steamCeiling, uTube,
+  BLAST, BLAST_CENTER, BLAST_MARK, EXPLOSION, explosion, findScene, HEAT_BARS, heatBars, ICE_LAVA, iceLava, MOLTEN_METAL, moltenMetal, packCell, PHYSICS, PHYSICS_ROOMS, physicsRooms, PLUME, plume, SCENES, SHOWCASE, STEAM_CEILING, steamCeiling, uTube,
   type PhysicsRoom,
 } from '../src/scenes';
 import { cell } from './gpu';
@@ -42,6 +42,8 @@ describe('scenes', () => {
         if (name === 'steamCeiling' && (fields.kind[i] & 0xff) === T.METAL) continue;
         // The hot plate is the one place `plume` does.
         if (name === 'plume' && (fields.kind[i] & 0xff) === T.METAL) continue;
+        // The hot bar and the hot plate are in `showcase`.
+        if (name === 'showcase' && (fields.kind[i] & 0xff) === T.METAL) continue;
         // In `physics` the hot plate and the freezing ceiling are, and so is the pond's water (at 10 °C).
         if (name === 'physics') {
           const type = fields.kind[i] & 0xff;
@@ -233,6 +235,33 @@ describe('scenes', () => {
     // About the area of the disc, less the part above the sand surface.
     expect(thrown).toBeGreaterThan(1500);
     expect(thrown).toBeLessThan(Math.PI * BLAST.radius ** 2);
+  });
+
+  it('M11 AC6: open the showcase scene with a sand pile, a water pool with oil on it, lava beside stone, a hot metal bar, a fire on gunpowder and smoke over a hot plate', () => {
+    expect(findScene('showcase')?.name).toBe('showcase');
+    const { fields, width, height } = SCENES.showcase();
+    expect([width, height]).toEqual([SHOWCASE.width, SHOWCASE.height]);
+    const temp = tempView(fields);
+    const at = (x: number, y: number): number => fields.kind[y * width + x] & 0xff;
+    const tempAt = (x: number, y: number): number => temp[y * width + x];
+    const { sand, pool, lava, bar, gunpowder, plate, smoke } = SHOWCASE;
+
+    expect(at(sand.x, WALL), 'sand pile').toBe(T.SAND);
+    expect(at(sand.x, WALL + sand.height), 'above the pile').toBe(T.EMPTY);
+    expect(at(pool.water.x0 + 5, pool.water.y1 - 1), 'water').toBe(T.WATER);
+    expect(at(pool.water.x0 + 5, pool.oil.y0), 'oil on the water').toBe(T.OIL);
+    expect(at(pool.walls[0].x0, WALL), 'the pool is walled').toBe(T.WALL);
+    expect(at(lava.pool.x1 - 1, lava.pool.y0), 'lava').toBe(T.LAVA);
+    expect(at(lava.stone.x0, lava.pool.y0), 'stone beside the lava').toBe(T.STONE);
+    expect(at(bar.x0, bar.y0), 'metal bar').toBe(T.METAL);
+    expect(tempAt(bar.x0, bar.y0), 'the bar is hot').toBe(bar.temp);
+    expect(at(gunpowder.x, WALL), 'gunpowder').toBe(T.GUNPOWDER);
+    expect(at(gunpowder.x, WALL + gunpowder.height), 'fire on the gunpowder tip').toBe(T.FIRE);
+    expect(at(gunpowder.x, WALL + gunpowder.height - 1), 'under the fire').toBe(T.GUNPOWDER);
+    expect(at(plate.x0, plate.y0), 'hot plate').toBe(T.METAL);
+    expect(tempAt(plate.x0, plate.y0), 'the plate is hot').toBe(plate.temp);
+    expect(at(smoke.x0, smoke.y0), 'smoke over the plate').toBe(T.SMOKE);
+    expect(smoke.y0, 'the smoke rests on the plate').toBe(plate.y1);
   });
 
   it('start the pile scene at rest', () => {

@@ -4,6 +4,8 @@ import {
   DEFAULT_DRAG, ELEMENT, ELEMENTS, MAX_ELEMENTS, PRESSURE_PER_TOUGHNESS, STATES, STONE_TOUGHNESS, crushPressure, elementByKey, elementConductivity, elementDrag, elementGravity, elementHeatCapacity, elementHoldsHeat, elementInert,
   elementTemperature, latentWidth, validateElements, type ElementDef,
 } from '../src/elements';
+import { DISPLAY_FIELDS, DISPLAY_ROW_BYTES, packDisplay } from '../src/display-table';
+import { LOOK, lookSettings, parseWall } from '../src/look';
 import { ABSOLUTE_ZERO, HEAT_TOOL_RATE, MAX_TEMP, NO_THRESHOLD, ROOM_TEMP, effectiveTemp } from '../src/heat';
 import { DEFAULT_GRAVITY } from '../src/physics';
 import { TOOLS, buttonAttributes, toolAttributes, toolbarEntries } from '../src/toolbar';
@@ -374,5 +376,72 @@ describe('M5.4c latent offsets', () => {
     // The same graph walked from another start: the offsets differ only by a constant per group.
     const reversed = latentOffsets([...ELEMENTS].reverse());
     expect(reversed.get(ELEMENT.STEAM)! - reversed.get(ELEMENT.ICE)!).toBeCloseTo(offset('STEAM') - offset('ICE'), 9);
+  });
+});
+
+describe('M11.2 look rows and the display table', () => {
+  const row = (extra: Partial<ElementDef>): ElementDef[] => [...ELEMENTS, { ...MUD, ...extra }];
+  const words = (elements: readonly ElementDef[], key: string): Record<string, number> => {
+    const packed = packDisplay(elements, LOOK);
+    const id = elementByKey(elements, key).id;
+    return Object.fromEntries(DISPLAY_FIELDS.map((f, i) => [f.name, packed[id * DISPLAY_FIELDS.length + i]]));
+  };
+
+  it('AC4: packs rows of a multiple of four words, 256 of them, zero for an unused ID', () => {
+    expect(DISPLAY_FIELDS.length % 4).toBe(0);
+    expect(DISPLAY_ROW_BYTES).toBe(DISPLAY_FIELDS.length * 4);
+    expect(packDisplay(ELEMENTS, LOOK)).toHaveLength(MAX_ELEMENTS * DISPLAY_FIELDS.length);
+    expect(Math.max(...Object.values(words(row({}), 'MUD')))).toBeGreaterThan(0);
+    const unused = packDisplay(ELEMENTS, LOOK).slice(250 * DISPLAY_FIELDS.length, 251 * DISPLAY_FIELDS.length);
+    expect([...unused].every((w) => w === 0)).toBe(true);
+  });
+
+  it('AC4: gives grain to powders and solids by default, none to liquids, gases and fire, and a row its own', () => {
+    const grain = (key: string): number => words(ELEMENTS, key).grain;
+    expect(grain('SAND')).toBeCloseTo(LOOK.grainPowder, 6);
+    expect(grain('STONE')).toBeCloseTo(LOOK.grainSolid, 6);
+    for (const key of ['WATER', 'OIL', 'LAVA', 'MOLTEN_METAL', 'SMOKE', 'STEAM', 'FIRE', 'EMPTY']) expect(grain(key), key).toBe(0);
+    // Dark gunpowder and bright metal override the state's default.
+    expect(grain('GUNPOWDER')).toBeGreaterThan(LOOK.grainPowder);
+    expect(grain('METAL')).toBeLessThan(LOOK.grainSolid);
+    expect(words(row({ look: { grain: 0.4 } }), 'MUD').grain).toBeCloseTo(0.4, 6);
+    expect(packDisplay(row({}), lookSettings({ grainPowder: 0.2 })).at(200 * DISPLAY_FIELDS.length)).toBeCloseTo(0.2, 6);
+  });
+
+  it('defaults the opacity by state and takes the absorption of a row', () => {
+    const opacity = (key: string): number => words(ELEMENTS, key).opacity;
+    for (const key of ['SAND', 'STONE', 'METAL', 'WALL', 'GUNPOWDER']) expect(opacity(key), key).toBe(1);
+    for (const key of ['WATER', 'OIL']) expect(opacity(key), key).toBeCloseTo(0.35, 6);
+    for (const key of ['SMOKE', 'STEAM', 'FIRE']) expect(opacity(key), key).toBe(0);
+    const deep = words(row({ state: 'liquid', look: { opacity: 0.9, absorption: [0.1, 0.2, 0.3] } }), 'MUD');
+    expect([deep.opacity, deep.absorbR, deep.absorbG, deep.absorbB].map((v) => Number(v.toFixed(3)))).toEqual([0.9, 0.1, 0.2, 0.3]);
+  });
+
+  it('rejects a look value outside 0..1, and an absorption on anything but a liquid', () => {
+    expect(() => validateElements(row({ look: { grain: 1.5 } }))).toThrow(/MUD.*look\.grain/);
+    expect(() => validateElements(row({ look: { grain: -0.1 } }))).toThrow(/MUD.*look\.grain/);
+    expect(() => validateElements(row({ look: { opacity: 2 } }))).toThrow(/MUD.*look\.opacity/);
+    expect(() => validateElements(row({ look: { opacity: Number.NaN } }))).toThrow(/MUD.*look\.opacity/);
+    expect(() => validateElements(row({ look: { absorption: [0.1, 0.1, 0.1] } }))).toThrow(/MUD.*absorption.*liquid/);
+    expect(() => validateElements(row({ look: { grain: 0, opacity: 1 } }))).not.toThrow();
+    const ink: ElementDef = { key: 'INK', id: 201, label: 'Ink', color: [0, 0, 0.1], state: 'liquid', density: 1000, toolbar: 51, look: { absorption: [0.5, 0.5, 1.2] } };
+    expect(() => validateElements([...ELEMENTS, ink])).toThrow(/INK.*absorption\[2\]/);
+    expect(() => validateElements([...ELEMENTS, { ...ink, look: { absorption: [0.5, 0.5, 0.2] } }])).not.toThrow();
+  });
+
+  it('keeps every row of the default table valid with its look', () => {
+    expect(() => validateElements(ELEMENTS)).not.toThrow();
+  });
+});
+
+describe('M11.2 look settings', () => {
+  it('AC5: keeps the wall setting in 0..1 and reads ?wall= only when it is a number in that range', () => {
+    expect(lookSettings().wall).toBe(LOOK.wall);
+    expect(lookSettings({ wall: 3 }).wall).toBe(1);
+    expect(lookSettings({ wall: -1 }).wall).toBe(0);
+    expect(parseWall('0')).toBe(0);
+    expect(parseWall('0.5')).toBe(0.5);
+    expect(parseWall('1')).toBe(1);
+    for (const bad of [null, '', ' ', 'dark', '1.5', '-0.1', 'NaN', 'Infinity']) expect(parseWall(bad), String(bad)).toBeUndefined();
   });
 });

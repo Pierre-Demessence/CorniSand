@@ -3,6 +3,7 @@ import { computeGrid, maxCellsForDevice, type Grid } from './grid';
 import { AIR_CELL_SIZES, AIR_LEGEND_PRESSURES, PRESSURE_RAMP } from './air';
 import { Simulation, type CellProbe } from './simulation';
 import { Display } from './display';
+import { parseWall, type Look } from './look';
 import { InputHandler, type Vec2 } from './input';
 import { ELEMENTS, type ElementDef } from './elements';
 import { findScene, type Scene } from './scenes';
@@ -44,6 +45,11 @@ async function main(): Promise<void> {
   const airSize = AIR_CELL_SIZES.find((size) => String(size) === airParam);
   if (airParam !== null && airSize === undefined) console.warn(`Unknown air size "${airParam}", use one of ${AIR_CELL_SIZES.join(', ')}.`);
 
+  // `?wall=<0..1>` sets the wall's brightness, from near black (only hot things shine) to a lit room.
+  const wallParam = new URLSearchParams(window.location.search).get('wall');
+  const wall = parseWall(wallParam);
+  if (wallParam !== null && wall === undefined) console.warn(`Unknown wall "${wallParam}", use a number from 0 to 1.`);
+
   // Sized once from the first device's limits (or the scene's size); a re-created device keeps the same grid.
   let grid: Grid | undefined;
   let state: GpuState | null = null;
@@ -62,7 +68,10 @@ async function main(): Promise<void> {
       simulation.load(pendingScene.fields);
       pendingScene = undefined;
     }
-    const display = new Display(gpu.device, gpu.format, grid.width, grid.height, simulation.fields, simulation.elements, simulation.flyers.overlay, simulation.air);
+    const display = new Display(gpu.device, gpu.format, grid.width, grid.height, simulation.fields, simulation.elements, simulation.flyers.overlay, {
+      air: simulation.air,
+      ...(wall !== undefined && { settings: { wall } }),
+    });
     return { gpu, simulation, display };
   }
 
@@ -186,6 +195,8 @@ async function main(): Promise<void> {
     airLegendLabels.appendChild(label);
   }
   let views: Views = { heat: false, air: false };
+  // The finished look is the default; C draws each cell as itself.
+  let look: Look = 'finished';
   function toggle(which: keyof Views): void {
     views = toggleView(views, which);
     heatViewButton.setAttribute('aria-pressed', String(views.heat));
@@ -200,6 +211,7 @@ async function main(): Promise<void> {
     if (!e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey) {
       if (e.key.toLowerCase() === 'h') toggle('heat');
       if (e.key.toLowerCase() === 'a') toggle('air');
+      if (e.key.toLowerCase() === 'c') look = look === 'finished' ? 'cells' : 'finished';
     }
     // Keys 1-9 pick the n-th element button.
     const button = toolButtons[Number(e.key) - 1] as HTMLButtonElement | undefined;
@@ -328,6 +340,7 @@ async function main(): Promise<void> {
       replacing,
       heatView: views.heat,
       airView: views.air,
+      look,
     });
     // The probe copies the cell under the pointer at the end of the frame's encoder; an earlier one still in flight skips this frame.
     let probed = false;

@@ -80,6 +80,18 @@ export interface ElementDef {
   graphics?: string;
   /** Order in the toolbar (lowest first; the n-th button is selected by number key n); absent: not paintable. */
   toolbar?: number;
+  /** How the finished look draws the element, read by the display alone (`src/display-table.ts`); each value defaults by state. */
+  look?: LookDef;
+}
+
+/** The display-only properties of a row (`ElementDef.look`). Every value is 0 to 1. */
+export interface LookDef {
+  /** Strength of the grain shading: the brightness change of the lightest and darkest variant, as a share of the color. Default by state (`LookSettings`): powders and solids only. */
+  grain?: number;
+  /** How much of the wall behind it the element hides: 1 for solids and powders, 0.35 for liquids, 0 for gases and fire. */
+  opacity?: number;
+  /** The share of each color channel (red, green, blue) a liquid absorbs per cell of depth; liquids only, default none. */
+  absorption?: readonly [number, number, number];
 }
 
 /**
@@ -352,6 +364,8 @@ export const ELEMENTS = [
     heatCapacity: 3.5,
    
     above: { temp: 1538, becomes: 'MOLTEN_METAL', latent: IRON_FUSION },
+    // A bright, smooth metal: a fainter grain than the solids' default (chosen so its luminance varies by 3 to 12 steps).
+    look: { grain: 0.02 },
     toolbar: 7,
   },
   // Granite-like stone: 2.5 W/m·K (granite 2 to 3.5) and 2.2 MJ/m³·K (0.82 kJ/kg·K at 2,700 kg/m³). Melts into lava at
@@ -468,6 +482,8 @@ export const ELEMENTS = [
     repose: 30,
    
     above: { temp: 427, becomes: 'FIRE', burst: GUNPOWDER_BURST },
+    // A dark powder: the same share of a dark color is too few steps to see, so its grain is stronger than the powders' default.
+    look: { grain: 0.25 },
     toolbar: 12,
   },
 ] as const satisfies readonly ElementDef[];
@@ -509,6 +525,7 @@ export function validateElements(elements: readonly ElementDef[]): void {
     if (!(elementTemperature(e) >= ABSOLUTE_ZERO && elementTemperature(e) <= MAX_TEMP)) {
       throw new Error(`element ${e.key}: temperature must be a number in ${ABSOLUTE_ZERO}..${MAX_TEMP}`);
     }
+    if (e.look !== undefined) validateLook(e, e.look);
     // Rule and graphics names become WGSL identifiers (`rule_<name>`).
     for (const name of [e.rule, e.graphics]) {
       if (name !== undefined && !/^[a-z][a-z0-9_]*$/.test(name)) throw new Error(`element ${e.key}: "${name}" must be lower snake case`);
@@ -537,6 +554,19 @@ export function validateElements(elements: readonly ElementDef[]): void {
   if (elements.some((e) => e.flammable) && !keys.has('FIRE')) throw new Error('a flammable element needs a FIRE element to become');
   if (keys.has('FIRE') && !elements.find((e) => e.key === 'FIRE')?.life) throw new Error('FIRE needs a life: that is what a burning cell starts with');
   validateTransitions(elements);
+}
+
+// The display-only values are shares from 0 to 1, and absorption belongs to a liquid.
+function validateLook(e: ElementDef, look: LookDef): void {
+  const share = (name: string, value: number): void => {
+    if (!(Number.isFinite(value) && value >= 0 && value <= 1)) throw new Error(`element ${e.key}: look.${name} must be a number in 0..1`);
+  };
+  if (look.grain !== undefined) share('grain', look.grain);
+  if (look.opacity !== undefined) share('opacity', look.opacity);
+  if (look.absorption !== undefined) {
+    if (e.state !== 'liquid') throw new Error(`element ${e.key}: look.absorption is only for a liquid`);
+    look.absorption.forEach((value, i) => share(`absorption[${i}]`, value));
+  }
 }
 
 // The density by temperature: knots on a liquid only, a reference temperature on a gas or empty space only, and a density

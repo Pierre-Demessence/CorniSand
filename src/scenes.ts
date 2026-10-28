@@ -479,6 +479,62 @@ export function physics(): Scene {
   return { name: 'physics', width, height, fields: canvas.fields, floorY: WALL, chambers: [] };
 }
 
+/**
+ * `showcase`: one of everything the finished look draws, side by side in a tank open at the top. Rectangles are
+ * [x0, x1) by [y0, y1); the heaps are triangles of a `base` width and a `height`, centered on `x`.
+ */
+export const SHOWCASE = {
+  width: 320,
+  height: 128,
+  sand: { x: 38, base: 56, height: 26 },
+  /** A walled pool of water with oil on top of it. */
+  pool: {
+    walls: [{ x0: 72, x1: 74 }, { x0: 120, x1: 122 }],
+    wallTop: WALL + 28,
+    water: { x0: 74, x1: 120, y0: WALL, y1: WALL + 14 },
+    oil: { x0: 74, x1: 120, y0: WALL + 14, y1: WALL + 18 },
+  },
+  /** Lava in a basin whose right side is a stone block. */
+  lava: {
+    wall: { x0: 128, x1: 130, y0: WALL, y1: WALL + 20 },
+    pool: { x0: 130, x1: 170, y0: WALL, y1: WALL + 10 },
+    stone: { x0: 170, x1: 190, y0: WALL, y1: WALL + 22 },
+  },
+  bar: { x0: 196, x1: 236, y0: WALL + 14, y1: WALL + 18, temp: 900 },
+  /** A heap of gunpowder with a lit cell on its tip. */
+  gunpowder: { x: 256, base: 28, height: 12 },
+  /** Smoke over a hot plate. */
+  plate: { x0: 280, x1: 312, y0: WALL, y1: WALL + 2, temp: 1000 },
+  smoke: { x0: 290, x1: 302, y0: WALL + 2, y1: WALL + 8 },
+};
+
+/** A sand pile, a pool of water with oil on it, a lava pool beside stone, a hot metal bar, a fire on gunpowder and a plume of smoke over a hot plate, 320x128. */
+export function showcase(): Scene {
+  const { width, height, sand, pool, lava, bar, gunpowder, plate, smoke } = SHOWCASE;
+  const canvas = tank(width, height);
+  const heap = (type: number, shape: { x: number; base: number; height: number }): void => {
+    for (let row = 0; row < shape.height; row++) {
+      const half = Math.round((shape.base / 2) * (1 - row / shape.height));
+      canvas.fill(type, shape.x - half, shape.x + half, WALL + row, WALL + row + 1);
+    }
+  };
+  heap(T.SAND, sand);
+  for (const w of pool.walls) canvas.fill(T.WALL, w.x0, w.x1, WALL, pool.wallTop);
+  canvas.fill(T.WATER, pool.water.x0, pool.water.x1, pool.water.y0, pool.water.y1);
+  canvas.fill(T.OIL, pool.oil.x0, pool.oil.x1, pool.oil.y0, pool.oil.y1);
+  canvas.fill(T.WALL, lava.wall.x0, lava.wall.x1, lava.wall.y0, lava.wall.y1);
+  canvas.fill(T.LAVA, lava.pool.x0, lava.pool.x1, lava.pool.y0, lava.pool.y1);
+  canvas.fill(T.STONE, lava.stone.x0, lava.stone.x1, lava.stone.y0, lava.stone.y1);
+  canvas.fill(T.METAL, bar.x0, bar.x1, bar.y0, bar.y1);
+  canvas.fillTemp(bar.temp, bar.x0, bar.x1, bar.y0, bar.y1);
+  heap(T.GUNPOWDER, gunpowder);
+  canvas.fire(gunpowder.x, WALL + gunpowder.height);
+  canvas.fill(T.METAL, plate.x0, plate.x1, plate.y0, plate.y1);
+  canvas.fillTemp(plate.temp, plate.x0, plate.x1, plate.y0, plate.y1);
+  canvas.fill(T.SMOKE, smoke.x0, smoke.x1, smoke.y0, smoke.y1);
+  return { name: 'showcase', width, height, fields: canvas.fields, floorY: WALL, chambers: [] };
+}
+
 export const SCENES: Record<string, () => Scene> = {
   uTube,
   basin,
@@ -495,6 +551,7 @@ export const SCENES: Record<string, () => Scene> = {
   plume,
   mound,
   physics,
+  showcase,
 };
 
 /** The scene registered under `name`; own keys only, so `?scene=constructor` does not match. */
