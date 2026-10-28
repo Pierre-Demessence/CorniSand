@@ -265,9 +265,12 @@ export const ELEMENTS = [
     above: { temp: 100, becomes: 'STEAM', latent: WATER_VAPORIZATION, burst: WATER_BURST },
     toolbar: 2,
   },
-  // A placeholder for every fire's smoke (backlog I16, M8.8f): a hot combustion gas, 0.04 W/m·K at a few hundred °C, with a
+  // Combustion gas, the smoke of every fire (backlog I16 keeps what burns and what it leaves). Air-like: the products of a
+  // flame (nitrogen, carbon dioxide, steam) weigh about what air does at the same temperature, 1.2 kg/m³ at 20 °C, so it
+  // rises only while it is hotter than the air around it (`densityAt`, the ideal-gas law) and spreads out once it has
+  // cooled to it. Painted at 150 °C, a warm plume leaving a flame. Heat values are placeholders: 0.04 W/m·K (hot gas) and a
   // capacity of 1.0 MJ/m³·K as a stand-in per cell (1.1 kJ/kg·K times the ~900 kg/m³ of the oil it mostly comes from).
-  { key: 'SMOKE', id: 4, label: 'Smoke', color: [0.72, 0.72, 0.74], state: 'gas', density: 0.6, conductivity: 0.04, heatCapacity: 1, toolbar: 5 },
+  { key: 'SMOKE', id: 4, label: 'Smoke', color: [0.72, 0.72, 0.74], state: 'gas', density: 1.2, temperature: 150, conductivity: 0.04, heatCapacity: 1, toolbar: 5 },
   // Oil: 0.14 W/m·K (mineral oil 0.13 to 0.15) and 1.7 MJ/m³·K (1.9 kJ/kg·K at 900 kg/m³). It expands by about 7e-4 per K
   // (mineral oil 6.4e-4 to 7.5e-4): 900 kg/m³ at 20 °C, 775 at 250. Catches fire at 250 °C, which is
   // a stand-in for the flash point of a lamp oil, and burns on its own from there (no latent heat: the fire rule heats the

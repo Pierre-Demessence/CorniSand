@@ -264,6 +264,8 @@ describe.skipIf(!device)('M6 ambient heat', () => {
       const { plate, width } = PLUME;
       const temp = tempView(scene.fields);
       for (let y = plate.y0; y < plate.y1; y++) for (let x = plate.x0; x < plate.x1; x++) temp[y * width + x] = plateTemp;
+      // The smoke at room temperature too: smoke is painted hot (150 °C), and hot cells would warm the air they sit in.
+      for (const s of PLUME.smoke) for (let y = s.y0; y < s.y1; y++) for (let x = s.x0; x < s.x1; x++) temp[y * width + x] = ROOM_TEMP;
       const sim = createSim(scene.width, scene.height, 3);
       sim.load(scene.fields);
       await runMany(sim, steps);

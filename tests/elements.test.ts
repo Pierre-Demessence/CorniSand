@@ -93,7 +93,7 @@ describe('element table', () => {
   });
 
   it('M5: starts fire at its flame temperature and everything else at room temperature, packed for the GPU', () => {
-    const painted: Record<string, number> = { FIRE: 1000, ICE: -20, STEAM: 110, LAVA: 1300, MOLTEN_METAL: 1600 };
+    const painted: Record<string, number> = { FIRE: 1000, SMOKE: 150, ICE: -20, STEAM: 110, LAVA: 1300, MOLTEN_METAL: 1600 };
     for (const e of ELEMENTS) expect(elementTemperature(e), e.key).toBe(painted[e.key] ?? ROOM_TEMP);
     expect(elementTemperature({ ...MUD, temperature: -20 })).toBe(-20);
     const floats = new Float32Array(packElements(ELEMENTS));

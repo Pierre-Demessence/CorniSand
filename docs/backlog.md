@@ -2,7 +2,7 @@
 
 IDs are stable: B = bug, D = tech debt, I = idea.
 
-Next ID: B15, D35, I26.
+Next ID: B15, D36, I26.
 
 ## Bugs
 
@@ -24,6 +24,7 @@ Next ID: B15, D35, I26.
 - **D32** (M7) The flyer passes that carry whole cells (launch scatter, flight, retry, both landings) bind three buffers of their own plus one per cell field: with five fields that is the default limit of 8 storage buffers per stage, which the game and the tests request and which some adapters do not exceed (the RTX 4080 offers 16). The CA is at the limit too with air (five fields, the launch counts, the air state and the burst buffer). A sixth field fails pipeline creation there. Keep `ctype` (the likely next field) in `kind`'s reserved bits, or bind fewer buffers in those passes (D31), before adding one. `src/flyers.ts`, `src/cell-fields.ts`
 - **D33** (M6) The air's speeds are not real-scale: a pressure wave moves one cell per dispatch (0.65 m/s on the physical scale, about 500× slower than sound), so blasts, wind and plumes are slowed; the air's buoyancy stays tuned. `src/air.ts`
 - **D34** (M8) Two different elements are ordered by their nominal densities whatever their temperatures (`canDisplace`, `canRiseThrough`); only the cells of one element use the density at their temperatures (`convect`). Checking both at the two temperatures slowed the CA by about 15%, and no pair of the table crosses over. A pair that does (M8.1's materials) needs the temperature-aware compare, made cheap. `src/shaders/ca.wgsl.ts`
+- **D35** (M8) Gases do not sort among themselves: a gas rises or sinks only against the air (empty space), fire or a liquid, so a heavy gas under a lighter one, or hot smoke under cooler smoke, stays where it is. A gas-gas swap by density (as `convect` does for liquids) would need the temperature-aware compare of D34. `src/shaders/ca.wgsl.ts` `buoyancy`
 - **D17** Page load stalls 2–4 s before the first frames run (seen in the browser at 1920×898 before the liquids moved to CA rules). In Node, creating the `Simulation` takes about 0.5–0.8 s the first time (compiling the pipelines; the CA's per-slot variables doubled its share) and 2–9 ms after (`npm run bench`), so profile the load in the browser again before optimizing; if it still stalls, create the pipelines with `createComputePipelineAsync` and show a loading state. `src/simulation.ts`
 
 ## Ideas

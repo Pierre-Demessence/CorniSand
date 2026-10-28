@@ -319,7 +319,10 @@ describe.skipIf(!device)('M6 air', () => {
       const kind = new Uint32Array(width * height);
       for (let i = 0; i < kind.length; i++) kind[i] = cell(kinds[rand() % kinds.length], rand() & 0xff);
       const sim = createSim(width, height, 8, { airCellSize: size });
-      loadScene(sim, kind);
+      // Every cell at room temperature: smoke is painted hot, and hot cells would warm the air.
+      const temp = new Uint32Array(kind.length);
+      new Float32Array(temp.buffer).fill(ROOM_TEMP);
+      sim.load({ kind, temp });
       const before = await sim.air.read();
 
       await runMany(sim, 60);

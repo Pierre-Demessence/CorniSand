@@ -119,6 +119,15 @@ fn airAround(x: f32, y: f32) -> AirAround {
   let py = y / AIR_S + 1.0;
   return AirAround(vec2f(sampleU(px, py), sampleV(px, py)), sampleGradient(px, py) / AIR_S);
 }
+
+// The temperature in degrees of the air cell over the grid point (x, y); room temperature beyond the array.
+const AIR_AMBIENT: f32 = ${wgslFloat(ROOM_TEMP)};
+fn airTempAt(x: f32, y: f32) -> f32 {
+  let a = i32(floor(x / AIR_S)) + 1;
+  let b = i32(floor(y / AIR_S)) + 1;
+  if (!inArray(a, b)) { return AIR_AMBIENT; }
+  return airState[airIndex(a, b)].w;
+}
 `;
 
 const prelude = (width: number, height: number, cellSize: number, substeps: number, nx: number, ny: number): string => /* wgsl */`

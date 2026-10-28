@@ -16,7 +16,7 @@ const SLOTS = [0, 1, 2, 3] as const;
 // block, so no two threads touch the same cell. Out-of-bounds reads are walls and out-of-bounds writes are skipped, so
 // blocks that stick out of the grid (offset 1, odd sizes) behave like blocks at a wall.
 //
-// The phases: gases rise, falling cells move by velocity, gases and liquids spread sideways, lifetimes, then the optional
+// The phases: gases rise or sink by their density against the air's, falling cells move by velocity, gases and liquids spread sideways, lifetimes, then the optional
 // rules. Ignition is decided between the lifetimes and the rules but applied after them, so a rule never sees a cell
 // that ignites in the same dispatch. Then the four cells of the block exchange heat pairwise, and last a cell whose
 // stored temperature has passed a threshold (and its latent heat) becomes the element beyond it. A cell faster than
@@ -136,6 +136,10 @@ ${slotVariables('blk', 'Cell', 'blkAt', 'setBlk')}
 ${slotVariables('moved', 'bool', 'movedAt', 'setMoved')}
 ${SLOTS.map((n) => `var<private> orig${n}: Cell;`).join('\n')}
 
+// The density of the air at the block being processed (kg/m³): the air cell's temperature when there is air, else room
+// temperature. What a gas of the block is lighter or heavier than.
+var<private> airDensity: f32;
+
 fn cellState(c: Cell) -> u32 { return elState(cellType(c)); }
 // A liquid's density follows its temperature and a gas's the ideal-gas law (\`elDensityAt\`); everything else has one density.
 fn cellDensity(c: Cell) -> f32 {
@@ -160,10 +164,11 @@ fn canDisplace(mover: Cell, dest: Cell) -> bool {
   return false;
 }
 
-// A gas rises into empty space, through fire, or through a liquid heavier than itself.
+// A gas rises into empty space when it is lighter than the air there, through fire, or through a liquid heavier than itself.
 fn canRiseThrough(mover: Cell, dest: Cell) -> bool {
   let s = cellState(dest);
-  if (s == ST_EMPTY || s == ST_PLASMA) { return true; }
+  if (s == ST_EMPTY) { return cellDensity(mover) < airDensity; }
+  if (s == ST_PLASMA) { return true; }
   return s == ST_LIQUID && elDensity(cellType(dest)) > elDensity(cellType(mover));
 }
 
@@ -331,6 +336,31 @@ fn convect(col: u32, r: u32) {
   if (t != cellType(blkAt(hi)) || !isLiquid(blkAt(lo)) || elDensityMode(t) != DENSITY_KNOTS) { return; }
   if (movedAt(lo) || movedAt(hi)) { return; }
   if (chance(r, convectionChance(cellDensity(blkAt(hi)), cellDensity(blkAt(lo))))) { swapSlots(lo, hi); }
+}
+
+// -- Gas buoyancy --
+
+// A gas cell moves up or down by its density against the air's, one column of the block at a time. Lighter than the air
+// it rises into the empty cell above, and heavier it sinks into the empty cell below, each with the chance of
+// \`convectionChance\` from the two densities: the larger the difference the faster, one cell per dispatch at the most, and
+// a gas at the air's temperature stays where it is. Through fire or a heavier liquid a gas rises at once. Only the block's
+// own cells are read; the air is read once for the block.
+fn buoyancy(col: u32, r: u32) {
+  let lo = col;
+  let hi = col + 2u;
+  if (isGas(blkAt(lo)) && canRiseThrough(blkAt(lo), blkAt(hi))) {
+    if (!isEmpty(blkAt(hi))) {
+      swapSlots(lo, hi);
+      return;
+    }
+    let p = convectionChance(airDensity, cellDensity(blkAt(lo)));
+    if (p >= 1.0 || chance(r, p)) { swapSlots(lo, hi); }
+    return;
+  }
+  if (isGas(blkAt(hi)) && isEmpty(blkAt(lo))) {
+    let p = convectionChance(cellDensity(blkAt(hi)), airDensity);
+    if (p >= 1.0 || chance(r, p)) { swapSlots(lo, hi); }
+  }
 }
 
 // -- Liquids --
@@ -510,14 +540,18 @@ fn main(
 ${loadBlock}
 
     var rnd = hash2(gid.x, gid.y, u.seed);
+    airDensity = elDensity(EL_EMPTY);
 ${air ? `    around = AirAround(vec2f(0.0), vec2f(0.0));
     if (movesWithAir(blk0) || movesWithAir(blk1) || movesWithAir(blk2) || movesWithAir(blk3)) {
       around = airAround(f32(ox) + 1.0, f32(oy) + 1.0);
+      if (isGas(blk0) || isGas(blk1) || isGas(blk2) || isGas(blk3)) {
+        airDensity = elDensityAt(EL_EMPTY, airTempAt(f32(ox) + 1.0, f32(oy) + 1.0));
+      }
     }
 ` : ''}
-    // Phase 0: Gases rise
-    if (isGas(blk0) && canRiseThrough(blk0, blk2)) { swapSlots(0u, 2u); }
-    if (isGas(blk1) && canRiseThrough(blk1, blk3)) { swapSlots(1u, 3u); }
+    // Phase 0: Gases rise or sink by their density against the air's; the words come from \`rnd\` without advancing it.
+    buoyancy(0u, pcg(rnd ^ 0x2545f491u));
+    buoyancy(1u, pcg(rnd ^ 0x4cf5ad43u));
 
     // Phase 1: Powders and liquids move by velocity, a heavier one through a lighter one. The bottom row goes first, so
     // a cell moving up finds the cell it leaves free; the column order is random.
