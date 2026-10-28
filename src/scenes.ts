@@ -391,6 +391,94 @@ export function mound(): Scene {
   return { name: 'mound', width, height, fields: canvas.fields, floorY: WALL, chambers: [] };
 }
 
+/**
+ * `physics`: a row of walled rooms, each showing one thing the M8.8 properties change; rectangles are [x0, x1) by
+ * [y0, y1) and the rooms are laid out left to right by `physicsRooms`. Every room is open at the top (the grid edge closes it).
+ */
+export const PHYSICS = {
+  height: 100,
+  /** The widths of the rooms, in the order of `PHYSICS_ROOMS`; a 2-cell wall stands between two rooms. */
+  widths: { pot: 48, damWater: 64, damOil: 64, damLava: 64, sand: 64, gunpowder: 64, fire: 48, pond: 48 },
+  /** Water 16 deep on an 8-row metal plate that starts at `temp` (a plate that thin holds enough heat to boil some of it). */
+  pot: { plate: 8, depth: 16, temp: 700 },
+  /** A column of liquid against the left wall of its room. */
+  dam: { width: 14, height: 40 },
+  /**
+   * A hopper of grains, centered in its room: wall slopes funnel them to an `outlet`-wide opening `outletY` rows over
+   * the floor, so they pour from a point and pile up under it. The hopper is `height` rows tall; its half-width grows
+   * by `slope` cells per row.
+   */
+  hopper: { outletY: 30, height: 20, outlet: 4, slope: 0.9 },
+  /** An oil pool with one lit fire cell on its surface, under a metal ceiling `ceilingY` rows over the pool. */
+  fire: { oil: 6, ceilingY: 24, ceiling: 4 },
+  /** Water at `temp` filling its room to a metal ceiling held at `ceilingTemp`. */
+  pond: { depth: 16, temp: 10, ceiling: 6, ceilingTemp: -50 },
+};
+
+export type PhysicsRoom = keyof typeof PHYSICS.widths;
+
+export const PHYSICS_ROOMS = Object.keys(PHYSICS.widths) as PhysicsRoom[];
+
+/** The columns [x0, x1) inside each room of the `physics` scene, and the scene's width. */
+export function physicsRooms(): { rooms: Record<PhysicsRoom, { x0: number; x1: number }>; width: number } {
+  let x = WALL;
+  const rooms = {} as Record<PhysicsRoom, { x0: number; x1: number }>;
+  for (const name of PHYSICS_ROOMS) {
+    rooms[name] = { x0: x, x1: x + PHYSICS.widths[name] };
+    x += PHYSICS.widths[name] + WALL;
+  }
+  return { rooms, width: x };
+}
+
+/**
+ * A lab of eight rooms, 100 cells tall: a pot of water on a hot plate (it boils and stirs itself), dam breaks of
+ * water, oil and lava (water runs, oil is a little slower, lava creeps), a hopper of sand and one of gunpowder
+ * pouring onto a pile each at its own angle, a pool of oil on fire under a metal ceiling, and a pond under a
+ * freezing ceiling (it freezes from the top).
+ */
+export function physics(): Scene {
+  const { height, pot, dam, hopper, fire, pond } = PHYSICS;
+  const { rooms, width } = physicsRooms();
+  const canvas = new Canvas(width, height);
+  canvas.fill(T.WALL, 0, width, 0, WALL);
+  canvas.fill(T.WALL, 0, WALL, 0, height);
+  for (const name of PHYSICS_ROOMS) canvas.fill(T.WALL, rooms[name].x1, rooms[name].x1 + WALL, 0, height);
+
+  const potRoom = rooms.pot;
+  canvas.fill(T.METAL, potRoom.x0, potRoom.x1, WALL, WALL + pot.plate);
+  canvas.fillTemp(pot.temp, potRoom.x0, potRoom.x1, WALL, WALL + pot.plate);
+  canvas.fill(T.WATER, potRoom.x0, potRoom.x1, WALL + pot.plate, WALL + pot.plate + pot.depth);
+
+  for (const [name, type] of [['damWater', T.WATER], ['damOil', T.OIL], ['damLava', T.LAVA]] as const) {
+    canvas.fill(type, rooms[name].x0, rooms[name].x0 + dam.width, WALL, WALL + dam.height);
+  }
+
+  for (const [name, type] of [['sand', T.SAND], ['gunpowder', T.GUNPOWDER]] as const) {
+    const room = rooms[name];
+    const center = (room.x0 + room.x1) >> 1;
+    canvas.fill(T.WALL, room.x0, room.x1, WALL + hopper.outletY, WALL + hopper.outletY + hopper.height);
+    for (let row = 0; row < hopper.height; row++) {
+      const half = hopper.outlet / 2 + Math.floor(row * hopper.slope);
+      const y = WALL + hopper.outletY + row;
+      canvas.fill(type, center - half, center + half, y, y + 1);
+    }
+  }
+
+  const fireRoom = rooms.fire;
+  canvas.fill(T.OIL, fireRoom.x0, fireRoom.x1, WALL, WALL + fire.oil);
+  canvas.fire((fireRoom.x0 + fireRoom.x1) >> 1, WALL + fire.oil);
+  canvas.fill(T.METAL, fireRoom.x0, fireRoom.x1, WALL + fire.oil + fire.ceilingY, WALL + fire.oil + fire.ceilingY + fire.ceiling);
+
+  const pondRoom = rooms.pond;
+  const pondTop = WALL + pond.depth;
+  canvas.fill(T.WATER, pondRoom.x0, pondRoom.x1, WALL, pondTop);
+  canvas.fillTemp(pond.temp, pondRoom.x0, pondRoom.x1, WALL, pondTop);
+  canvas.fill(T.METAL, pondRoom.x0, pondRoom.x1, pondTop, pondTop + pond.ceiling);
+  canvas.fillTemp(pond.ceilingTemp, pondRoom.x0, pondRoom.x1, pondTop, pondTop + pond.ceiling);
+
+  return { name: 'physics', width, height, fields: canvas.fields, floorY: WALL, chambers: [] };
+}
+
 export const SCENES: Record<string, () => Scene> = {
   uTube,
   basin,
@@ -406,6 +494,7 @@ export const SCENES: Record<string, () => Scene> = {
   explosion,
   plume,
   mound,
+  physics,
 };
 
 /** The scene registered under `name`; own keys only, so `?scene=constructor` does not match. */

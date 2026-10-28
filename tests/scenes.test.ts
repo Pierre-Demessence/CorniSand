@@ -3,10 +3,14 @@ import { CELL_FIELDS, tempView } from '../src/cell-fields';
 import { ELEMENT as T, ELEMENTS, elementByKey, elementTemperature } from '../src/elements';
 import { unpackHalf2 } from '../src/half';
 import {
-  BLAST, BLAST_CENTER, BLAST_MARK, EXPLOSION, explosion, findScene, HEAT_BARS, heatBars, ICE_LAVA, iceLava, MOLTEN_METAL, moltenMetal, packCell, PLUME, plume, SCENES, STEAM_CEILING, steamCeiling, uTube,
+  BLAST, BLAST_CENTER, BLAST_MARK, EXPLOSION, explosion, findScene, HEAT_BARS, heatBars, ICE_LAVA, iceLava, MOLTEN_METAL, moltenMetal, packCell, PHYSICS, PHYSICS_ROOMS, physicsRooms, PLUME, plume, SCENES, STEAM_CEILING, steamCeiling, uTube,
+  type PhysicsRoom,
 } from '../src/scenes';
 import { cell } from './gpu';
 import { chamberLevel, liquidVolume } from './metrics';
+
+// The scenes' wall thickness (`WALL` in `src/scenes.ts`).
+const WALL = 2;
 
 describe('scenes', () => {
   it('pack the kind word the same way as the shaders and the GPU test helper', () => {
@@ -28,15 +32,22 @@ describe('scenes', () => {
 
   it('M5 AC3: start every cell of every scene at its element temperature, except where a scene sets its own', () => {
     const temps = new Map(ELEMENTS.map((e) => [e.id as number, Math.fround(elementTemperature(e))]));
+    const { pond } = physicsRooms().rooms;
     for (const [name, build] of Object.entries(SCENES)) {
       if (name === 'heatBars') continue;
-      const { fields } = build();
+      const { fields, width } = build();
       const temp = tempView(fields);
       for (let i = 0; i < temp.length; i++) {
         // The cold ceiling is the one place `steamCeiling` sets its own temperatures.
         if (name === 'steamCeiling' && (fields.kind[i] & 0xff) === T.METAL) continue;
         // The hot plate is the one place `plume` does.
         if (name === 'plume' && (fields.kind[i] & 0xff) === T.METAL) continue;
+        // In `physics` the hot plate and the freezing ceiling are, and so is the pond's water (at 10 °C).
+        if (name === 'physics') {
+          const type = fields.kind[i] & 0xff;
+          const x = i % width;
+          if (type === T.METAL || (type === T.WATER && x >= pond.x0 && x < pond.x1)) continue;
+        }
         if (temp[i] !== temps.get(fields.kind[i] & 0xff)) {
           expect.fail(`${name}: cell ${i} (element ${fields.kind[i] & 0xff}) at ${temp[i]} °C`);
         }
@@ -144,6 +155,57 @@ describe('scenes', () => {
     expect([at(0, height - 1), at(width - 1, height - 1), at(width / 2, height - 1)], 'walls at the sides, open at the top').toEqual([T.WALL, T.WALL, T.EMPTY]);
     expect(at(width / 2, 0), 'a floor').toBe(T.WALL);
     for (const s of smoke) expect(at(s.x0, s.y0), 'smoke rests on the floor').toBe(T.SMOKE);
+  });
+
+  it('M8.8 AC17: lay out the physics scene as eight walled rooms side by side, every cell inside the grid', () => {
+    const { fields, width, height } = findScene('physics')!;
+    const { rooms, width: expected } = physicsRooms();
+    const { pot, dam, hopper, fire, pond } = PHYSICS;
+    expect([width, height]).toEqual([expected, PHYSICS.height]);
+    const temp = tempView(fields);
+    const at = (x: number, y: number): number => fields.kind[y * width + x] & 0xff;
+    const count = (name: PhysicsRoom, type: number): number => {
+      let n = 0;
+      for (let y = 0; y < height; y++) for (let x = rooms[name].x0; x < rooms[name].x1; x++) if (at(x, y) === type) n++;
+      return n;
+    };
+    const w = (name: PhysicsRoom): number => PHYSICS.widths[name];
+
+    // A wall floor, a wall at each side of the lab and between two rooms, up to the top.
+    expect(PHYSICS_ROOMS).toHaveLength(8);
+    for (let y = 0; y < height; y++) {
+      expect(at(0, y), `left wall at row ${y}`).toBe(T.WALL);
+      for (const name of PHYSICS_ROOMS) expect(at(rooms[name].x1, y), `wall after ${name} at row ${y}`).toBe(T.WALL);
+    }
+    expect(at(width - 1, height - 1), 'the right wall').toBe(T.WALL);
+
+    expect([count('pot', T.METAL), count('pot', T.WATER)]).toEqual([w('pot') * pot.plate, w('pot') * pot.depth]);
+    expect(temp[WALL * width + rooms.pot.x0], 'the plate').toBe(pot.temp);
+    for (const [name, type] of [['damWater', T.WATER], ['damOil', T.OIL], ['damLava', T.LAVA]] as const) {
+      expect(count(name, type), name).toBe(dam.width * dam.height);
+      expect([at(rooms[name].x0, WALL), at(rooms[name].x0 + dam.width, WALL)], `${name} against its left wall`).toEqual([type, T.EMPTY]);
+    }
+    for (const [name, type] of [['sand', T.SAND], ['gunpowder', T.GUNPOWDER]] as const) {
+      const row = (y: number): number => {
+        let n = 0;
+        for (let x = rooms[name].x0; x < rooms[name].x1; x++) if (at(x, y) === type) n++;
+        return n;
+      };
+      const outletY = WALL + hopper.outletY;
+      expect(row(outletY), `${name} at the outlet`).toBe(hopper.outlet);
+      expect(row(outletY + hopper.height - 1), `${name} at the top of the hopper`).toBeGreaterThan(30);
+      expect(count(name, type), name).toBeGreaterThan(300);
+      let below = 0;
+      for (let y = WALL; y < outletY; y++) below += row(y);
+      expect(below, `${name} under the outlet`).toBe(0);
+      expect(at((rooms[name].x0 + rooms[name].x1) >> 1, outletY - 1), 'open under the outlet').toBe(T.EMPTY);
+      expect(at(rooms[name].x0, outletY), 'the hopper wall').toBe(T.WALL);
+    }
+    expect([count('fire', T.OIL), count('fire', T.FIRE), count('fire', T.METAL)]).toEqual([w('fire') * fire.oil, 1, w('fire') * fire.ceiling]);
+    expect(count('pond', T.WATER)).toBe(w('pond') * pond.depth);
+    expect(count('pond', T.METAL)).toBe(w('pond') * pond.ceiling);
+    expect(temp[(WALL + pond.depth) * width + rooms.pond.x0], 'the pond ceiling').toBe(pond.ceilingTemp);
+    expect(temp[WALL * width + rooms.pond.x0], 'the pond water').toBe(pond.temp);
   });
 
   it('look scenes up by their registered name only', () => {
