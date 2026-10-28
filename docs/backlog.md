@@ -2,7 +2,7 @@
 
 IDs are stable: B = bug, D = tech debt, I = idea.
 
-Next ID: B15, D34, I26.
+Next ID: B15, D35, I26.
 
 ## Bugs
 
@@ -23,6 +23,7 @@ Next ID: B15, D34, I26.
 - **D31** Every pass binds every cell field, and the CA loads and stores all of them for each active block: with four fields, loading and storing them cost about 0.5 ms for four dispatches, and the fifth (temperature) added about a quarter to the CA's time (0.2 ms per 1x frame on the busy `mix75` and `full100` bench scenes), so each new field (`ctype`, `tmp`) adds its share to every pass. Heat's conduction and phase changes cost +0.52 ms on `mix75` and +0.40 on `full100` per 1x frame, inside their 1 ms share; levers if more is needed: to load `velocity` and `remainder` only for cells whose state falls and `temp` only for cells that hold heat (every path that writes a cell that holds no heat must then write 0 into the skipped words), and to skip a block whose heat is at rest (all temperatures equal and inside their thresholds). `CellFields.subset` and `cellBindingsWGSL(access, names)` bind a pass to a list of fields (binding = field index); the flyer flight and retry passes use them and bind `kind` only. The air's exchange pass binds the three fields it reads. The CA, the brush, the display, the launch scatter and the landings still bind every field: give them a subset when they read less than all of it. `src/cell-field-buffers.ts` `subset`, `src/shaders/cell.wgsl.ts` `cellBindingsWGSL`, `src/flyers.ts`
 - **D32** (M7) The flyer passes that carry whole cells (launch scatter, flight, retry, both landings) bind three buffers of their own plus one per cell field: with five fields that is the default limit of 8 storage buffers per stage, which the game and the tests request and which some adapters do not exceed (the RTX 4080 offers 16). The CA is at the limit too with air (five fields, the launch counts, the air state and the burst buffer). A sixth field fails pipeline creation there. Keep `ctype` (the likely next field) in `kind`'s reserved bits, or bind fewer buffers in those passes (D31), before adding one. `src/flyers.ts`, `src/cell-fields.ts`
 - **D33** (M6) The air's speeds are not real-scale: a pressure wave moves one cell per dispatch (0.65 m/s on the physical scale, about 500× slower than sound), so blasts, wind and plumes are slowed; the air's buoyancy stays tuned. `src/air.ts`
+- **D34** (M8) Two different elements are ordered by their nominal densities whatever their temperatures (`canDisplace`, `canRiseThrough`); only the cells of one element use the density at their temperatures (`convect`). Checking both at the two temperatures slowed the CA by about 15%, and no pair of the table crosses over. A pair that does (M8.1's materials) needs the temperature-aware compare, made cheap. `src/shaders/ca.wgsl.ts`
 - **D17** Page load stalls 2–4 s before the first frames run (seen in the browser at 1920×898 before the liquids moved to CA rules). In Node, creating the `Simulation` takes about 0.5–0.8 s the first time (compiling the pipelines; the CA's per-slot variables doubled its share) and 2–9 ms after (`npm run bench`), so profile the load in the browser again before optimizing; if it still stalls, create the pipelines with `createComputePipelineAsync` and show a loading state. `src/simulation.ts`
 
 ## Ideas

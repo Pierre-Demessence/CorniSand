@@ -19,7 +19,26 @@ ${PROP_FIELDS.map((f) => `  ${f.name}: ${f.wgslType},`).join('\n')}
 @group(2) @binding(0) var<uniform> elements: array<ElementProps, ${MAX_ELEMENTS}>;
 
 fn elColor(t: u32) -> vec3f { return vec3f(elements[t].colorR, elements[t].colorG, elements[t].colorB); }
+// The density that does not depend on the temperature: a powder's or a solid's, a liquid's nominal one.
 fn elDensity(t: u32) -> f32 { return elements[t].density; }
+const DENSITY_KNOTS: u32 = 1u;
+const DENSITY_GAS: u32 = 2u;
+fn elDensityMode(t: u32) -> u32 { return elements[t].densityMode; }
+// The density at a temperature in °C (\`densityAt\` in src/elements.ts): a liquid's knots interpolated linearly and flat beyond
+// the first and last (each knot mixes in by a factor clamped to [0, 1], as the heat ramps do; unused knots repeat the last
+// density), a gas's first knot scaled by the ideal-gas law, and the plain density for everything else.
+fn elDensityAt(t: u32, temp: f32) -> f32 {
+  let mode = elements[t].densityMode;
+  if (mode == DENSITY_GAS) {
+    return elements[t].densityKnot0 * (elements[t].densityTemp0 + 273.15) / max(temp + 273.15, 1.0);
+  }
+  if (mode != DENSITY_KNOTS) { return elements[t].density; }
+  var d = elements[t].densityKnot0;
+  d = mix(d, elements[t].densityKnot1, clamp((temp - elements[t].densityTemp0) / (elements[t].densityTemp1 - elements[t].densityTemp0), 0.0, 1.0));
+  d = mix(d, elements[t].densityKnot2, clamp((temp - elements[t].densityTemp1) / (elements[t].densityTemp2 - elements[t].densityTemp1), 0.0, 1.0));
+  d = mix(d, elements[t].densityKnot3, clamp((temp - elements[t].densityTemp2) / (elements[t].densityTemp3 - elements[t].densityTemp2), 0.0, 1.0));
+  return d;
+}
 fn elState(t: u32) -> u32 { return elements[t].state; }
 fn elFlammable(t: u32) -> bool { return elements[t].flammable != 0u; }
 fn elLifeStart(t: u32) -> u32 { return elements[t].lifeStart; }

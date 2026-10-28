@@ -29,3 +29,20 @@ export const PAIR_TIME = 2 * DISPATCH_TIME;
 
 /** Joules per cubic meter and kelvin in one unit of the table's heat capacity (MJ/m³·K); also joules per cubic meter in one unit of latent heat (MJ/m³). */
 export const HEAT_UNIT = 1e6;
+
+// Convection: two cells of one liquid, one above the other, swap places when the upper one is denser. A hot blob in a
+// real tank rises at about sqrt(g * beta * dT * L) (beta the thermal expansion, dT its excess over the rest, L the tank's
+// height), which grows as the square root of the relative density difference, so the swap chance does too. The gain is
+// tuned on tests/convection.test.ts so that a hot block of water in a tank rises at about that estimate (1 gave 0.4 of it,
+// 2 gives 1.0, 3 gave 1.9).
+/** The swap chance of a pair per dispatch is this times the square root of the relative density difference, at most 1. */
+export const CONVECTION_GAIN = 2;
+
+/**
+ * Chance per dispatch that the denser cell (`upper`, kg/m³) above a lighter one (`lower`) swaps places with it: 0 when
+ * the upper is not denser. Mirrors `convectionChance` in `src/shaders/ca.wgsl.ts`.
+ */
+export function convectionChance(upper: number, lower: number): number {
+  if (!(upper > lower)) return 0;
+  return Math.min(1, CONVECTION_GAIN * Math.sqrt((upper - lower) / lower));
+}

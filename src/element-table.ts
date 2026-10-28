@@ -1,6 +1,6 @@
 import {
-  MAX_ELEMENTS, STATES, crushPressure, elementByKey, elementConductivity, elementDrag, elementGravity, elementHeatCapacity, elementHoldsHeat, elementInert, elementTemperature,
-  latentWidth, transitionBurst, validateElements, type ElementDef,
+  MAX_ELEMENTS, STATES, crushPressure, densityMode, densityProfile, elementByKey, elementConductivity, elementDrag, elementGravity, elementHeatCapacity, elementHoldsHeat, elementInert,
+  elementTemperature, latentWidth, transitionBurst, validateElements, type ElementDef,
 } from './elements';
 import { NO_THRESHOLD } from './heat';
 
@@ -15,6 +15,8 @@ interface PropField {
   wgslType: 'u32' | 'f32';
   value: (e: ElementDef, elements: readonly ElementDef[]) => number;
 }
+
+const DENSITY_MODES = ['constant', 'knots', 'gas'] as const;
 
 export const PROP_FIELDS: readonly PropField[] = [
   { name: 'colorR', wgslType: 'f32', value: (e) => e.color[0] },
@@ -55,9 +57,13 @@ export const PROP_FIELDS: readonly PropField[] = [
   { name: 'aboveBurst', wgslType: 'f32', value: (e) => (e.above ? transitionBurst(e.above) : 0) },
   // The pressure above which the cell becomes the element in bits 16-23 of `transitions`; out of reach when absent.
   { name: 'pressureAbove', wgslType: 'f32', value: (e) => crushPressure(e) ?? NO_PRESSURE },
-  { name: 'pad1', wgslType: 'u32', value: () => 0 },
+  // How the density follows the temperature: 0 not at all, 1 by the knots below, 2 by the ideal-gas law from the first knot.
+  { name: 'densityMode', wgslType: 'u32', value: (e) => DENSITY_MODES.indexOf(densityMode(e)) },
+  // The four points of the density by temperature (`densityProfile`): temperatures, then densities.
+  ...[0, 1, 2, 3].map((i): PropField => ({ name: `densityTemp${i}`, wgslType: 'f32', value: (e) => densityProfile(e).temps[i] })),
+  ...[0, 1, 2, 3].map((i): PropField => ({ name: `densityKnot${i}`, wgslType: 'f32', value: (e) => densityProfile(e).densities[i] })),
   // Padding up to the next multiple of four words.
-  { name: 'pad2', wgslType: 'u32', value: () => 0 },
+  { name: 'pad1', wgslType: 'u32', value: () => 0 },
 ];
 
 const ROW_WORDS = PROP_FIELDS.length;

@@ -1,6 +1,7 @@
 import { AIR, type AirShape } from '../air';
 import type { ElementDef } from '../elements';
 import { launchGroups, movementWGSL, wgslFloat } from '../movement';
+import { CONVECTION_GAIN } from '../physics';
 import { NO_PRESSURE } from '../element-table';
 import { airReadWGSL } from './air.wgsl';
 import { cellWGSL } from './cell.wgsl';
@@ -136,7 +137,12 @@ ${slotVariables('moved', 'bool', 'movedAt', 'setMoved')}
 ${SLOTS.map((n) => `var<private> orig${n}: Cell;`).join('\n')}
 
 fn cellState(c: Cell) -> u32 { return elState(cellType(c)); }
-fn cellDensity(c: Cell) -> f32 { return elDensity(cellType(c)); }
+// A liquid's density follows its temperature and a gas's the ideal-gas law (\`elDensityAt\`); everything else has one density.
+fn cellDensity(c: Cell) -> f32 {
+  let t = cellType(c);
+  if (elDensityMode(t) == 0u) { return elDensity(t); }
+  return elDensityAt(t, cellTemp(c));
+}
 
 fn isEmpty(c: Cell) -> bool { return cellState(c) == ST_EMPTY; }
 fn isLiquid(c: Cell) -> bool { return cellState(c) == ST_LIQUID; }
@@ -144,11 +150,13 @@ fn isGas(c: Cell) -> bool { return cellState(c) == ST_GAS; }
 fn isFalling(c: Cell) -> bool { return cellState(c) == ST_POWDER || isLiquid(c); }
 
 // A falling cell moves into empty space, or into a gas or another falling cell that is lighter; never into a cell of
-// its own density, a solid or fire.
+// its own density, a solid or fire. Two elements are ordered by their nominal densities, whatever their temperatures
+// (checking the densities at the two temperatures slowed the CA by about 15%, and no pair of the table crosses over: oil
+// stays lighter than water at every temperature both can have); the cells of one element swap by their temperatures' densities in \`convect\` only.
 fn canDisplace(mover: Cell, dest: Cell) -> bool {
   let s = cellState(dest);
   if (s == ST_EMPTY) { return true; }
-  if (s == ST_GAS || s == ST_POWDER || s == ST_LIQUID) { return cellDensity(dest) < cellDensity(mover); }
+  if (s == ST_GAS || s == ST_POWDER || s == ST_LIQUID) { return elDensity(cellType(dest)) < elDensity(cellType(mover)); }
   return false;
 }
 
@@ -156,7 +164,7 @@ fn canDisplace(mover: Cell, dest: Cell) -> bool {
 fn canRiseThrough(mover: Cell, dest: Cell) -> bool {
   let s = cellState(dest);
   if (s == ST_EMPTY || s == ST_PLASMA) { return true; }
-  return s == ST_LIQUID && cellDensity(dest) > cellDensity(mover);
+  return s == ST_LIQUID && elDensity(cellType(dest)) > elDensity(cellType(mover));
 }
 
 fn inBounds(x: i32, y: i32) -> bool {
@@ -239,7 +247,7 @@ fn velocityRule(i: u32) {
   if (row == 1 || v.y != 0.0) { v.y -= elGravity(cellType(c)); }
 ${air ? `  // The air: the cell loses \`drag\` of its speed relative to it, and its pressure gradient pushes it, lighter matter harder.
   v += elDrag(cellType(c)) * (around.velocity - v);
-  v -= AIR_PUSH * around.gradient / cellDensity(c);
+  v -= AIR_PUSH * around.gradient / elDensity(cellType(c));
 ` : ''}  if (length(v) > MAX_FLYER_SPEED) { v *= MAX_FLYER_SPEED / length(v); }
   r += clamp(v, vec2f(-MAX_SPEED), vec2f(MAX_SPEED));
   let sx = stepOf(r.x);
@@ -298,6 +306,31 @@ ${air ? `  // The air: the cell loses \`drag\` of its speed relative to it, and 
   // A cell whose target lies outside the block waits a dispatch; this bounds what it banks meanwhile.
   r = clamp(r, vec2f(-2.0), vec2f(2.0));
   setBlk(at, withMotion(blkAt(at), v, r));
+}
+
+// Whether a random word falls below a probability.
+fn chance(r: u32, p: f32) -> bool { return f32(r >> 8u) * (1.0 / 16777216.0) < p; }
+
+// -- Convection --
+
+// \`CONVECTION_GAIN\` times the square root of the relative density difference, at most 1 (\`convectionChance\` in src/physics.ts).
+const CONVECTION_GAIN: f32 = ${wgslFloat(CONVECTION_GAIN)};
+fn convectionChance(upper: f32, lower: f32) -> f32 {
+  if (!(upper > lower)) { return 0.0; }
+  return min(1.0, CONVECTION_GAIN * sqrt((upper - lower) / lower));
+}
+
+// Two cells of one liquid with a density curve, one above the other in a column of the block, swap places with a chance
+// that grows with how much denser the upper one is: warm water rises through cold, and below 4 degrees cold water rises
+// through warmer. The cells keep their own temperatures, so the swap carries heat. Nothing else moves them: a body of one
+// liquid at one temperature has no difference and stays still. Only the block's own cells are read.
+fn convect(col: u32, r: u32) {
+  let lo = col;
+  let hi = col + 2u;
+  let t = cellType(blkAt(lo));
+  if (t != cellType(blkAt(hi)) || !isLiquid(blkAt(lo)) || elDensityMode(t) != DENSITY_KNOTS) { return; }
+  if (movedAt(lo) || movedAt(hi)) { return; }
+  if (chance(r, convectionChance(cellDensity(blkAt(hi)), cellDensity(blkAt(lo))))) { swapSlots(lo, hi); }
 }
 
 // -- Liquids --
@@ -425,9 +458,6 @@ ${pressures ? `  // Then the pressure against the cell: past the element's limit
 
 ${air ? `// -- Air drift --
 
-// Whether a random word falls below a probability.
-fn chance(r: u32, p: f32) -> bool { return f32(r >> 8u) * (1.0 / 16777216.0) < p; }
-
 // A gas or fire cell drifts one cell along each axis of the air's velocity, each axis with probability twice the speed
 // along it (certain from half a cell per dispatch), when the cell it drifts to is inside the block and empty. It keeps
 // no state: a gas that moves one way is as likely to move the other. In air at rest nothing moves. A cell that has
@@ -496,6 +526,10 @@ ${air ? `    around = AirAround(vec2f(0.0), vec2f(0.0));
     velocityRule(1u - first);
     velocityRule(2u + first);
     velocityRule(3u - first);
+
+    // Convection, part of phase 1: the words come from \`rnd\` without advancing it.
+    convect(0u, pcg(rnd ^ 0x7f4a7c15u));
+    convect(1u, pcg(rnd ^ 0x9e3779b9u));
 
     // Phase 2: Gas horizontal dispersion, top row
     if (pickRight(rnd)) {
