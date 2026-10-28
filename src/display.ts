@@ -33,7 +33,7 @@ export interface DisplayExtras {
   settings?: Partial<LookSettings>;
 }
 
-// Uniform: 17 f32 used, padded to 20 f32 = 80 bytes
+// Uniform: 19 f32 used, padded to 20 f32 = 80 bytes
 const UNIFORM_FLOATS = 20;
 const UNIFORM_SIZE = UNIFORM_FLOATS * 4;
 
@@ -93,6 +93,8 @@ export class Display {
         { binding: 5, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
         // The cloud of gas cells, read with the same sampler.
         { binding: 6, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+        // The cover grid, whose liquid fraction the depth of a liquid is summed from (read by texel, no sampler).
+        { binding: 7, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
         // The air state, when there is air: binding 1 of group 0, as the generated shader declares it.
         ...(air?.state ? [{ binding: 1, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' as const } }] : []),
       ],
@@ -121,6 +123,7 @@ export class Display {
         { binding: 4, resource: glowSampler },
         { binding: 5, resource: this.shadow.view },
         { binding: 6, resource: this.glow.gas },
+        { binding: 7, resource: this.glow.cover },
         ...(air?.state ? [{ binding: 1, resource: { buffer: air.state } }] : []),
       ],
     });
@@ -152,16 +155,19 @@ export class Display {
     d[14] = this.settings.glowStrength; // glow
     d[15] = this.settings.shadowDarkness; // shadow
     d[16] = this.settings.gasOpacity; // gas
+    d[17] = this.settings.liquidSurface; // surface
+    d[18] = this.settings.depthScale; // depthScale
 
     this.device.queue.writeBuffer(this.uniformBuffer, 0, this.uniformData);
 
-    // The halo, the shadows and the cloud of gas are only read by the finished look; the cells look and the views record the
-    // composite alone. The coverage pass serves all three, so it runs when any is on.
+    // The halo, the shadows, the cloud of gas and the depth of liquids are only read by the finished look; the cells look and
+    // the views record the composite alone. The coverage pass serves all four, so it runs when any is on.
     if (opts.look !== 'cells' && !opts.heatView && !opts.airView) {
       const glowing = this.settings.glowStrength > 0;
       const shadowed = this.settings.shadowDarkness > 0;
       const clouded = this.settings.gasOpacity > 0;
-      if (glowing || shadowed || clouded) this.glow.recordCoverage(encoder, timer);
+      const deepened = this.settings.depthScale > 0;
+      if (glowing || shadowed || clouded || deepened) this.glow.recordCoverage(encoder, timer);
       if (glowing) this.glow.recordChain(encoder, timer);
       if (shadowed) this.shadow.record(encoder, timer);
     }

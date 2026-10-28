@@ -13,7 +13,7 @@ export const EMISSION_CELLS = 2;
 /** Texel format of the gas texture: HDR, filterable and a storage texture. */
 export const GAS_FORMAT = 'rgba16float';
 
-/** Texel format of the cover texture (opacity in the red channel, the gas fraction in blue; the liquid fraction of M11.6 follows in green). */
+/** Texel format of the cover texture (opacity in the red channel, the liquid fraction in green, the gas fraction in blue). */
 export const COVER_FORMAT = 'rgba8unorm';
 
 /** Cells per cover texel, along each axis: one thread of the coverage pass writes one. */
@@ -24,7 +24,8 @@ export const COVER_CELLS = 4;
 // cell rows 2r and 2r + 1, so a texture coordinate is the cell's position over the grid's size. A flyer's cell is the
 // kind and temperature of the overlay (group 3, two words per cell: src/flyers.ts) over an empty cell. It also writes the
 // cover texture, one texel per 4x4 cells holding the mean opacity of their cells (`displayProps[...].opacity`, 0 beyond the
-// grid): what the shadow pass marches through. The gas fraction (the share of gas cells) goes in its blue channel, and the
+// grid): what the shadow pass marches through. The liquid fraction (the share of liquid cells) goes in its green channel,
+// which the display sums up a column for a liquid's depth, the gas fraction (the share of gas cells) in its blue channel, and the
 // gas texture, at the same resolution, holds the gas cells' color: the sum of their linear colors over the 16 cells in rgb
 // and their count over 16 in alpha, so a bilinear sample is the mean color of the gas around times its share.
 export const coverageWGSL = (elements: readonly ElementDef[], graphics: Readonly<Record<string, string>>, width: number, height: number): string => {
@@ -82,6 +83,12 @@ fn gasAt(x: u32, y: u32) -> vec4f {
   return vec4f(srgbToLinear(clamp(litColor(c, elColor(id)), vec3f(0.0), vec3f(1.0))), 1.0);
 }
 
+// 1 for a liquid cell, 0 for anything else.
+fn liquidAt(x: u32, y: u32) -> f32 {
+  if (x >= WIDTH || y >= HEIGHT) { return 0.0; }
+  return select(0.0, 1.0, elState(loadKind(y * WIDTH + x) & 0xffu) == ST_LIQUID);
+}
+
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) gid: vec3u) {
   let size = textureDimensions(emission);
@@ -103,15 +110,17 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let coverSize = textureDimensions(cover);
   if (gid.x < coverSize.x && gid.y < coverSize.y) {
     var opacity = 0.0;
+    var liquid = 0.0;
     var gas = vec4f(0.0);
     for (var b = 0u; b < ${COVER_CELLS}u; b++) {
       for (var a = 0u; a < ${COVER_CELLS}u; a++) {
         opacity += opacityAt(gid.x * ${COVER_CELLS}u + a, gid.y * ${COVER_CELLS}u + b);
+        liquid += liquidAt(gid.x * ${COVER_CELLS}u + a, gid.y * ${COVER_CELLS}u + b);
         gas += gasAt(gid.x * ${COVER_CELLS}u + a, gid.y * ${COVER_CELLS}u + b);
       }
     }
     gas /= ${COVER_CELLS * COVER_CELLS}.0;
-    textureStore(cover, gid.xy, vec4f(opacity / ${COVER_CELLS * COVER_CELLS}.0, 0.0, gas.a, 0.0));
+    textureStore(cover, gid.xy, vec4f(opacity / ${COVER_CELLS * COVER_CELLS}.0, liquid / ${COVER_CELLS * COVER_CELLS}.0, gas.a, 0.0));
     textureStore(gasCloud, gid.xy, gas);
   }
 }

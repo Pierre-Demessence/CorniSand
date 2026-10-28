@@ -1,6 +1,6 @@
 # M11 Rendering quick wins
 
-Status: running; M11.1 to M11.5 done, next open item M11.6 (liquid depth and surface). Runs before M8.1, beside M8.9 (`docs/plans/m8.9-real-world-scenarios.md`): it touches only the drawing code, never a cell, a rule or a test of the simulation.
+Status: running; M11.1 to M11.6 done, next open item M11.7 (air shimmer). Runs before M8.1, beside M8.9 (`docs/plans/m8.9-real-world-scenarios.md`): it touches only the drawing code, never a cell, a rule or a test of the simulation.
 
 ## Goal
 
@@ -154,10 +154,19 @@ Needs you: run `npm test` (the AC11 tests and the reworked AC3 in `tests/look.te
 
 ### M11.6 Liquid depth and surface
 
-- [ ] `cover`'s liquid fraction, WATER's and OIL's absorption, the surface and depth in the composite; AC12. Verify: lint, typecheck, `npm test`, build, bench.
+- [x] `cover`'s liquid fraction, WATER's and OIL's absorption, the surface and depth in the composite; AC12. Verify: lint, typecheck, `npm test`, build, bench.
+
+Done in the run (not ticked, checks left to the user): the coverage pass (`src/shaders/glow.wgsl.ts`) also writes the share of liquid cells into the green channel of `cover`; WATER's `look.absorption` (Pope and Fry 1997 at 650, 550 and 450 nm, per cell of `CELL_SIZE`), OIL's (estimated, opacity 0.9) and `look: { opacity: 1 }` on LAVA and MOLTEN_METAL (`src/elements.ts`); `LOOK.liquidSurface` (0.35) and `LOOK.depthScale` (40) and the constants `SURFACE_ROWS` (3) and `DEPTH_TEXELS` (32) in `src/look.ts`; the display binds the cover texture at binding 7 and two uniform words (`surface`, `depthScale`); `liquidColor`, `surfaceShare` and `liquidDepth` in `src/shaders/display.wgsl.ts`, called from the cell path for a liquid in the finished look; the coverage pass also runs when `depthScale` > 0; `docs/simulation.md` (Liquid depth and surface). Tests: `tests/look.test.ts` (AC12: the surface row against 8 cells below and its fade, luminance and red-to-blue ratio down the 128-cell pool, no line under a stone ceiling, oil against water, lava flat, the cells look flat and the finished look equal to it within a step with both settings at 0), `tests/glow.test.ts` (settings, shader text, the rows' values), `tests/elements.test.ts` (opacities). Lint, typecheck, build and the unit tests `tests/glow.test.ts` and `tests/elements.test.ts` pass; the GPU tests, the bench and every visual check were not run (the GPU was busy with a game).
+
+Decided during the run: `LOOK.depthScale` is 40, not Design's 20. Why: with real water absorption a 128-cell pool loses about 12 steps of luminance at 20 (estimated by hand, since no run was possible), which leaves AC12's 10 steps almost no margin; at 40 it loses about 21. Alternative: 20 and trust the estimate. To change: `LOOK.depthScale`.
+Decided during the run: the liquid is drawn at its full color from the surface down; the wall does not show through its top rows (Design's "how much wall shows through (opacity by row)" is not done). Why: the wall is darker than water, so a see-through top would make the luminance rise with depth over the first rows, and AC12 asks for the surface row to be brighter and the luminance not to rise below the top 4 rows. Alternative: a translucent band in rows 1 and 2. To change: `liquidColor` in `src/shaders/display.wgsl.ts`.
+Decided during the run: the surface line and the tint apply to a liquid whose row has an absorption (water, oil); lava and molten metal have none and are drawn flat, as Design's "opaque" asks and AC12's "lava SHALL not change with depth" needs. A liquid cell is on the surface only when a liquid cell lies below it, so a lone cell or a one-cell film has no line and AC3 keeps holding for water and oil. Alternative: a line on every liquid, and AC3 limited to non-liquids. To change: `surfaceShare` and the first test in `liquidColor`.
+Decided during the run: the surface line is `LOOK.liquidSurface` (0.35) of white mixed into the display color of the top 3 rows, at 1, 2/3 and 1/3 of that, untuned since no run was possible. Alternative: a brighter multiplier, or a sparkle. To change: `LOOK.liquidSurface`, `SURFACE_ROWS`.
+Decided during the run: the depth is the liquid fraction summed straight up the pixel's cover texel column (a break at the first texel with no liquid), not a march through the shadow's light direction, and `look.opacity` of water (0.35) only feeds the shadows. Alternative: read the opacity into the surface rows. To change: `liquidDepth`.
+Decided during the run: LAVA and MOLTEN_METAL get `look: { opacity: 1 }` (Design lists them as opaque), which makes them cast a stone-like shadow. Alternative: leave the liquid default 0.35. To change: the two rows.
 
 Visible after: water has a bright surface line and darkens to blue-green with depth; oil is dark.
-Needs you: nothing.
+Needs you: run `npm test` (the AC12 tests in `tests/look.test.ts`; none was run, the GPU was busy; a shader that fails to compile shows at the first `Display`) and `npm run bench`, and record the `render:coverage` and `render:composite` change under this item (at the end); look at a deep pool of water (`?scene=showcase`, or paint a tall column) and say whether the surface line and the blue-green depth are too faint or too strong at 0.35 and 40 (at the end).
 
 ### M11.7 Air shimmer
 

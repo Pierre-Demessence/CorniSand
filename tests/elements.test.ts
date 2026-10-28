@@ -411,7 +411,10 @@ describe('M11.2 look rows and the display table', () => {
   it('defaults the opacity by state and takes the absorption of a row', () => {
     const opacity = (key: string): number => words(ELEMENTS, key).opacity;
     for (const key of ['SAND', 'STONE', 'METAL', 'WALL', 'GUNPOWDER']) expect(opacity(key), key).toBe(1);
-    for (const key of ['WATER', 'OIL']) expect(opacity(key), key).toBeCloseTo(0.35, 6);
+    expect(opacity('WATER')).toBeCloseTo(0.35, 6);
+    // M11.6 sets the rows that differ from their state's default: oil is nearly opaque, lava and molten metal fully.
+    expect(opacity('OIL')).toBeCloseTo(0.9, 6);
+    for (const key of ['LAVA', 'MOLTEN_METAL']) expect(opacity(key), key).toBe(1);
     for (const key of ['SMOKE', 'STEAM', 'FIRE']) expect(opacity(key), key).toBe(0);
     const deep = words(row({ state: 'liquid', look: { opacity: 0.9, absorption: [0.1, 0.2, 0.3] } }), 'MUD');
     expect([deep.opacity, deep.absorbR, deep.absorbG, deep.absorbB].map((v) => Number(v.toFixed(3)))).toEqual([0.9, 0.1, 0.2, 0.3]);

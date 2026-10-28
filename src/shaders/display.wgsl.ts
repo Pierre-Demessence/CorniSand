@@ -1,7 +1,7 @@
 import { AIR, AIR_VIEW, PRESSURE_RAMP, type AirShape } from '../air';
 import type { ElementDef } from '../elements';
 import { ROOM_TEMP } from '../heat';
-import { LOOK, WALL_LEVEL, WALL_RANGE } from '../look';
+import { DEPTH_TEXELS, LOOK, SURFACE_ROWS, WALL_LEVEL, WALL_RANGE } from '../look';
 import { wgslFloat } from '../movement';
 import { COVER_CELLS } from './glow.wgsl';
 import { airSamplersWGSL } from './air.wgsl';
@@ -152,6 +152,59 @@ fn toneMap(c: vec3f) -> vec3f {
 }
 `;
 
+// The finished look's liquids (a liquid with an absorption: src/display-table.ts). The surface line: the top `SURFACE_ROWS`
+// rows of a liquid, counted up to the first cell that is not liquid, carry it when that cell is empty space, gas or fire (not
+// stone, sand or the world's edge) and a liquid cell lies below: a lone cell or a thin film has none. The depth: the liquid
+// fraction of the cover texels (src/glow.ts, green channel) summed up the column above the pixel, at most `DEPTH_TEXELS`
+// texels of 4 cells, the pixel's own texel counted down to the pixel; it never decreases from one row to the next.
+const liquidWGSL = /* wgsl */`
+const SURFACE_ROWS: u32 = ${SURFACE_ROWS}u;
+const DEPTH_TEXELS: i32 = ${DEPTH_TEXELS};
+
+fn surfaceShare(x: u32, y: u32, w: u32, h: u32) -> f32 {
+  if (y == 0u || elState(loadKind((y - 1u) * w + x) & 0xffu) != ST_LIQUID) { return 0.0; }
+  for (var j = 1u; j <= SURFACE_ROWS; j++) {
+    if (y + j >= h) { return 0.0; }
+    let state = elState(loadKind((y + j) * w + x) & 0xffu);
+    if (state == ST_LIQUID) { continue; }
+    if (state == ST_SOLID || state == ST_POWDER) { return 0.0; }
+    return 1.0 - f32(j - 1u) / f32(SURFACE_ROWS);
+  }
+  return 0.0;
+}
+
+// The depth of liquid above the pixel's cell, in cells.
+fn liquidDepth(x: u32, y: u32) -> f32 {
+  let rows = textureDimensions(coverTex).y;
+  let tx = i32(x) / ${COVER_CELLS};
+  let ty = i32(y) / ${COVER_CELLS};
+  let rowsAbove = ${COVER_CELLS - 1} - i32(y) % ${COVER_CELLS};
+  var depth = textureLoad(coverTex, vec2i(tx, ty), 0).g * (f32(rowsAbove) + 0.5) / ${COVER_CELLS}.0;
+  for (var k = 1; k <= DEPTH_TEXELS; k++) {
+    if (u32(ty + k) >= rows) { break; }
+    let fraction = textureLoad(coverTex, vec2i(tx, ty + k), 0).g;
+    if (fraction == 0.0) { break; }
+    depth += fraction;
+  }
+  return min(depth, f32(DEPTH_TEXELS)) * ${COVER_CELLS}.0;
+}
+
+// A liquid cell's color in the finished look: tinted by what it absorbs of the liquid above it, and brighter near the surface.
+fn liquidColor(type_: u32, base: vec3f, x: u32, y: u32, w: u32, h: u32) -> vec3f {
+  let props = displayProps[type_];
+  let absorption = vec3f(props.absorbR, props.absorbG, props.absorbB);
+  if (dot(absorption, vec3f(1.0)) <= 0.0) { return base; }
+  var color = base;
+  if (u.depthScale > 0.0) {
+    color = linearToSrgb(srgbToLinear(color) * exp(-absorption * (liquidDepth(x, y) * u.depthScale)));
+  }
+  if (u.surface > 0.0) {
+    color = mix(color, vec3f(1.0), u.surface * surfaceShare(x, y, w, h));
+  }
+  return color;
+}
+`;
+
 // `graphics` maps a graphics name (`ElementDef.graphics`) to its WGSL color function.
 export const displayWGSL = (elements: readonly ElementDef[], graphics: Readonly<Record<string, string>>, air?: AirShape): string => {
   const { styled, source: graphicsSource } = graphicsWGSL(elements, graphics);
@@ -183,6 +236,10 @@ struct DisplayUniforms {
   shadow: f32,
   // How much of the wall a full cloud of gas hides: 0 draws gas as cells.
   gas: f32,
+  // How much of white the surface line of a liquid mixes in: 0 draws none.
+  surface: f32,
+  // How much deeper than it is a liquid is tinted: 0 draws no tint.
+  depthScale: f32,
 };
 
 struct VertexOutput {
@@ -219,8 +276,11 @@ ${displayPropsWGSL}
 // The gas cells as a cloud (src/glow.ts): the mean linear color of the gas cells of each texel of the cover grid times their
 // share, and that share in alpha, world orientation.
 @group(0) @binding(6) var gasTex: texture_2d<f32>;
+// The cover grid (src/glow.ts): the opacity, the liquid fraction (green) and the gas fraction of each 4x4 cells, world orientation.
+@group(0) @binding(7) var coverTex: texture_2d<f32>;
 ${lightWGSL(styled)}
 ${lookWGSL}
+${liquidWGSL}
 ${airDisplayWGSL(air)}
 ${windMarkWGSL}
 // The flyer in each cell, two words: its kind word (0 where none flies) and its temperature's bits (src/shaders/flyers.wgsl.ts,
@@ -272,6 +332,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {
       // The views draw the cells without grain.
       if (!airView) {
         color = grainColor(cell, color, vec2f(f32(cellX), f32(cellY)));
+      }
+      if (u.cellsLook < 0.5 && !airView && elState(pType) == ST_LIQUID) {
+        color = liquidColor(pType, color, cellX, cellY, w, h);
       }
       color = litColor(cell, color);
     }

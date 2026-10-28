@@ -40,6 +40,18 @@ export interface LookSettings {
    * gas texture.
    */
   gasOpacity: number;
+  /**
+   * How much brighter the top rows of a liquid with an absorption are, 0 to 1: the surface row mixes this share of white
+   * into the liquid's color, the rows below it a third less each, `SURFACE_ROWS` in all. Only liquids with open space or gas
+   * above them and a liquid below have one. 0 draws none.
+   */
+  liquidSurface: number;
+  /**
+   * How much deeper the finished look draws a liquid than it is, 0 or more: the liquid's tint is its absorption per cell
+   * times the depth above it in cells times this. Real water absorbs so little that 128 cells (17 cm) would show almost
+   * nothing. 0 draws no tint and records no coverage pass for it.
+   */
+  depthScale: number;
   /** The direction toward the light on the screen, x to the right and y up: shadows fall the opposite way. Any non-zero vector. */
   lightDirection: readonly [number, number];
 }
@@ -54,8 +66,15 @@ export const LOOK: Readonly<LookSettings> = {
   shadowDarkness: 0.5,
   shadowLength: 24,
   gasOpacity: 0.8,
+  liquidSurface: 0.35,
+  depthScale: 40,
   lightDirection: [-1, 1],
 };
+
+/** Rows at the top of a liquid that carry the surface line (the first brightest, the last a third as bright). */
+export const SURFACE_ROWS = 3;
+/** Cover texels (4 cells each) of the column above a liquid pixel that its depth is summed over; a deeper liquid saturates. */
+export const DEPTH_TEXELS = 32;
 
 const MAX_GLOW_LEVELS = 6;
 const MAX_SHADOW_LENGTH = 64;
@@ -66,7 +85,7 @@ export const WALL_RANGE = 0.5;
 
 /**
  * The settings with the defaults applied, the wall's brightness, the glow strength and the shadow's darkness kept in 0..1,
- * the gas opacity in 0..1, the glow levels a whole number in 1..6, the shadow's length a whole number in 1..64 and the light's direction a unit
+ * the gas opacity and the liquid surface in 0..1, the depth scale 0 or more, the glow levels a whole number in 1..6, the shadow's length a whole number in 1..64 and the light's direction a unit
  * vector (the default when it is zero or not finite).
  */
 export function lookSettings(overrides: Partial<LookSettings> = {}): LookSettings {
@@ -78,6 +97,8 @@ export function lookSettings(overrides: Partial<LookSettings> = {}): LookSetting
     glowLevels: Math.min(MAX_GLOW_LEVELS, Math.max(1, Math.round(settings.glowLevels))),
     shadowDarkness: Math.min(1, Math.max(0, settings.shadowDarkness)),
     gasOpacity: Math.min(1, Math.max(0, settings.gasOpacity)),
+    liquidSurface: Math.min(1, Math.max(0, settings.liquidSurface)),
+    depthScale: Number.isFinite(settings.depthScale) ? Math.max(0, settings.depthScale) : LOOK.depthScale,
     shadowLength: Math.min(MAX_SHADOW_LENGTH, Math.max(1, Math.round(settings.shadowLength))),
     lightDirection: unitVector(settings.lightDirection) ?? unitVector(LOOK.lightDirection)!,
   };

@@ -1,5 +1,5 @@
 import { ABSOLUTE_ZERO, MAX_TEMP, ROOM_TEMP } from './heat';
-import { DEFAULT_GRAVITY, MAX_REPOSE, MIN_REPOSE, slideSpeed, spreadSpeed } from './physics';
+import { CELL_SIZE, DEFAULT_GRAVITY, MAX_REPOSE, MIN_REPOSE, slideSpeed, spreadSpeed } from './physics';
 
 // The element table: one row per material, the single source of the IDs, colors, movement class, density, lifetimes
 // and toolbar entries that the shaders, the brush, the display and the toolbar are generated from.
@@ -90,7 +90,11 @@ export interface LookDef {
   grain?: number;
   /** How much of the wall behind it the element hides: 1 for solids and powders, 0.35 for liquids, 0 for gases and fire. */
   opacity?: number;
-  /** The share of each color channel (red, green, blue) a liquid absorbs per cell of depth; liquids only, default none. */
+  /**
+   * The share of each color channel (red, green, blue) a liquid absorbs per cell of depth; liquids only, default none. A
+   * liquid with some is drawn in the finished look with a bright surface line and a tint that deepens with the depth above
+   * it; one without is drawn flat.
+   */
   absorption?: readonly [number, number, number];
 }
 
@@ -297,7 +301,10 @@ export const ELEMENTS = [
     conductivity: 0.6,
     heatCapacity: 4.18,
     viscosity: 0.001,
-   
+    // Its absorption of red, green and blue light (650, 550 and 450 nm) is Pope and Fry's (1997, pure water): 0.340, 0.0565 and
+    // 0.00922 per metre, per cell of CELL_SIZE. Real water tints a pool a metre deep and barely 17 cm (128 cells), so the
+    // finished look exaggerates the depth by `LOOK.depthScale`.
+    look: { absorption: [0.340 * CELL_SIZE, 0.0565 * CELL_SIZE, 0.00922 * CELL_SIZE] },
     below: { temp: 0, becomes: 'ICE', latent: WATER_FUSION },
     // The burst is a flash into steam pushing the air out; tuned in the M6.3c tests (tests/air-burst.test.ts): one cell
     // flashing barely stirs the air, a layer poured onto lava visibly pushes it.
@@ -327,7 +334,9 @@ export const ELEMENTS = [
     conductivity: 0.14,
     heatCapacity: 1.7,
     viscosity: 0.2,
-   
+    // Estimated, not read from a source: a brown oil absorbs blue most and red least, and is nearly opaque (it hides the wall
+    // behind it at 0.9, against water's 0.35).
+    look: { opacity: 0.9, absorption: [0.0001, 0.0002, 0.0004] },
     above: { temp: 250, becomes: 'FIRE' },
     toolbar: 3,
   },
@@ -440,7 +449,8 @@ export const ELEMENTS = [
     conductivity: 1,
     heatCapacity: 4,
     viscosity: 30,
-   
+    // Opaque: it hides the wall and casts a shadow like rock, and it shines on its own, so it takes no depth tint.
+    look: { opacity: 1 },
     below: { temp: 1200, becomes: 'STONE', latent: LAVA_LATENT },
     toolbar: 10,
   },
@@ -459,7 +469,7 @@ export const ELEMENTS = [
     conductivity: 35,
     heatCapacity: 5.7,
     viscosity: 0.006,
-   
+    look: { opacity: 1 },
     below: { temp: 1538, becomes: 'METAL', latent: IRON_FUSION },
   },
   // Black powder: grains of 1.7 to 1.82 g/cm³ (safety data sheets; 1,700 kg/m³ here, so it sinks through sand and water),

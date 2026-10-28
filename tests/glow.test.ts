@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ELEMENTS } from '../src/elements';
+import { ELEMENTS, type ElementDef } from '../src/elements';
 import { coverSize, glowLevelSizes } from '../src/glow';
 import { ABSOLUTE_ZERO, EMISSION_REFERENCE, GLOW_START, emissionShare } from '../src/heat';
 import { LOOK, lookSettings } from '../src/look';
@@ -126,7 +126,7 @@ describe('M11.5 soft gases', () => {
   it('the coverage pass writes the gas share into the cover texture and the gas cells\' color into the gas texture', () => {
     const wgsl = coverageWGSL(ELEMENTS, GRAPHICS, 64, 32);
     expect(wgsl).toContain('var gasCloud: texture_storage_2d<rgba16float, write>');
-    expect(wgsl).toContain('vec4f(opacity / 16.0, 0.0, gas.a, 0.0)');
+    expect(wgsl).toContain('vec4f(opacity / 16.0, liquid / 16.0, gas.a, 0.0)');
     expect(wgsl).toContain('textureStore(gasCloud, gid.xy, gas);');
   });
 
@@ -142,5 +142,47 @@ describe('M11.5 soft gases', () => {
     expect(displayWGSL(ELEMENTS, GRAPHICS)).toContain('color = litColor(cell, color);');
     expect(coverageWGSL(ELEMENTS, GRAPHICS, 64, 32)).toContain('litColor(c, elColor(id))');
     expect([...displayWGSL(ELEMENTS, GRAPHICS).matchAll(/var<storage/g)]).toHaveLength(6);
+  });
+});
+
+describe('M11.6 liquid depth and surface', () => {
+  it('keeps the surface in 0..1 and the depth scale at 0 or more', () => {
+    expect(lookSettings().liquidSurface).toBe(LOOK.liquidSurface);
+    expect(lookSettings({ liquidSurface: 3 }).liquidSurface).toBe(1);
+    expect(lookSettings({ liquidSurface: -1 }).liquidSurface).toBe(0);
+    expect(lookSettings().depthScale).toBe(LOOK.depthScale);
+    expect(lookSettings({ depthScale: -5 }).depthScale).toBe(0);
+    expect(lookSettings({ depthScale: Number.NaN }).depthScale).toBe(LOOK.depthScale);
+    expect(lookSettings({ depthScale: 7 }).depthScale).toBe(7);
+  });
+
+  it('the coverage pass counts the liquid cells into the green channel of the cover texture', () => {
+    const wgsl = coverageWGSL(ELEMENTS, GRAPHICS, 64, 32);
+    expect(wgsl).toContain('elState(loadKind(y * WIDTH + x) & 0xffu) == ST_LIQUID');
+    expect(wgsl).toContain('liquid += liquidAt(');
+  });
+
+  it('the composite tints and brightens liquids with an absorption in the finished look only, and reads four sampled textures', () => {
+    const wgsl = displayWGSL(ELEMENTS, GRAPHICS);
+    expect(wgsl).toContain('if (u.cellsLook < 0.5 && !airView && elState(pType) == ST_LIQUID) {');
+    expect(wgsl).toContain('color = liquidColor(pType, color, cellX, cellY, w, h);');
+    expect(wgsl).toContain('const SURFACE_ROWS: u32 = 3u;');
+    expect(wgsl).toContain('const DEPTH_TEXELS: i32 = 32;');
+    expect([...wgsl.matchAll(/texture_2d<f32>/g)]).toHaveLength(4);
+  });
+
+  it('water absorbs red first and blue least, and oil is estimated, darker and more opaque', () => {
+    const row = (key: string): ElementDef => (ELEMENTS as readonly ElementDef[]).find((e) => e.key === key)!;
+    const [r, g, b] = row('WATER').look!.absorption!;
+    expect(r).toBeGreaterThan(g);
+    expect(g).toBeGreaterThan(b);
+    expect(b).toBeGreaterThan(0);
+    expect(r / b).toBeCloseTo(0.340 / 0.00922, 6);
+    expect(row('OIL').look!.opacity).toBe(0.9);
+    // Lava and molten metal are opaque and take no tint or surface line.
+    for (const key of ['LAVA', 'MOLTEN_METAL']) {
+      expect(row(key).look?.opacity, key).toBe(1);
+      expect(row(key).look?.absorption, key).toBeUndefined();
+    }
   });
 });

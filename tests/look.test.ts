@@ -556,3 +556,74 @@ describe.skipIf(!device)('M11.5 soft gases', () => {
     expect(await render(dot, width, height, { look: 'cells', settings: { gasOpacity: 0.3 } })).toEqual(await render(dot, width, height, { look: 'cells' }));
   });
 });
+
+describe.skipIf(!device)('M11.6 liquid depth and surface', () => {
+  const width = 64;
+  const height = 160;
+  // A pool 128 cells deep under open air, aligned to the cover texels (4 cells); its top row is y = 135.
+  const pool: Block = { x: 16, y: 8, w: 32, h: 128, type: T.WATER, temp: ROOM_TEMP };
+  const top = pool.y + pool.h - 1;
+  const column = 32;
+
+  // The color of the pool's cell `below` rows under its top row, in the middle of the pool.
+  const at = (pixels: Uint8Array, below: number): number[] => pixelAt(pixels, width, column, height - 1 - (top - below));
+  const lumAt = (pixels: Uint8Array, below: number): number => luminanceOf(at(pixels, below));
+  const redToBlue = (pixels: Uint8Array, below: number): number => at(pixels, below)[0] / at(pixels, below)[2];
+  const poolOf = (type: number, temp = ROOM_TEMP): Simulation => blockSim(width, height, [{ ...pool, type, temp }]);
+
+  it('M11 AC12: the surface row is brighter than the row 8 cells below', async () => {
+    const pixels = await render(poolOf(T.WATER), width, height);
+    expect(lumAt(pixels, 0), 'the surface row against 8 cells below').toBeGreaterThan(lumAt(pixels, 8) + 10);
+    // The line fades over the top rows.
+    expect(lumAt(pixels, 0)).toBeGreaterThan(lumAt(pixels, 2));
+    expect(lumAt(pixels, 2)).toBeGreaterThan(lumAt(pixels, 4));
+  });
+
+  it('M11 AC12: below the top 4 rows the luminance and the red-to-blue ratio do not rise with depth and fall over the pool', async () => {
+    const pixels = await render(poolOf(T.WATER), width, height);
+    // Each channel only darkens with depth, so the luminance of the bytes never rises from one row to the next.
+    for (let below = 5; below < pool.h; below++) {
+      expect(lumAt(pixels, below), `row ${below} against ${below - 1}`).toBeLessThanOrEqual(lumAt(pixels, below - 1));
+    }
+    // A byte of rounding moves the ratio by about 0.02 in a row: sampled every 8 rows it is steady.
+    for (let below = 12; below < pool.h; below += 8) {
+      expect(redToBlue(pixels, below), `ratio at row ${below}`).toBeLessThanOrEqual(redToBlue(pixels, below - 8) + 0.01);
+    }
+    expect(lumAt(pixels, 4) - lumAt(pixels, pool.h - 1), 'luminance lost over the pool').toBeGreaterThanOrEqual(10);
+    expect(redToBlue(pixels, 4) - redToBlue(pixels, pool.h - 1), 'red lost against blue over the pool').toBeGreaterThan(0.1);
+  });
+
+  it('M11 AC12: water under a stone ceiling has no surface line', async () => {
+    const roofed = blockSim(width, height, [pool, { x: pool.x, y: pool.y + pool.h, w: pool.w, h: 8, type: T.STONE, temp: ROOM_TEMP }]);
+    const open = poolOf(T.WATER);
+    const withLine = await render(roofed, width, height);
+    const withoutLine = await render(roofed, width, height, { settings: { liquidSurface: 0 } });
+    for (let below = 0; below < pool.h; below++) expect(at(withLine, below), `row ${below}`).toEqual(at(withoutLine, below));
+    // The open pool does have one.
+    expect(at(await render(open, width, height), 0)).not.toEqual(at(await render(open, width, height, { settings: { liquidSurface: 0 } }), 0));
+  });
+
+  it('M11 AC12: oil is darker than water at the same depth', async () => {
+    const water = await render(poolOf(T.WATER), width, height);
+    const oil = await render(poolOf(T.OIL), width, height);
+    for (const below of [0, 8, 32, 64, pool.h - 1]) expect(lumAt(oil, below), `${below} rows down`).toBeLessThan(lumAt(water, below));
+  });
+
+  it('M11 AC12: lava does not change with depth', async () => {
+    const lava = ROWS.find((e) => e.key === 'LAVA')!;
+    const pixels = await render(poolOf(T.LAVA, lava.temperature), width, height);
+    for (let below = 1; below < pool.h; below++) expect(at(pixels, below), `row ${below}`).toEqual(at(pixels, 0));
+  });
+
+  it('M11 AC12: the cells look draws the pool flat, and with no surface and no depth the finished look does within a step', async () => {
+    const sim = poolOf(T.WATER);
+    const cells = await render(sim, width, height, { look: 'cells' });
+    for (let below = 1; below < pool.h; below++) expect(at(cells, below), `row ${below}`).toEqual(at(cells, 0));
+    const plain = await render(sim, width, height, { settings: { liquidSurface: 0, depthScale: 0 } });
+    for (let below = 0; below < pool.h; below++) {
+      at(plain, below).forEach((channel, c) => expect(Math.abs(channel - at(cells, below)[c]), `row ${below}, channel ${c}`).toBeLessThanOrEqual(1));
+    }
+    // The settings do not reach the cells look.
+    expect(await render(sim, width, height, { look: 'cells', settings: { liquidSurface: 0, depthScale: 0 } })).toEqual(cells);
+  });
+});
