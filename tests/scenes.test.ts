@@ -2,20 +2,26 @@ import { describe, expect, it } from 'vitest';
 import { CELL_FIELDS, tempView } from '../src/cell-fields';
 import { ELEMENT as T, ELEMENTS, elementByKey, elementTemperature } from '../src/elements';
 import { unpackHalf2 } from '../src/half';
+import { packCell, WALL } from '../src/scene-canvas';
+import { SCENARIO_SCENES } from '../src/scenarios';
 import {
-  BLAST, BLAST_CENTER, BLAST_MARK, EXPLOSION, explosion, findScene, HEAT_BARS, heatBars, ICE_LAVA, iceLava, MOLTEN_METAL, moltenMetal, packCell, PHYSICS, PHYSICS_ROOMS, physicsRooms, PLUME, plume, SCENES, STEAM_CEILING, steamCeiling, uTube,
+  BLAST, BLAST_CENTER, BLAST_MARK, EXPLOSION, explosion, findScene, HEAT_BARS, heatBars, ICE_LAVA, iceLava, MOLTEN_METAL, moltenMetal, PHYSICS, PHYSICS_ROOMS, physicsRooms, PLUME, plume, SCENES, STEAM_CEILING, steamCeiling, uTube,
   type PhysicsRoom,
 } from '../src/scenes';
-import { cell } from './gpu';
 import { chamberLevel, liquidVolume } from './metrics';
 
-// The scenes' wall thickness (`WALL` in `src/scenes.ts`).
-const WALL = 2;
-
 describe('scenes', () => {
-  it('pack the kind word the same way as the shaders and the GPU test helper', () => {
+  // `tests/gpu.ts` is not imported here: it creates a GPU device when it loads, and this file needs none.
+  it('pack the kind word the way the shaders do: the type in bits 0 to 7, the variant in bits 8 to 15', () => {
     for (const [type, variant] of [[T.SAND, 0], [T.WATER, 17], [T.FIRE, 255], [T.WALL, 1]]) {
-      expect(packCell(type, variant)).toBe(cell(type, variant));
+      expect(packCell(type, variant)).toBe(type + variant * 256);
+    }
+  });
+
+  it('M8.9 AC2: register the scenario scenes in SCENES and find them by name', () => {
+    for (const [name, build] of Object.entries(SCENARIO_SCENES)) {
+      expect(SCENES[name], name).toBe(build);
+      expect(findScene(name)?.name, name).toBe(name);
     }
   });
 
@@ -34,7 +40,8 @@ describe('scenes', () => {
     const temps = new Map(ELEMENTS.map((e) => [e.id as number, Math.fround(elementTemperature(e))]));
     const { pond } = physicsRooms().rooms;
     for (const [name, build] of Object.entries(SCENES)) {
-      if (name === 'heatBars') continue;
+      // The scenario scenes set their own temperatures (M8.9).
+      if (name === 'heatBars' || Object.hasOwn(SCENARIO_SCENES, name)) continue;
       const { fields, width } = build();
       const temp = tempView(fields);
       for (let i = 0; i < temp.length; i++) {
