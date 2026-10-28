@@ -153,7 +153,7 @@ const STONE_CRUSH = 0.45;
 
 // Conductivity and heat capacity are tuning grounded in physical ranks, not physical units: a cell is one unit of matter
 // whatever its state, so the capacity is per cell and the conductivity a share per exchange. Empty space holds no heat
-// until M6 gives it an air temperature. The latent heats are tuned too, not physical: a cell of steam with water's 2,257 J/g
+// itself: its temperature is its air cell's. The latent heats are tuned too, not physical: a cell of steam with water's 2,257 J/g
 // would heat a metal cell by hundreds of degrees as it condenses. Each row's `latent` is in heat capacity × °C, sized so a
 // cold plate condenses a whole layer of steam and a pool of molten metal sets on a floor.
 export const ELEMENTS = [

@@ -8,7 +8,7 @@ export interface AirShape {
   rows: number;
 }
 
-// Constants of the air (docs/plans/m6-air.md). Units: grid cells and dispatches (one Margolus pass), not air cells, so
+// Constants of the air (`git log --all -- docs/plans/m6-air.md`). Units: grid cells and dispatches (one Margolus pass), not air cells, so
 // the air cell size changes the detail of the air and not its speeds. Pressure is dimensionless, 0 is ambient (the
 // ghost air beyond the grid's edge is at 0). y = 0 is the bottom row, as for the cells.
 export const AIR = {
@@ -29,7 +29,7 @@ export const AIR = {
   diffusion: 0.02,
   // Share of the temperature difference that evens out when a cell that holds heat exchanges with its air: the pair
   // meets at the harmonic mean of this and the cell's own conductivity (`exchangeHeat`'s rule). Tuned in M6.4a against
-  // the cooling targets of docs/plans/m6-air.md.
+  // the cooling targets of the M6 plan (`git log --all -- docs/plans/m6-air.md`).
   conductivity: 0.5,
   // Heat per degree of the air over one grid cell, in the units of the elements' heat capacity (a cell is one unit of
   // matter, water 4.2): air's volumetric heat capacity is about 1/3,500 of water's, so about 0.0012. An air cell holds
@@ -44,7 +44,7 @@ export const AIR = {
   // Upward acceleration of the air per degree it is above room temperature, in cells per dispatch squared: hot air rises,
   // cold air sinks. Friction (`velocityLoss`) limits the speed hot air reaches to `buoyancy` x degrees / `velocityLoss`.
   // Tuned in M6.4a: small enough that the pressure the rising air builds does not push sand, large enough that a
-  // plume lifts smoke faster than it rises alone.
+  // plume draws smoke in toward its base (smoke already rises at the top speed, so it is not lifted faster).
   buoyancy: 0.000002,
   // Acceleration of powders and liquids by the pressure gradient, in (cells per dispatch squared) x density per unit of
   // pressure per cell: a cell of density d gains push x gradient / d each dispatch, so lighter matter is thrown harder.

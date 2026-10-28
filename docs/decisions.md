@@ -24,7 +24,7 @@ Rejected: per-cell rules where each cell picks a target (conflicts between threa
 
 Every cell carries a velocity, integrated inside the Margolus block at up to 1 cell per dispatch. A cell faster than `launchSpeed` (1.5 cells/dispatch) leaves the grid and flies as a free particle (a flyer) that walks the cells it crosses and lands back in the grid when it hits something or slows down. Slots, claims and landing order come from prefix sums and claim keys, so reruns are bit-identical. Measured on the RTX 4080 at 2560×1340 (M4.1, `git log --all -- docs/plans/m4-element-engine.md`): blast debris flies 237 cells against 37 when every cell stays in the grid, for 0.13 ms more per frame at rest and 0.06 ms more with 230k flyers; piles stand at the same 44°; no flyer failed to land.
 
-Consequence: a flyer is outside the grid while it flies, so anything that acts on grid cells (a blast, pressure, heat, reactions) misses it unless it also acts on the flyer list. Only the brush's erase and replace do; pressure and explosions are backlog I13. Heat and phase changes do not need to: a flyer carries its temperature with the rest of its cell, does not exchange heat or change phase in flight, and reacts once it lands, a few dozen supersteps later at most.
+Consequence: a flyer is outside the grid while it flies, so anything that acts on grid cells (a blast, pressure, heat, reactions) misses it unless it also acts on the flyer list. The air pushes a flyer in flight like a grid cell (the flight pass samples it), and only the brush's erase and replace otherwise reach one. Heat and phase changes do not need to reach it: a flyer carries its temperature with the rest of its cell, does not exchange heat or change phase in flight, and reacts once it lands, a few dozen supersteps later at most.
 
 Rejected:
 
@@ -50,6 +50,21 @@ Rejected: a separate stencil pass over the grid. Reading the four neighbors of e
 A cell's stored temperature may run past its element's threshold while the cell takes in or gives out the latent heat of the change; the temperature it conducts and shows is the stored one clamped to the thresholds, and the cell changes element only when the stored value has passed the threshold by the whole latent width (latent heat over heat capacity). The new element starts at the threshold plus the overshoot scaled by the two capacities, so a change creates and destroys no energy. Melting and boiling therefore take time, a surface between two phases does not flicker, and the total heat stays constant across every change (`docs/simulation.md`, "Phase changes").
 
 Rejected: instant transitions with a gap between the two thresholds (a hysteresis band): they flicker, or they create or destroy the energy of the change.
+
+## The air is its own coarse grid, linear, coupled by sampling and an owning gather
+
+Pressure, air velocity and air temperature live on a grid of their own, `airCellSize`² cells per air cell (default 4, TPT's), stepped by explicit passes after the flyers of each superstep. The CA reads it by sampling once per block (the air state is written only between dispatches, so the out-of-block read cannot race) and puts pressure into it with integer atomic adds in fixed point (sums commute, so reruns are bit-identical). Heat crosses between cells and air in a pass of its own where one thread owns an air cell and the cells that trade with it (a solid trades with its first open neighbor's air cell), so no two threads write one cell. The air is a linear wave (the velocity and pressure passes update in place); only the heat is carried with the flow. Measured: 0.14 to 0.30 ms per 1x frame at 4×4 at 2560×1340, about 0.8 ms at 2×2 and 17 ms at 1×1 (`docs/powder-toy.md`).
+
+Rejected:
+
+- A pressure solve (as the removed FLIP liquids had), or the air inside the CA: a solve is dispatch-heavy and the CA's in-block rule cannot carry a wave across blocks.
+- Advecting the velocity (semi-Lagrangian) while the pressure stays put: the split has no energy bound and ran away near the top speed (checkerboards, wind that never died, explosions that never settled). Advecting the pressure too needs the density term of compressible flow and a retune of every blast. The cost of the linear air is that a gust spreads as pressure and fades instead of coasting downwind.
+
+## Pressure pushes by its gradient over density; drag pulls toward the air's velocity
+
+A powder or liquid cell gains `drag · (air − v)` (a share of its speed relative to the air, as a flyer always lost) and, separately, `push · gradient / density`. One coupling could not do both jobs: a drag small enough to let sand fly far makes wind unable to throw it, and a drag strong enough to throw sand makes sand fall like snow, which is what advection-only coupling (TPT's) gives. The push is stronger on lighter matter, so a blast throws smoke and sand harder than stone.
+
+Rejected: advection-only coupling (above).
 
 ## One cell per CSS pixel, grid fixed at load
 

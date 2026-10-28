@@ -2,10 +2,6 @@
 
 Direction: everything The Powder Toy simulates, in the browser on the GPU, on a larger playing field, then what only a GPU can afford. The reasoning and the frame budget are in `docs/powder-toy.md`. Every milestone keeps the frame budget set there on the reference RTX 4080, measured by `npm run bench`, with every size and resolution a setting so M10 can scale it down (`docs/decisions.md`). IDs are stable.
 
-## M6 Air
-
-Pressure, wind and ambient heat on an air grid. Particles are pushed by wind and pressure, explosions create pressure, hot air rises, walls block the flow, and pressure thresholds change elements. A wind tool. Done when scene tests show an explosion's pressure front pushing powders outward, the wind tool carrying smoke across the grid, and a heater driving a rising plume.
-
 ## M7 Electricity and energy particles
 
 Sparks travel through conductors and power elements (heaters, switches, batteries), and photons, neutrons and electrons share cells with matter. Done when scene tests show a spark crossing a wire at a known speed, a powered heater warming water, and light reflected or absorbed by element.

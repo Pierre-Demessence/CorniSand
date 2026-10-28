@@ -9,7 +9,7 @@ import type { Simulation } from '../src/simulation';
 import { FRAME_SUPERSTEPS, airWords, cell, cellType, createSim, device, idleInput, mulberry32, readCells, run, runMany, countTypes } from './gpu';
 import { heatContent } from './metrics';
 
-// Measured with the constants in `AIR` (docs/plans/m6-air.md, "M6.4 results").
+// Measured with the constants in `AIR` (M6.4 results of the deleted plan, `git log --all -- docs/plans/m6-air.md`).
 const MEASURED = {
   // Degrees the air just above a 1,000 °C metal block is warmer than the air at the box's side, after 1,200 supersteps.
   aboveWarmer: 466,

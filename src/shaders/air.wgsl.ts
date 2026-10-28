@@ -5,7 +5,7 @@ import { wgslFloat } from '../movement';
 import { cellBindingsWGSL, cellTypesWGSL } from './cell.wgsl';
 import { elementsWGSL } from './elements.wgsl';
 
-// The air passes (docs/plans/m6-air.md, "The air grid"). The air is a staggered grid of `S x S` cells: per air cell, one
+// The air passes (`docs/simulation.md`, "Air"). The air is a staggered grid of `S x S` cells: per air cell, one
 // vec4f holds the speed of the air through its right face (x) and its top face (y), its pressure at the center (z) and
 // its temperature in degrees (w).
 //

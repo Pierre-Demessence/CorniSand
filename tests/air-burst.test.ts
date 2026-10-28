@@ -330,7 +330,7 @@ describe.skipIf(!device)('M6 bursts', () => {
     }, 60_000);
   });
   describe('AC27: the mound', () => {
-    // The gate's setup (docs/plans/m6-air.md, M6.6f): a gunpowder mound under a sand shell, heated with the Heat tool at
+    // The gate's setup (M6.6f of the deleted plan, `git log --all -- docs/plans/m6-air.md`): a gunpowder mound under a sand shell, heated with the Heat tool at
     // its left foot until the first cells ignite, then 3,000 supersteps (12.5 s at 1x) with the pointer released, recorded
     // every 60.
     const WINDOW = 60;

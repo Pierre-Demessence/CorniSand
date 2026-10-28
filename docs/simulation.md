@@ -6,7 +6,7 @@ How a frame turns into particle movement. Code: `src/simulation.ts`, `src/elemen
 
 Each animation frame runs `stepsPerFrame` supersteps (1, 2, 4, 8, 16, 24 or 32; the speed labelled "1x" is 4), then one render pass. All of it is recorded into one command encoder and sent with one `submit()` (`main.ts`). A frame is:
 
-1. **Brush**: while a mouse button is down, the brush pass, one thread per cell (each thread touches only its own cell). Then the air's mask pass (see Air).
+1. **Brush**: while a mouse button is down, the brush pass, one thread per cell (each thread touches only its own cell). Then the air's passes that run once a frame: the mask pass, the heat exchange, and the Wind tool's pass when the pointer moved while it is selected (see Air).
 2. **Supersteps**: `stepsPerFrame` of them, each two CA dispatches with Margolus offset 0, then 1, then the flyer passes (see Flyers), then the air steps (see Air). The dispatches update the cell buffers in place. The brush, every CA dispatch and the flyer passes share one compute pass, handed out by `PassRecorder` (`src/passes.ts`); the bench gives each group of dispatches a timed pass of its own instead.
 3. **Overlay and render**: the flyers are scattered into the overlay buffer, then the cell buffers and the overlay are drawn with the brush ring.
 
@@ -125,7 +125,7 @@ Scenes (`?scene=`): `iceLava` (a 10×10 ice block against a 30×8 lava pool: the
 
 ### Heat and the air
 
-Intuition: empty space is air, and air has a temperature. A hot block warms the air touching it, that air rises and carries the warmth up and away, and cooler air flows in beside it, so the block cools down in the open and a fire, a pool of lava or a hot plate sends up a plume of hot air that lifts smoke. Steam in open air gives its heat to the air and turns back into water. The warmth leaves through the edge of the world, where the air is always at room temperature; inside a box sealed by walls nothing leaves, and the total heat stays put.
+Intuition: empty space is air, and air has a temperature. A hot block warms the air touching it, that air rises and carries the warmth up and away, and cooler air flows in beside it, so the block cools down in the open and a fire, a pool of lava or a hot plate sends up a plume of hot air that draws smoke in toward its base. Steam in open air gives its heat to the air and turns back into water. The warmth leaves through the edge of the world, where the air is always at room temperature; inside a box sealed by walls nothing leaves, and the total heat stays put.
 
 The pieces, all in the air step (`src/shaders/air.wgsl.ts`, constants in `AIR`):
 
@@ -171,19 +171,25 @@ Every slot comes from a prefix sum in a fixed order and every conflict from the 
 
 Painting writes the selected element into empty cells within the brush radius of the segment from the previous frame's pointer position to the current one (or into any non-wall cell when Shift is held); erasing empties every cell in range. The pass runs once per frame before the CA steps, so no block ever sees a half-painted state. The radius is in cells, whatever the grid scale. The painted variant comes from the cell coordinates and a per-frame seed, the painted life from the element's `life.start` (0 without one), and the painted temperature from the element's `temperature`; a replaced cell's temperature goes with the rest of it.
 
-### Heat and Cool tools
+### Heat, Cool and Wind tools
 
 With the Heat or Cool tool selected, the same brush stroke adds or takes `HEAT_TOOL_RATE` (17 °C, about 1,000 °C a second) per frame from the stored temperature of every cell that holds heat inside it, kept within −273.15 to 9,999 °C (`SimulationInput.heating`, word 9 of the brush uniform). Empty cells, walls and flyers are untouched; the right button still erases. A cell pushed past a threshold changes element on the next dispatch: it holds heat, so its block is never skipped.
 
+The Wind tool (`SimulationInput.wind`, `AirGrid.recordWind`) paints nothing and has its own compute pass, recorded once per frame after the mask pass and before the CA. A stroke of `d` grid cells over a frame of `n` dispatches sets a target air speed along the stroke of `AIR.windToolGain · d / n` (0.5; capped at `maxSpeed`), and each face whose center is within the brush radius (at least one air cell) of the stroke closes `AIR.windToolBlend` (half) of the gap to it, except a closed face, which stays at 0. A faster drag blows harder (at 1x, 8 dispatches a frame, 10 cells a frame gives about 0.6 cells per dispatch and the cap is reached at 32); a pointer that did not move records no pass and leaves the air untouched, bit for bit; the right button still erases. Example (`tests/air-wind.test.ts`): 8 frames of 10 cells dragged rightward through a smoke cloud of radius 40 move its centroid 27 cells right, against 0.06 with no stroke. A gust is not carried by the air once the stroke ends: it spreads as pressure and fades, and 800 supersteps after a stroke swung left and right at the top speed every face speed is under 0.02 cells per dispatch and every |pressure| under 0.01, at s = 4 and 2, over empty space and over a sand floor.
+
 ## Seeing heat
 
-Three views of the same `temp` words (`src/heat.ts`, `src/shaders/heat.wgsl.ts`, `src/shaders/display.wgsl.ts`):
+Three views of the same `temp` words (`src/heat.ts`, `src/shaders/heat.wgsl.ts`, `src/shaders/display.wgsl.ts`), and a fourth of the air (see Seeing the air):
 
 - **Glow** (normal view): a cell that holds heat and is hotter than 525 °C adds a glow color to its own, dull red at 525 °C, orange at 1,000 °C, yellow-white from 1,600 °C, at a weight that grows to full at 2,000 °C. Adding never darkens a light base color. An element with its own `graphics` function (fire) draws itself and gets no glow.
-- **Heat view** (the "Heat view" button, or H; Ctrl, Meta and Alt ignore it): each cell that holds heat is drawn in the color of its temperature (`cellTemp`) from `HEAT_RAMP`, empty space in the background and walls at 30% of their color. Brightness rises with temperature at every step of the ramp, from dark blue at −50 °C through purple (20 °C), red (300 °C), orange (800 °C) and yellow (1,500 °C) to near white at 2,000 °C, so the temperature order never depends on hue alone. A legend above the toolbar labels −50, 100, 500, 1,000 and 2,000 °C.
+- **Heat view** (the "Heat view" button, or H; Ctrl, Meta and Alt ignore it): each cell that holds heat is drawn in the color of its temperature (`cellTemp`) from `HEAT_RAMP`, empty space in the color of its air's temperature at half brightness (the background without air) and walls at 30% of their color. Brightness rises with temperature at every step of the ramp, from dark blue at −50 °C through purple (20 °C), red (300 °C), orange (800 °C) and yellow (1,500 °C) to near white at 2,000 °C, so the temperature order never depends on hue alone. A legend above the toolbar labels −50, 100, 500, 1,000 and 2,000 °C.
 - **Readout**: the toolbar shows the element and the whole-degree temperature of the cell under the pointer, then the pressure of its air cell (`Sand · 25 °C · pressure +0.20`); empty space shows the temperature of its air; a wall shows its label alone. `Simulation.probe` copies that cell's `kind` and `temp` words and, with air, the pressure and temperature words of its air cell into a staging buffer at the end of the frame's encoder (no extra submit), and `main.ts` reads it about every 100 ms and writes the line with `formatProbe` (`src/readout.ts`). Without air the line ends after the temperature.
 
 A flyer is drawn over an empty cell from its `kind` word alone, so a flying cell has no glow and takes its element color in the heat view until it lands (backlog I17).
+
+## Seeing the air
+
+The air view (the "Air view" button, or A; Ctrl, Meta and Alt ignore it; it turns the heat view off and the heat view turns it off) draws the pressure of each air cell in `PRESSURE_RAMP` (`src/air.ts`) from −`AIR.viewRange` to +`AIR.viewRange` (±0.5): dark blue, blue, mid grey at 0 (ambient), khaki and pale yellow, each lighter than the one before, so brightness alone orders the pressures and no hue carries the meaning. The materials are drawn at 30% over it. The wind is drawn as arrows, one per 16×16 screen pixels (`AIR_VIEW`), pointing downwind, light with a dark outline, `11 · (speed / maxSpeed)^0.4` pixels long (a weak wind of 0.08 cells per dispatch is 3 pixels, a gale of 0.5 is 6), none under 2 pixels. A legend above the toolbar labels −0.5, 0 and +0.5. The stone crush limit (0.45) is 90% of the way up the ramp, and a gunpowder charge saturates it. The display reads the air state at binding 1 of its group 0 (`Display` takes the `AirGrid`); without air the view shows ambient pressure and no wind.
 
 ## Air
 
@@ -197,7 +203,7 @@ The arrays hold one more column and row than there are air cells: position (a, b
 
 ### The step
 
-The mask pass runs once per frame, after the brush: for each face it stores the face's openness, and for each air cell the share of powder and liquid cells and the count of cells that hold heat (the velocity pass reads the share; nothing reads the count yet). The exchange pass follows it, once (see Heat and the air). Then, after the flyer passes of each superstep, `substeps` air steps run, each of four passes in the frame's one compute pass:
+The mask pass runs once per frame, after the brush: for each face it stores the face's openness, and for each air cell the share of powder and liquid cells and the count of cells that hold heat (the velocity pass reads the share; nothing reads the count). The exchange pass follows it, once (see Heat and the air). Then, after the flyer passes of each superstep, `substeps` air steps run, each of four passes in the frame's one compute pass:
 
 1. **Velocity**: each face gains the pressure difference across it (the pressure with the CA's pending burst added: see Bursts) (and, on a top face, the buoyancy of the warm air, see Heat and the air), loses a share (`velocityLoss`) and, for the matter in its air cells, a further share (see Air moves matter), is clamped to `maxSpeed` and multiplied by the face's gate (see Walls). Per air step it gains `waveSpeed² · dt / s` per unit of pressure difference, with `dt = 2 / substeps` dispatches per step.
 2. **Pressure**: the CA's burst for the cell (see Bursts) is added and cleared, the pressure falls by the net flow out of the cell times `dt / s`, then loses a share (`pressureLoss`).
@@ -248,7 +254,7 @@ Example (`tests/air-crush.test.ts`): a 48-cell charge on a platform in open air,
 
 ### Cost
 
-On the RTX 4080 at 2560×1340 the air passes at 1x cost 0.07 to 0.12 ms at s = 8, 0.14 to 0.30 ms at s = 4 (default; measured with every pass in its own compute pass, which overstates the cost in the frame's one pass; the heat exchange is 0.06 to 0.15 ms of it, the most on the `thermal` scene), 0.8 to 0.95 ms at s = 2 and about 17 ms at s = 1 (four air steps per superstep over 3.4 million air cells), so 1×1 air is not usable at screen size. The figures at s = 8, 2 and 1 were measured before the heat exchange and are lower bounds. `BENCH_AIR=off,8,4,2,1 npm run bench` measures them.
+On the RTX 4080 at 2560×1340 the air passes at 1x cost 0.07 to 0.12 ms at s = 8, 0.14 to 0.30 ms at s = 4 (default; measured with every pass in its own compute pass, which overstates the cost in the frame's one pass; the heat exchange is 0.06 to 0.15 ms of it, the most on the `thermal` scene), 0.8 to 0.95 ms at s = 2 and about 17 ms at s = 1 (four air steps per superstep over 3.4 million air cells), so 1×1 air is not usable at screen size. The figures at s = 8, 2 and 1 were measured before the heat exchange and are lower bounds. The whole cost of the air at 1x on the busy bench scenes, with the CA's air reads and the extra flyers, is +0.26 to +0.72 ms (+1.24 ms on `thermal`) over the engine alone (`docs/powder-toy.md`, "Frame budget"). `BENCH_AIR=off,8,4,2,1 npm run bench` measures them.
 
 ## Boundaries
 
