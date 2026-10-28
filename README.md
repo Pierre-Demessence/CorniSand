@@ -29,6 +29,7 @@ Requires a WebGPU-capable browser (Chrome 113+, Edge 113+, Safari 18.2+).
 - An air view (A) with a legend: pressure in colors that get lighter as it rises and arrows for the wind; the element, temperature and air pressure under the pointer in the toolbar
 - Air scenes to watch: `?scene=explosion`, `?scene=plume` and `?scene=mound`; `?air=2` runs the air at 2×2-pixel cells (sharper, slower)
 - Physics lab: `?scene=physics` shows a pot of water on a hot plate, dam breaks of water, oil and lava, hoppers of sand and gunpowder, an oil fire under a ceiling and a pond under a freezing ceiling, side by side
+- A finished look: sand and stone show grains, a wall behind the field takes soft shadows, hot things glow with a halo, smoke and steam are soft clouds, water darkens and turns blue-green with depth under a bright surface line, and hot air and blasts make the view waver. The C key switches to the cells look (each cell as itself); `?wall=0` to `?wall=1` sets the wall from dark to lit; `?scene=showcase` shows most of it
 - Brush drawing (mouse or touch) with line interpolation, erasing, and Shift to draw over existing particles
 - Simulation speed from 1/4x to 8x, FPS and live particle count
 
@@ -42,9 +43,10 @@ Requires a WebGPU-capable browser (Chrome 113+, Edge 113+, Safari 18.2+).
 - **Wind button**: drag with the left button to blow the air along the stroke
 - **H**: heat view on / off
 - **A**: air view on / off (turns the heat view off)
+- **C**: cells look on / off (the finished look is the default)
 - **[ / ]**: slower / faster
 - **Shift + click**: draw over existing particles (except walls)
 
 ## How it works
 
-Each frame runs, in WGSL compute shaders over storage buffers, a Margolus-neighborhood cellular automaton for every material (movement, convection, fire, heat conduction and phase changes), steps a coarser air grid (pressure, wind and temperature) that the cells read and feed, then draws the cells with a fullscreen render pass. No framework, direct WebGPU API. Details in [docs/simulation.md](docs/simulation.md); contributor and agent notes in [AGENTS.md](AGENTS.md).
+Each frame runs, in WGSL compute shaders over storage buffers, a Margolus-neighborhood cellular automaton for every material (movement, convection, fire, heat conduction and phase changes), steps a coarser air grid (pressure, wind and temperature) that the cells read and feed, then draws the cells and their effects (grain, shadows, glow, clouds, liquid depth, shimmer) in a few render passes. No framework, direct WebGPU API. Details in [docs/simulation.md](docs/simulation.md) and [docs/rendering.md](docs/rendering.md); contributor and agent notes in [AGENTS.md](AGENTS.md).

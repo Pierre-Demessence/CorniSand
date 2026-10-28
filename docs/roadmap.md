@@ -2,11 +2,7 @@
 
 Direction: elements that behave by real physics, with The Powder Toy as the inspiration for what to simulate, in the browser on the GPU, on a larger playing field, then what only a GPU can afford. The reasoning and the frame budget are in `docs/powder-toy.md`. Every milestone keeps the frame budget set there on the reference RTX 4080, measured by `npm run bench`, with every size and resolution a setting so M10 can scale it down (`docs/decisions.md`). IDs are stable. Next ID: M12.
 
-Order: M11 beside M8.9 (before M8.1), then the rest of M8, M7, M9, M10.
-
-## M11 Rendering
-
-The finished look: grain, the wall and its shadows, glow, soft gases, liquid depth and air shimmer, all drawn from the simulation's state, with a cells look on a key. Done when each effect has a deterministic display test and the renderer costs at most 1 ms per frame on the RTX 4080 (`docs/plans/m11-rendering.md`).
+Order: M8, then M7, M9, M10.
 
 ## M8 Element catalogue
 

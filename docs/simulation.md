@@ -1,14 +1,14 @@
 # Simulation
 
-How a frame turns into particle movement. Code: `src/simulation.ts`, `src/elements.ts`, `src/element-table.ts`, `src/cell-fields.ts`, `src/cell-field-buffers.ts`, `src/shaders/cell.wgsl.ts`, `src/shaders/elements.wgsl.ts`, `src/shaders/ca.wgsl.ts`, `src/shaders/brush.wgsl.ts`, `src/movement.ts`, `src/physics.ts`, `src/flyers.ts`, `src/shaders/flyers.wgsl.ts`, `src/passes.ts`, `src/heat.ts`, `src/shaders/heat.wgsl.ts`, `src/air.ts`, `src/air-grid.ts`, `src/shaders/air.wgsl.ts`, `src/display.ts`, `src/toolbar.ts`.
+How a frame turns into particle movement. Code: `src/simulation.ts`, `src/elements.ts`, `src/element-table.ts`, `src/cell-fields.ts`, `src/cell-field-buffers.ts`, `src/shaders/cell.wgsl.ts`, `src/shaders/elements.wgsl.ts`, `src/shaders/ca.wgsl.ts`, `src/shaders/brush.wgsl.ts`, `src/movement.ts`, `src/physics.ts`, `src/flyers.ts`, `src/shaders/flyers.wgsl.ts`, `src/passes.ts`, `src/heat.ts`, `src/shaders/heat.wgsl.ts`, `src/air.ts`, `src/air-grid.ts`, `src/shaders/air.wgsl.ts`, `src/toolbar.ts`; the drawing is in `docs/rendering.md`.
 
 ## Frame pipeline
 
-Each animation frame runs `stepsPerFrame` supersteps (1, 2, 4, 8, 16, 24 or 32; the speed labelled "1x" is 4), then one render pass. All of it is recorded into one command encoder and sent with one `submit()` (`main.ts`). A frame is:
+Each animation frame runs `stepsPerFrame` supersteps (1, 2, 4, 8, 16, 24 or 32; the speed labelled "1x" is 4), then the render passes. All of it is recorded into one command encoder and sent with one `submit()` (`main.ts`). A frame is:
 
 1. **Brush**: while a mouse button is down, the brush pass, one thread per cell (each thread touches only its own cell). Then the air's passes that run once a frame: the mask pass, the heat exchange, and the Wind tool's pass when the pointer moved while it is selected (see Air).
 2. **Supersteps**: `stepsPerFrame` of them, each two CA dispatches with Margolus offset 0, then 1, then the flyer passes (see Flyers), then the air steps (see Air). The dispatches update the cell buffers in place. The brush, every CA dispatch and the flyer passes share one compute pass, handed out by `PassRecorder` (`src/passes.ts`); the bench gives each group of dispatches a timed pass of its own instead.
-3. **Overlay and render**: the flyers are scattered into the overlay buffer, then the cell buffers and the overlay are drawn with the brush ring.
+3. **Overlay and render**: the flyers are scattered into the overlay buffer, then the render passes draw the cell buffers and the overlay with the brush ring (see `docs/rendering.md`).
 
 Every CA dispatch needs its own `{ offset, seed }`. They live in 256-byte slots (`minUniformBufferOffsetAlignment`) of one uniform buffer sized for the 64 dispatches of a 32-superstep frame; one `writeBuffer` fills the used slots and each dispatch selects its slot with a dynamic offset. The grid size is a shader constant.
 
@@ -18,7 +18,7 @@ At most every 2 seconds, on frames where no mouse button is down, a separate com
 
 A cell is one 32-bit word in each of the field buffers listed in `CELL_FIELDS` (`src/cell-fields.ts`), one storage buffer per field (`src/cell-field-buffers.ts`):
 
-- `kind`: bits 0–7 `type`, the element ID (a row of the element table below); bits 8–15 `variant`, random 0–255 assigned at paint time (not used by the display yet); bits 16–31 reserved.
+- `kind`: bits 0–7 `type`, the element ID (a row of the element table below); bits 8–15 `variant`, random 0–255 assigned at paint time (the display reads it as the cell's grain, `docs/rendering.md`); bits 16–31 reserved.
 - `life`: for an element with a lifetime (fire), the time left. For a liquid (water, oil), the sideways direction the cell last moved in (0 none, 1 left, 2 right).
 
 - `velocity`: the cell's velocity in cells per dispatch, x in the low 16 bits and y in the high 16 bits, each a binary16 float (`pack2x16float`). y = 0 is the bottom row, so a falling cell has a negative y.

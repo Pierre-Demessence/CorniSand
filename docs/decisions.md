@@ -103,3 +103,15 @@ Rejected: the literal 0.025 W/m·K for STEAM; a conserved amount of matter per c
 TPT is GPLv3. Translating its source or copying its element tables would make CorniSand a derivative work, which must then be distributed under GPLv3 with its source. Elements are reimplemented from observed behavior, documentation and physics. Reading TPT's source to learn what a mechanism does is fine; translating it is not. Property values come from physical data (melting points, densities) or our own tuning, never copied as a table.
 
 Rejected: porting elements from TPT's source.
+
+## Two looks: a finished one for play, a cells one that shows the cells
+
+The finished look is the default: grain, a wall with shadows, a halo around hot things, smoke as a cloud, water darkening with depth, air that wavers over heat. The cells look (the C key) draws each cell as itself with its grain and the wall, and nothing that blurs, spills or shifts. The heat and air views are the same in both. A physics behavior is judged on cell data or in the cells look, never through the finished look, which can hide holes and jagged surfaces (The Powder Toy has the same split: "Fancy" against "Nothing"). The cells look costs what the drawing did before the effects (`docs/rendering.md`, "Budget").
+
+Rejected: one look with every effect on and no way to see the cells; effects switched off one by one as the only way to see the cells (the settings exist for tests and for M10, but one key is how to see what the simulation holds).
+
+## Visual properties live in a display-only table; glow comes from emission
+
+Grain, opacity, absorption and the emission scale are columns of a table that only the display and its coverage pass bind (`src/display-table.ts`), generated from an optional `look` on each `ELEMENTS` row, not words of the CA's shared row, which already grew from 96 to 144 bytes and is a suspect in the CA's cost (backlog D36). The halo is the blurred light that hot cells radiate (a coverage pass writes it from temperature, a chain blurs it), not a bright-pass over the finished image.
+
+Rejected: more words in the shared row (every CA thread would pay for columns only the drawing reads); a bright-pass bloom over the finished frame (it needs a full-resolution HDR copy of the frame, and white things such as snow, steam and a bright wall would glow).

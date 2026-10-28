@@ -1,6 +1,6 @@
 # M11 Rendering quick wins
 
-Status: running; M11.1 to M11.7 done, next open item M11.8 (budget and docs). Runs before M8.1, beside M8.9 (`docs/plans/m8.9-real-world-scenarios.md`): it touches only the drawing code, never a cell, a rule or a test of the simulation.
+Status: finished, waiting for the user's review; M11.1 to M11.8 done, the bench run and the AC15 table are the user's (M11.8). Runs before M8.1, beside M8.9 (`docs/plans/m8.9-real-world-scenarios.md`): it touches only the drawing code, never a cell, a rule or a test of the simulation.
 
 ## Goal
 
@@ -184,10 +184,22 @@ Needs you: run `npm test` (the AC13 and AC14 tests in `tests/look.test.ts`; none
 
 ### M11.8 Budget and docs
 
-- [ ] AC15 from the bench (all scenes, both looks), into a table under this item. `docs/rendering.md` (new: the two looks, the passes and their resolutions, the color path, the display table, what each effect reads of the simulation, the settings); `AGENTS.md`: layout (`src/look.ts`, `src/display-table.ts`, the new shaders, `tests/look.test.ts`), the bench line, the docs map, the display's bindings in the invariants, and under "Never": a physics behavior is judged on cell data or in the cells look, never through the finished look; `docs/decisions.md`: the two looks, and visual properties in a display-only table with glow from emission rather than a bright-pass; `docs/simulation.md` if it describes the display; the README's feature list and keys; the research doc trimmed to the smooth look, the light field, the roadmap table, decorative effects and "Not recommended", its "Today" and "Direction" reduced to a pointer to `docs/rendering.md`; roadmap M11 deleted. Verify: lint, typecheck, `npm test`, build.
+- [x] AC15 from the bench (all scenes, both looks), into a table under this item. `docs/rendering.md` (new: the two looks, the passes and their resolutions, the color path, the display table, what each effect reads of the simulation, the settings); `AGENTS.md`: layout (`src/look.ts`, `src/display-table.ts`, the new shaders, `tests/look.test.ts`), the bench line, the docs map, the display's bindings in the invariants, and under "Never": a physics behavior is judged on cell data or in the cells look, never through the finished look; `docs/decisions.md`: the two looks, and visual properties in a display-only table with glow from emission rather than a bright-pass; `docs/simulation.md` if it describes the display; the README's feature list and keys; the research doc trimmed to the smooth look, the light field, the roadmap table, decorative effects and "Not recommended", its "Today" and "Direction" reduced to a pointer to `docs/rendering.md`; roadmap M11 deleted. Verify: lint, typecheck, `npm test`, build.
+
+Done in the run (not ticked, the bench check is left to the user): `docs/rendering.md` (new: the two looks, the passes and their resolutions, the color path, what each effect reads, the display table, bindings, settings, budget, tests, sources); `AGENTS.md` (layout: `look`, `display-table`, `glow`, `shadow` and the new shaders, the C key and `?wall=`, the bench line and `BENCH_LOOKS`, the tests list, the docs map, the display's bindings, a "Never" line); `docs/decisions.md` (the two looks; visual properties in a display-only table, glow from emission); `docs/simulation.md` (the variant is read by the display, the frame's render passes, a pointer to `docs/rendering.md`); `README.md` (feature, C key, how it works); `docs/research/rendering.md` trimmed to the smooth look, Lighting, what later milestones bring, decorative effects, Not recommended and their sources (its Today, Direction, quick wins, Recommendation and Decided sections are gone, the passes and the user's choices are in `docs/rendering.md` and `docs/decisions.md`); `docs/roadmap.md` (M11 deleted, order line). Lint, typecheck and build pass; `npm test` and `npm run bench` were not run (the GPU was busy with a game).
+
+AC15 budget table (to fill from `npm run bench`, 1x, ms per frame; `render` is the sum of the four passes; the cells look is compared with the pre-M11 render cost from M11.1's Baseline):
+
+| Scene | Look | `render:coverage` | `render:glow` | `render:shadow` | `render:composite` | `render` |
+| --- | --- | --- | --- | --- | --- | --- |
+| `tank`, `mix75`, `full100`, `blast`, `thermal`, `pot` | finished | to measure | to measure | to measure | to measure | at most 1.00 |
+| the same | cells | n/a | n/a | n/a | to measure | within 0.05 of the pre-M11 render |
+
+Decided during the run: the research doc keeps the smooth look, Lighting, "Later, with the roadmap", the decorative effects line and "Not recommended", as the item says; its sources are split, the rendering ones moving to `docs/rendering.md`, the rest staying. The "Measuring and testing" section (the tests per effect) is dropped from the research doc because `tests/look.test.ts` and `docs/rendering.md` ("Tests") hold it now. Alternative: keep it. To change: restore from git.
+Decided during the run: `docs/roadmap.md` M11 is deleted as the item says, although AC15 is not measured yet. If the user's bench run takes a scene past 1 ms, the roadmap line has to come back (git has it) and the costliest effect gets blocked with its measured cost. Alternative: keep the entry until the bench passes. To change: restore the M11 section from git.
 
 Visible after: nothing new: docs.
-Needs you: nothing.
+Needs you: run `npm test` and `npm run bench` (with `nvidia-smi` showing no other load), fill the table above, and check that every finished-look `render` is at most 1 ms and that the cells look's `render:composite` is within 0.05 ms of the baseline; if one is over, say so before finishing the plan (stops the run).
 
 ## Sources
 
