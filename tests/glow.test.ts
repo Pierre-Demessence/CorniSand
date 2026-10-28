@@ -99,10 +99,10 @@ describe('M11.4 shadows', () => {
     expect(coverSize(3, 1)).toEqual({ width: 1, height: 1 });
   });
 
-  it('the coverage pass writes the cover texture beside the emission one, within the default limit of 4 storage textures', () => {
+  it('the coverage pass writes the cover texture beside the emission one and the gas one, within the default limit of 4 storage textures', () => {
     const wgsl = coverageWGSL(ELEMENTS, GRAPHICS, 64, 32);
     expect(wgsl).toContain('var cover: texture_storage_2d<rgba8unorm, write>');
-    expect([...wgsl.matchAll(/texture_storage_2d/g)]).toHaveLength(2);
+    expect([...wgsl.matchAll(/texture_storage_2d/g)]).toHaveLength(3);
   });
 
   it('the shadow pass marches the set length toward the light, and the composite shades empty space and gas only', () => {
@@ -112,5 +112,35 @@ describe('M11.4 shadows', () => {
     const display = displayWGSL(ELEMENTS, GRAPHICS);
     expect(display).toContain('(pType == EL_EMPTY || elState(pType) == ST_GAS)');
     expect(display).toContain('color *= 1.0 - u.shadow * shade;');
+  });
+});
+
+describe('M11.5 soft gases', () => {
+  it('keeps the gas opacity in 0..1', () => {
+    expect(lookSettings().gasOpacity).toBe(LOOK.gasOpacity);
+    expect(lookSettings({ gasOpacity: -1 }).gasOpacity).toBe(0);
+    expect(lookSettings({ gasOpacity: 3 }).gasOpacity).toBe(1);
+    expect(lookSettings({ gasOpacity: 0.3 }).gasOpacity).toBe(0.3);
+  });
+
+  it('the coverage pass writes the gas share into the cover texture and the gas cells\' color into the gas texture', () => {
+    const wgsl = coverageWGSL(ELEMENTS, GRAPHICS, 64, 32);
+    expect(wgsl).toContain('var gasCloud: texture_storage_2d<rgba16float, write>');
+    expect(wgsl).toContain('vec4f(opacity / 16.0, 0.0, gas.a, 0.0)');
+    expect(wgsl).toContain('textureStore(gasCloud, gid.xy, gas);');
+  });
+
+  it('the composite draws gas cells as a cloud in the finished look only, over empty space and gas', () => {
+    const wgsl = displayWGSL(ELEMENTS, GRAPHICS);
+    expect(wgsl).toContain('let softGas = u.cellsLook < 0.5 && !heatView && !airView && u.gas > 0.0');
+    expect(wgsl).toContain('if (pType != EL_EMPTY && !softGas) {');
+    expect(wgsl).toContain('if (u.gas > 0.0 && (pType == EL_EMPTY || softGas)) {');
+    expect(wgsl).toContain('light = light * (1.0 - gas.a * u.gas) + gas.rgb * u.gas;');
+  });
+
+  it('the cell color path is shared by the display and the coverage pass, and the display stays within 8 storage buffers', () => {
+    expect(displayWGSL(ELEMENTS, GRAPHICS)).toContain('color = litColor(cell, color);');
+    expect(coverageWGSL(ELEMENTS, GRAPHICS, 64, 32)).toContain('litColor(c, elColor(id))');
+    expect([...displayWGSL(ELEMENTS, GRAPHICS).matchAll(/var<storage/g)]).toHaveLength(6);
   });
 });

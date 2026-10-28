@@ -33,8 +33,8 @@ export interface DisplayExtras {
   settings?: Partial<LookSettings>;
 }
 
-// Uniform: 16 f32 = 64 bytes
-const UNIFORM_FLOATS = 16;
+// Uniform: 17 f32 used, padded to 20 f32 = 80 bytes
+const UNIFORM_FLOATS = 20;
 const UNIFORM_SIZE = UNIFORM_FLOATS * 4;
 
 export class Display {
@@ -91,6 +91,8 @@ export class Display {
         { binding: 4, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
         // The shadow texture, read with the same sampler.
         { binding: 5, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+        // The cloud of gas cells, read with the same sampler.
+        { binding: 6, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
         // The air state, when there is air: binding 1 of group 0, as the generated shader declares it.
         ...(air?.state ? [{ binding: 1, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' as const } }] : []),
       ],
@@ -118,6 +120,7 @@ export class Display {
         { binding: 3, resource: this.glow.view },
         { binding: 4, resource: glowSampler },
         { binding: 5, resource: this.shadow.view },
+        { binding: 6, resource: this.glow.gas },
         ...(air?.state ? [{ binding: 1, resource: { buffer: air.state } }] : []),
       ],
     });
@@ -148,15 +151,17 @@ export class Display {
     d[13] = this.settings.wall; // wall
     d[14] = this.settings.glowStrength; // glow
     d[15] = this.settings.shadowDarkness; // shadow
+    d[16] = this.settings.gasOpacity; // gas
 
     this.device.queue.writeBuffer(this.uniformBuffer, 0, this.uniformData);
 
-    // The halo and the shadows are only read by the finished look; the cells look and the views record the composite alone.
-    // The coverage pass serves both, so it runs when either is on.
+    // The halo, the shadows and the cloud of gas are only read by the finished look; the cells look and the views record the
+    // composite alone. The coverage pass serves all three, so it runs when any is on.
     if (opts.look !== 'cells' && !opts.heatView && !opts.airView) {
       const glowing = this.settings.glowStrength > 0;
       const shadowed = this.settings.shadowDarkness > 0;
-      if (glowing || shadowed) this.glow.recordCoverage(encoder, timer);
+      const clouded = this.settings.gasOpacity > 0;
+      if (glowing || shadowed || clouded) this.glow.recordCoverage(encoder, timer);
       if (glowing) this.glow.recordChain(encoder, timer);
       if (shadowed) this.shadow.record(encoder, timer);
     }

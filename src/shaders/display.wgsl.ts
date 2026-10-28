@@ -181,6 +181,8 @@ struct DisplayUniforms {
   glow: f32,
   // How dark the shadow of fully opaque matter is: 0 draws none.
   shadow: f32,
+  // How much of the wall a full cloud of gas hides: 0 draws gas as cells.
+  gas: f32,
 };
 
 struct VertexOutput {
@@ -214,6 +216,9 @@ ${displayPropsWGSL}
 @group(0) @binding(4) var glowSampler: sampler;
 // How shaded each texel of the cover grid is (src/shadow.ts), world orientation.
 @group(0) @binding(5) var shadowTex: texture_2d<f32>;
+// The gas cells as a cloud (src/glow.ts): the mean linear color of the gas cells of each texel of the cover grid times their
+// share, and that share in alpha, world orientation.
+@group(0) @binding(6) var gasTex: texture_2d<f32>;
 ${lightWGSL(styled)}
 ${lookWGSL}
 ${airDisplayWGSL(air)}
@@ -244,6 +249,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {
   let airView = u.airView > 0.5;
   let heatView = u.heatView > 0.5 && !airView;
   let air = airCentersAt(simPos);
+  // The finished look draws gas as a soft layer over the wall, not as cells.
+  let softGas = u.cellsLook < 0.5 && !heatView && !airView && u.gas > 0.0 && pType != EL_EMPTY && elState(pType) == ST_GAS;
 
   // The wall behind the field, dithered.
   var color = wallColor(uv, in.position.xy);
@@ -252,7 +259,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {
     color = heatColor(air.y) * 0.5;
   }
 
-  if (pType != EL_EMPTY) {
+  if (pType != EL_EMPTY && !softGas) {
     color = elColor(pType);
     let holdsHeat = elHoldsHeat(pType);
     if (heatView) {
@@ -266,15 +273,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {
       if (!airView) {
         color = grainColor(cell, color, vec2f(f32(cellX), f32(cellY)));
       }
-      var hasGraphics = false;
-      switch (pType) {
-${styled.map((e) => `        case EL_${e.key}: { color = graphics_${e.graphics}(cell, color); hasGraphics = true; }`).join('\n')}
-        default: {}
-      }
-      if (holdsHeat && !hasGraphics) {
-        let t = cellTemp(cell);
-        color += glowColor(t) * glowWeight(t);
-      }
+      color = litColor(cell, color);
     }
   }
 
@@ -302,10 +301,17 @@ ${styled.map((e) => `        case EL_${e.key}: { color = graphics_${e.graphics}(
   // The finished look: the color in linear light, the halo added, tone mapped, encoded again. The views take today's math
   // as it is. A cell's own glow is clamped per channel first, as in the cells look, so a lone hot cell is drawn the same in
   // both looks; only light added in linear light (the halo) reaches the tone map above 1. The halo is the blurred light of
-  // the cells that radiate (src/glow.ts), added around them: a cell that radiates is drawn by its own color alone.
+  // the cells that radiate (src/glow.ts), added around them: a cell that radiates is drawn by its own color alone, except a gas
+  // cell, which is part of the cloud and shines through the halo.
   if (u.cellsLook < 0.5 && !heatView && !airView) {
     var light = srgbToLinear(clamp(color, vec3f(0.0), vec3f(1.0)));
-    if (u.glow > 0.0 && dot(cellEmission(cell), vec3f(1.0)) <= 0.0) {
+    // The cloud lies over empty space and over the gas cells it stands for; a filled cell hides it.
+    if (u.gas > 0.0 && (pType == EL_EMPTY || softGas)) {
+      let gasSize = vec2f(textureDimensions(gasTex));
+      let gas = textureSampleLevel(gasTex, glowSampler, simPos / (${COVER_CELLS}.0 * gasSize), 0.0);
+      light = light * (1.0 - gas.a * u.gas) + gas.rgb * u.gas;
+    }
+    if (u.glow > 0.0 && (softGas || dot(cellEmission(cell), vec3f(1.0)) <= 0.0)) {
       light += textureSampleLevel(glowTex, glowSampler, uv, 0.0).rgb * u.glow;
     }
     color = linearToSrgb(toneMap(light));

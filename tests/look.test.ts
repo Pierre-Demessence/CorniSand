@@ -103,15 +103,18 @@ describe.skipIf(!device)('M11.2 the two looks', () => {
   // around it, so it is drawn alone; the others stand side by side.
   const radiates = (e: ElementDef): boolean => (e.life !== undefined && e.graphics !== undefined) || effectiveTemp(e, ROOM_TEMP) >= GLOW_START;
 
+  // A gas is a soft cloud in the finished look (M11.5), not a cell: it is not drawn in its cells-look color.
+  const cloud = (e: ElementDef): boolean => e.state === 'gas';
+
   it('M11 AC3: a cell with nothing around it is drawn in its cells-look color, for every element of the table', async () => {
     const width = 64;
     const row = everyElementRow(width);
-    ROWS.filter(radiates).forEach((e) => { row.kind[ROWS.indexOf(e)] = 0; });
+    ROWS.filter((e) => radiates(e) || cloud(e)).forEach((e) => { row.kind[ROWS.indexOf(e)] = 0; });
     const sim = createSim(width, 1);
     sim.load(row);
     const finished = await render(sim, width, 1, { look: 'finished' });
     const cells = await render(sim, width, 1, { look: 'cells' });
-    ROWS.filter((e) => !radiates(e)).forEach((e) => {
+    ROWS.filter((e) => !radiates(e) && !cloud(e)).forEach((e) => {
       const i = ROWS.indexOf(e);
       pixelAt(finished, width, i, 0).forEach((channel, c) => {
         expect(Math.abs(channel - cells[i * 4 + c]), `${e.key}, channel ${c}`).toBeLessThanOrEqual(1);
@@ -476,5 +479,80 @@ describe.skipIf(!device)('M11.4 shadows', () => {
     const cellsLook = await render(sim, width, height, { look: 'cells' });
     const cellsLookNoShadow = await render(sim, width, height, { look: 'cells', settings: { shadowDarkness: 0 } });
     expect(cellsLook).toEqual(cellsLookNoShadow);
+  });
+});
+
+describe.skipIf(!device)('M11.5 soft gases', () => {
+  const width = 256;
+  const height = 256;
+  // Aligned to the cover texels (4 cells) so the block fills whole texels; lower left corner at (112, 112).
+  const smoke: Block = { x: 112, y: 112, w: 32, h: 32, type: T.SMOKE, temp: 150 };
+  // The block's inside, 6 cells from its edges: the cloud's bilinear edge reaches 2 cells in.
+  const inside = { x0: smoke.x + 6, x1: smoke.x + smoke.w - 6, y0: smoke.y + 6, y1: smoke.y + smoke.h - 6 };
+
+  // The luminance of the pixels of the cells x0..x1, y0..y1 (y from the bottom of the world).
+  function insideLuminances(pixels: Uint8Array): number[] {
+    const lums: number[] = [];
+    for (let y = inside.y0; y < inside.y1; y++) {
+      for (let x = inside.x0; x < inside.x1; x++) lums.push(luminanceOf(pixelAt(pixels, width, x, height - 1 - y)));
+    }
+    return lums;
+  }
+  const mean = (values: number[]): number => values.reduce((a, b) => a + b, 0) / values.length;
+  const spread = (values: number[]): number => Math.max(...values) - Math.min(...values);
+  const lumAt = (pixels: Uint8Array, x: number, y: number): number => luminanceOf(pixelAt(pixels, width, x, height - 1 - y));
+
+  it('M11 AC11: the pixels inside a 32×32 block of smoke lie within 4 steps of each other, and the block is a cloud over the wall', async () => {
+    const empty = await render(blockSim(width, height, []), width, height);
+    const block = await render(blockSim(width, height, [smoke]), width, height);
+    expect(spread(insideLuminances(block))).toBeLessThanOrEqual(4);
+    expect(mean(insideLuminances(block)) - mean(insideLuminances(empty)), 'brighter than the wall').toBeGreaterThan(20);
+  });
+
+  it('M11 AC11: a block of smoke cells in a checkerboard is a smooth layer too, not dots', async () => {
+    const dots: Block[] = [];
+    for (let j = 0; j < smoke.h; j++) {
+      for (let i = 0; i < smoke.w; i++) if ((i + j) % 2 === 0) dots.push({ ...smoke, x: smoke.x + i, y: smoke.y + j, w: 1, h: 1 });
+    }
+    const pixels = await render(blockSim(width, height, dots), width, height);
+    expect(spread(insideLuminances(pixels))).toBeLessThanOrEqual(4);
+  });
+
+  it('M11 AC11: a lone smoke cell tints its surroundings less than the center of the block', async () => {
+    const empty = await render(blockSim(width, height, []), width, height);
+    const block = await render(blockSim(width, height, [smoke]), width, height);
+    const lone = await render(blockSim(width, height, [{ ...smoke, x: 128, y: 128, w: 1, h: 1 }]), width, height);
+    const blockTint = lumAt(block, 128, 128) - lumAt(empty, 128, 128);
+    let loneTint = 0;
+    for (let y = 120; y <= 136; y++) {
+      for (let x = 120; x <= 136; x++) loneTint = Math.max(loneTint, Math.abs(lumAt(lone, x, y) - lumAt(empty, x, y)));
+    }
+    expect(loneTint, 'the cell shows').toBeGreaterThan(0);
+    expect(loneTint, 'against the block center').toBeLessThan(blockTint);
+  });
+
+  it('M11 AC11: smoke at 1,000 °C is brighter than at 150 °C', async () => {
+    const cool = await render(blockSim(width, height, [smoke]), width, height);
+    const hot = await render(blockSim(width, height, [{ ...smoke, temp: 1000 }]), width, height);
+    expect(mean(insideLuminances(hot))).toBeGreaterThan(mean(insideLuminances(cool)) + 1);
+  });
+
+  it('M11 AC11: the cells look draws the dots as today, and so does the finished look with gas opacity 0', async () => {
+    const dot = blockSim(width, height, [{ ...smoke, x: 128, y: 128, w: 1, h: 1 }]);
+    const empty = blockSim(width, height, []);
+    const table = ROWS.find((e) => e.id === T.SMOKE)!.color;
+    for (const options of [{ look: 'cells' as const }, { look: 'finished' as const, settings: { gasOpacity: 0 } }]) {
+      const pixels = await render(dot, width, height, options);
+      const wall = await render(empty, width, height, options);
+      pixelAt(pixels, width, 128, height - 1 - 128).forEach((channel, c) => {
+        expect(Math.abs(channel - table[c] * 255), `${options.look}, channel ${c}`).toBeLessThanOrEqual(1);
+      });
+      // Nothing around the dot changes.
+      for (const [x, y] of [[127, 128], [129, 128], [128, 127], [128, 129], [124, 124]]) {
+        expect(pixelAt(pixels, width, x, height - 1 - y), `${options.look} (${x}, ${y})`).toEqual(pixelAt(wall, width, x, height - 1 - y));
+      }
+    }
+    // The setting does not reach the cells look.
+    expect(await render(dot, width, height, { look: 'cells', settings: { gasOpacity: 0.3 } })).toEqual(await render(dot, width, height, { look: 'cells' }));
   });
 });

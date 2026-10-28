@@ -10,7 +10,10 @@ export const GLOW_FORMAT = 'rgba16float';
 /** Cells per emission texel, along each axis. */
 export const EMISSION_CELLS = 2;
 
-/** Texel format of the cover texture (opacity in the red channel; the liquid and gas fractions of M11.5 and M11.6 follow in green and blue). */
+/** Texel format of the gas texture: HDR, filterable and a storage texture. */
+export const GAS_FORMAT = 'rgba16float';
+
+/** Texel format of the cover texture (opacity in the red channel, the gas fraction in blue; the liquid fraction of M11.6 follows in green). */
 export const COVER_FORMAT = 'rgba8unorm';
 
 /** Cells per cover texel, along each axis: one thread of the coverage pass writes one. */
@@ -21,7 +24,9 @@ export const COVER_CELLS = 4;
 // cell rows 2r and 2r + 1, so a texture coordinate is the cell's position over the grid's size. A flyer's cell is the
 // kind and temperature of the overlay (group 3, two words per cell: src/flyers.ts) over an empty cell. It also writes the
 // cover texture, one texel per 4x4 cells holding the mean opacity of their cells (`displayProps[...].opacity`, 0 beyond the
-// grid): what the shadow pass marches through.
+// grid): what the shadow pass marches through. The gas fraction (the share of gas cells) goes in its blue channel, and the
+// gas texture, at the same resolution, holds the gas cells' color: the sum of their linear colors over the 16 cells in rgb
+// and their count over 16 in alpha, so a bilinear sample is the mean color of the gas around times its share.
 export const coverageWGSL = (elements: readonly ElementDef[], graphics: Readonly<Record<string, string>>, width: number, height: number): string => {
   const { styled, source } = graphicsWGSL(elements, graphics);
   return /* wgsl */`
@@ -35,6 +40,7 @@ ${lightWGSL(styled)}
 
 @group(0) @binding(3) var emission: texture_storage_2d<${GLOW_FORMAT}, write>;
 @group(0) @binding(4) var cover: texture_storage_2d<${COVER_FORMAT}, write>;
+@group(0) @binding(5) var gasCloud: texture_storage_2d<${GAS_FORMAT}, write>;
 @group(3) @binding(0) var<storage, read> flyerWords: array<u32>;
 
 const WIDTH: u32 = ${width}u;
@@ -66,6 +72,16 @@ fn opacityAt(x: u32, y: u32) -> f32 {
   return displayProps[id].opacity;
 }
 
+// A gas cell's linear color, as the cells look would draw it, and 1 in alpha; 0 for anything else.
+fn gasAt(x: u32, y: u32) -> vec4f {
+  if (x >= WIDTH || y >= HEIGHT) { return vec4f(0.0); }
+  let idx = y * WIDTH + x;
+  let id = loadKind(idx) & 0xffu;
+  if (id == EL_EMPTY || elState(id) != ST_GAS) { return vec4f(0.0); }
+  let c = loadCell(idx);
+  return vec4f(srgbToLinear(clamp(litColor(c, elColor(id)), vec3f(0.0), vec3f(1.0))), 1.0);
+}
+
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) gid: vec3u) {
   let size = textureDimensions(emission);
@@ -87,12 +103,16 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let coverSize = textureDimensions(cover);
   if (gid.x < coverSize.x && gid.y < coverSize.y) {
     var opacity = 0.0;
+    var gas = vec4f(0.0);
     for (var b = 0u; b < ${COVER_CELLS}u; b++) {
       for (var a = 0u; a < ${COVER_CELLS}u; a++) {
         opacity += opacityAt(gid.x * ${COVER_CELLS}u + a, gid.y * ${COVER_CELLS}u + b);
+        gas += gasAt(gid.x * ${COVER_CELLS}u + a, gid.y * ${COVER_CELLS}u + b);
       }
     }
-    textureStore(cover, gid.xy, vec4f(opacity / ${COVER_CELLS * COVER_CELLS}.0, 0.0, 0.0, 0.0));
+    gas /= ${COVER_CELLS * COVER_CELLS}.0;
+    textureStore(cover, gid.xy, vec4f(opacity / ${COVER_CELLS * COVER_CELLS}.0, 0.0, gas.a, 0.0));
+    textureStore(gasCloud, gid.xy, gas);
   }
 }
 `;

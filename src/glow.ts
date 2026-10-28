@@ -1,5 +1,5 @@
 import type { DisplayTable } from './display-table';
-import { COVER_CELLS, COVER_FORMAT, coverageWGSL, EMISSION_CELLS, GLOW_FORMAT, glowChainWGSL } from './shaders/glow.wgsl';
+import { COVER_CELLS, COVER_FORMAT, coverageWGSL, EMISSION_CELLS, GAS_FORMAT, GLOW_FORMAT, glowChainWGSL } from './shaders/glow.wgsl';
 import type { CellFields } from './cell-field-buffers';
 import type { FlyerOverlay } from './flyers';
 import type { ElementTable } from './element-table';
@@ -26,19 +26,22 @@ export function coverSize(width: number, height: number): { width: number; heigh
 
 /**
  * The coverage pass and the halo of the hot cells (M11.3): the coverage pass writes the light every cell radiates into a
- * half-resolution HDR texture, and the cover texture (the opacity of the cells, quarter resolution, M11.4) that the shadow
- * pass reads; a chain of downsamples and tent upsamples blurs it. After `record`, `view` holds the blurred light (linear,
+ * half-resolution HDR texture, the cover texture (the opacity of the cells and the share of gas cells, quarter resolution,
+ * M11.4) that the shadow pass reads, and the gas texture (the gas cells' color, same resolution, M11.5); a chain of downsamples and tent upsamples blurs it. After `record`, `view` holds the blurred light (linear,
  * world orientation: texture row = the world's row) that the display's composite adds around the cells that radiate. The
  * sizes follow the grid, fixed at load, not the canvas.
  */
 export class Glow {
   /** The finest level, after the chain has run: the halo, before its strength. */
   readonly view: GPUTextureView;
-  /** What the coverage pass writes at a quarter of the cells' resolution: opacity in red (world orientation). */
+  /** What the coverage pass writes at a quarter of the cells' resolution: opacity in red, the gas fraction in blue (world orientation). */
   readonly cover: GPUTextureView;
+  /** The gas cells as a cloud, at the cover's resolution: premultiplied linear color, their share in alpha (world orientation). */
+  readonly gas: GPUTextureView;
 
   private readonly textures: GPUTexture[] = [];
   private readonly coverTexture: GPUTexture;
+  private readonly gasTexture: GPUTexture;
   private readonly views: GPUTextureView[] = [];
   private readonly coverage: GPUComputePipeline;
   private readonly coverageTable: GPUBindGroup;
@@ -90,6 +93,13 @@ export class Glow {
       usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING,
     });
     this.cover = this.coverTexture.createView();
+    this.gasTexture = device.createTexture({
+      label: 'gas',
+      size: [cover.width, cover.height],
+      format: GAS_FORMAT,
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING,
+    });
+    this.gas = this.gasTexture.createView();
     this.groups = {
       x: Math.ceil(width / (COVERAGE_CELLS * WORKGROUP)),
       y: Math.ceil(height / (COVERAGE_CELLS * WORKGROUP)),
@@ -101,6 +111,7 @@ export class Glow {
         { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
         { binding: 3, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: 'write-only', format: GLOW_FORMAT } },
         { binding: 4, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: 'write-only', format: COVER_FORMAT } },
+        { binding: 5, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: 'write-only', format: GAS_FORMAT } },
       ],
     });
     this.coverageTable = device.createBindGroup({
@@ -109,6 +120,7 @@ export class Glow {
         { binding: 2, resource: { buffer: table.buffer } },
         { binding: 3, resource: this.views[0] },
         { binding: 4, resource: this.cover },
+        { binding: 5, resource: this.gas },
       ],
     });
     this.coverage = device.createComputePipeline({
@@ -202,5 +214,6 @@ export class Glow {
   destroy(): void {
     for (const texture of this.textures) texture.destroy();
     this.coverTexture.destroy();
+    this.gasTexture.destroy();
   }
 }

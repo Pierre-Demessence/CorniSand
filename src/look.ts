@@ -34,6 +34,12 @@ export interface LookSettings {
   shadowDarkness: number;
   /** How far a shadow reaches, in cover texels (4 cells each), 1 to 64: it fades to nothing over this distance. */
   shadowLength: number;
+  /**
+   * How much of the wall a full cloud of gas hides, 0 to 1: gas cells are drawn as a soft layer (smoke, steam) whose
+   * strength is the share of gas cells around, times this. 0 draws gas as cells, as the cells look does, and records no
+   * gas texture.
+   */
+  gasOpacity: number;
   /** The direction toward the light on the screen, x to the right and y up: shadows fall the opposite way. Any non-zero vector. */
   lightDirection: readonly [number, number];
 }
@@ -47,6 +53,7 @@ export const LOOK: Readonly<LookSettings> = {
   glowLevels: 4,
   shadowDarkness: 0.5,
   shadowLength: 24,
+  gasOpacity: 0.8,
   lightDirection: [-1, 1],
 };
 
@@ -59,7 +66,7 @@ export const WALL_RANGE = 0.5;
 
 /**
  * The settings with the defaults applied, the wall's brightness, the glow strength and the shadow's darkness kept in 0..1,
- * the glow levels a whole number in 1..6, the shadow's length a whole number in 1..64 and the light's direction a unit
+ * the gas opacity in 0..1, the glow levels a whole number in 1..6, the shadow's length a whole number in 1..64 and the light's direction a unit
  * vector (the default when it is zero or not finite).
  */
 export function lookSettings(overrides: Partial<LookSettings> = {}): LookSettings {
@@ -70,6 +77,7 @@ export function lookSettings(overrides: Partial<LookSettings> = {}): LookSetting
     glowStrength: Math.min(1, Math.max(0, settings.glowStrength)),
     glowLevels: Math.min(MAX_GLOW_LEVELS, Math.max(1, Math.round(settings.glowLevels))),
     shadowDarkness: Math.min(1, Math.max(0, settings.shadowDarkness)),
+    gasOpacity: Math.min(1, Math.max(0, settings.gasOpacity)),
     shadowLength: Math.min(MAX_SHADOW_LENGTH, Math.max(1, Math.round(settings.shadowLength))),
     lightDirection: unitVector(settings.lightDirection) ?? unitVector(LOOK.lightDirection)!,
   };

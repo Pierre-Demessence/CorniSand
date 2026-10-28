@@ -1,6 +1,6 @@
 # M11 Rendering quick wins
 
-Status: running; M11.1 to M11.4 done, next open item M11.5 (soft gases). Runs before M8.1, beside M8.9 (`docs/plans/m8.9-real-world-scenarios.md`): it touches only the drawing code, never a cell, a rule or a test of the simulation.
+Status: running; M11.1 to M11.5 done, next open item M11.6 (liquid depth and surface). Runs before M8.1, beside M8.9 (`docs/plans/m8.9-real-world-scenarios.md`): it touches only the drawing code, never a cell, a rule or a test of the simulation.
 
 ## Goal
 
@@ -139,10 +139,18 @@ Needs you: run `npm test` (the AC10 tests in `tests/look.test.ts` and `tests/glo
 
 ### M11.5 Soft gases
 
-- [ ] `cover`'s gas fraction and the `gas` texture, the cloud layer; AC11. Verify: lint, typecheck, `npm test`, build, bench.
+- [x] `cover`'s gas fraction and the `gas` texture, the cloud layer; AC11. Verify: lint, typecheck, `npm test`, build, bench.
+
+Done in the run (not ticked, checks left to the user): the coverage pass (`src/shaders/glow.wgsl.ts`) also writes the share of gas cells into the blue channel of `cover` and the new gas texture (`rgba16float`, the cover's resolution: the sum of the gas cells' linear colors over 16 in rgb, their count over 16 in alpha, so a bilinear sample is the mean color times the share); `src/glow.ts` owns it (`Glow.gas`, storage binding 5); the display binds it at binding 6 and a new uniform word `gas` (the `uniformData` grows to 20 floats); `LOOK.gasOpacity` (0.8, kept in 0..1, 0 draws gas as cells and records no coverage pass for it); `litColor` in `src/shaders/light.wgsl.ts` (a cell's graphics or in-cell glow, moved out of `fs_main` so the display and the coverage pass share it); in the finished look the composite draws a gas cell as the wall (shadowed), blends the cloud over empty space and gas cells at the share times `gasOpacity`, and adds the halo at gas cells; the cells look and the views are unchanged. Tests: `tests/look.test.ts` (AC11: a 32x32 block within 4 steps and a checkerboard block too, a lone cell against the block's center, 1,000 against 150 degrees C, the dots as today in the cells look and at opacity 0; AC3 limited to cells that are not gas), `tests/glow.test.ts` (settings, shader limits). `docs/simulation.md` (Clouds). Lint, typecheck, build and `tests/glow.test.ts` pass; the GPU tests, the bench and every visual check were not run (the GPU was busy with a game).
+
+Decided during the run: AC3 (a lone cell is drawn in its cells-look color) is tested for the cells that are not gas, as for those that radiate; a gas is a cloud from this item on. Why: AC3 lists "no gas" among the effects around a cell and AC11 asks for a lone smoke cell to be a faint tint, which cannot also be its cells-look color. Alternative: keep gas cells as cells below a share of gas. To change: the `cloud` filter in `tests/look.test.ts`.
+Decided during the run: the cloud is drawn over empty space and gas cells only; a filled cell (stone, water, a flyer) hides it, as does the cells look. Why: the layer is the gas's own, and a texel that holds both smoke and a wall would otherwise tint the wall. Alternative: draw it over everything. To change: the `pType == EL_EMPTY || softGas` test in `fs_main`.
+Decided during the run: `gasOpacity` is 0.8, untuned since no run was possible; a lone cell therefore shows at 5 percent of its color (a sixteenth of a texel times 0.8) and a full cloud at 80 percent. Alternative: a gain that makes sparse smoke more visible, which is a new setting the plan does not have. To change: `LOOK.gasOpacity`.
+Decided during the run: the gas cells' color in the texture is the color the cells look draws, in-cell glow included, and a hot gas cell takes the halo too (the other cells that radiate do not). Why: "smoke at 1,000 degrees C brighter than at 150" and "plus the gas's emission" from Design, without a second texture. Alternative: a separate emission term in the composite. To change: `gasAt` in `src/shaders/glow.wgsl.ts`, the halo test in `fs_main`.
+Decided during the run: the shadow darkens the wall under the cloud, not the cloud itself (the cloud is blended after the shadow). Alternative: darken the cloud too. To change: move the shadow block after the cloud in `fs_main`.
 
 Visible after: smoke and steam are soft clouds (`?scene=plume`).
-Needs you: say whether the clouds flicker in `?scene=plume` (at the end).
+Needs you: run `npm test` (the AC11 tests and the reworked AC3 in `tests/look.test.ts`, `tests/glow.test.ts`; no GPU one was run, the GPU was busy; a shader that fails to compile shows at the first `Display`) and `npm run bench`, and record the `render:coverage` change under this item (at the end); look at `?scene=plume` and `?scene=showcase`, and say whether the clouds flicker, and whether smoke at 0.8 is too faint or too strong (at the end).
 
 ### M11.6 Liquid depth and surface
 

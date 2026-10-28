@@ -24,7 +24,7 @@ ${DISPLAY_FIELDS.map((f) => `  ${f.name}: f32,`).join('\n')}
 @group(0) @binding(2) var<uniform> displayProps: array<DisplayProps, ${MAX_ELEMENTS}>;
 `;
 
-// Needs the `Cell` type, the element table, `cellTemp`, `glowColor`, the graphics functions and `displayProps`.
+// Needs the `Cell` type, the element table, `cellTemp`, `glowColor`, `glowWeight`, the graphics functions and `displayProps`.
 //
 // The finished look computes in linear light and encodes at the end (the canvas is not an sRGB format). A table color is a
 // display value, so the round trip leaves it as it was.
@@ -68,5 +68,23 @@ ${styled.filter((e) => e.life !== undefined).map((e) => `    case EL_${e.key}: {
   }
   let temp = cellTemp(c);
   return srgbToLinear(glowColor(temp)) * (blackbodyShare(temp) * scale);
+}
+
+// The color a cell is drawn in as a cell, from its base color (the table color, with its grain): its graphics function, or
+// else the glow a cell that holds heat adds to its own color. The cells look draws every cell so; the finished look draws
+// gas so, into the cloud layer.
+fn litColor(c: Cell, base: vec3f) -> vec3f {
+  let t = cellType(c);
+  var color = base;
+  var hasGraphics = false;
+  switch (t) {
+${styled.map((e) => `    case EL_${e.key}: { color = graphics_${e.graphics}(c, color); hasGraphics = true; }`).join('\n')}
+    default: {}
+  }
+  if (elHoldsHeat(t) && !hasGraphics) {
+    let temp = cellTemp(c);
+    color += glowColor(temp) * glowWeight(temp);
+  }
+  return color;
 }
 `;
