@@ -80,11 +80,17 @@ The reference machine is an RTX 4080: each feature is built, and the frame budge
 
 Rejected: designing for laptop integrated GPUs from the start (it caps what gets tried before anyone knows which features are worth their cost).
 
-## The Powder Toy's behavior, not its save format
+## Real physics first, The Powder Toy as the inspiration, not its save format
 
-Elements behave and feel like TPT's, but TPT save files are not loaded, and nothing in the engine follows TPT's element IDs or particle fields. Loading saves would tie the engine to TPT's sequential update order (each particle sees the moves of those before it), which a parallel GPU step does not reproduce.
+Elements take real physical properties (conductivity, heat capacity, latent heat, density, viscosity, angle of repose), and The Powder Toy decides which elements and mechanics exist. Where TPT simplifies, real physics wins, as long as the frame budget holds. TPT save files are not loaded, and nothing in the engine follows TPT's element IDs or particle fields. Loading saves would tie the engine to TPT's sequential update order (each particle sees the moves of those before it), which a parallel GPU step does not reproduce.
 
-Rejected: loading TPT saves as a parity test and a source of free content.
+Rejected: copying TPT's feel where it contradicts physics, loading TPT saves as a parity test and a source of free content.
+
+## The grid has a physical scale from its gravity
+
+One cell is 1.36 mm and one dispatch 2.08 ms, the only pair for which the default gravity (1/32 cell per dispatch²) is 9.81 m/s² at 1x (4 supersteps per frame at 60 fps, 480 dispatches per second). Every physical property is converted to cells and dispatches from this pair in one module (`src/physics.ts`), so heat spreads at its real speed and a change of scale is one place.
+
+Rejected: hand-tuned ranks for heat (no way to say what a value means or to check it against data), a speed-up factor on heat (it breaks the match with gravity and every later property built on the scale).
 
 ## No code or data tables from The Powder Toy
 
