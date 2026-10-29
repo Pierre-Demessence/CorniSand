@@ -514,91 +514,96 @@ export type SceneGroup = (typeof SCENE_GROUPS)[number]['id'];
 export interface SceneInfo {
   label: string;
   group: SceneGroup;
-  /** One or two sentences: what the scene is and what to watch. */
+  /** One sentence of at most `DESCRIPTION_MAX` characters: what the scene is and what to watch. */
   description: string;
+  /** Roadmap or backlog IDs that a scenario's test waits for; only a scenario has them (`tests/scenes.test.ts`). */
+  waitsFor?: string[];
 }
+
+/** The longest description the menu shows on its one line. */
+export const DESCRIPTION_MAX = 110;
 
 /** One entry per key of `SCENES`, in the same order (`tests/scenes.test.ts` checks both). */
 export const SCENE_INFO: Record<string, SceneInfo> = {
   uTube: {
     label: 'U-tube',
     group: 'liquids',
-    description: 'Two arms joined under a partition, the left one full of water. Watch the right arm: the arms do not level, because local rules carry no pressure through the passage (a known limit).',
+    description: 'Two arms joined under a partition, the left one full of water; the arms do not level (a known limit).',
   },
   basin: {
     label: 'Basin',
     group: 'liquids',
-    description: 'A block of water at the left of a tank. Watch it flood into a flat sheet about 10 cells deep.',
+    description: 'A block of water at the left of a tank: it floods into a flat sheet about 10 cells deep.',
   },
   damBreak: {
     label: 'Dam break',
     group: 'liquids',
-    description: 'A column of water against the left wall of a tank. Watch the front run along the floor and the level settle flat.',
+    description: 'A column of water against the left wall of a tank: the front runs along the floor and the level settles flat.',
   },
   sandIntoPool: {
     label: 'Sand into a pool',
     group: 'liquids',
-    description: 'A block of sand hangs over a pool of water. Watch it fall, sink through the water and pile on the floor.',
+    description: 'A block of sand hangs over a pool of water: it falls, sinks through the water and piles on the floor.',
   },
   oilOnWater: {
     label: 'Oil on water',
     group: 'liquids',
-    description: 'A block of oil hangs over a layer of water. Watch it fall and spread out, floating on top.',
+    description: 'A block of oil hangs over a layer of water: it falls, spreads out and floats on top.',
   },
   pile: {
     label: 'Sand pile',
     group: 'motion',
-    description: 'A wide block of sand hangs above the floor. Watch it fall, speed up and settle into a pile.',
+    description: 'A wide block of sand hangs above the floor: it falls, speeds up and settles into a pile.',
   },
   blast: {
     label: 'Blast',
     group: 'motion',
-    description: 'A layer of sand a blast has just hit: grains near the center fly up and out, then land back in piles. A large scene (1024x512).',
+    description: 'A layer of sand just hit by a blast: grains fly up and out, then land in piles (a large scene).',
   },
   heatBars: {
     label: 'Heat bars',
     group: 'heat',
-    description: 'A metal bar above a stone bar, both at 500 °C at the left end. Turn on the heat view (H): heat runs along the metal far faster than along the stone.',
+    description: 'A metal bar above a stone bar, both at 500 °C at the left end: heat runs far faster along the metal (H).',
   },
   iceLava: {
     label: 'Ice and lava',
     group: 'heat',
-    description: 'A block of ice touching a pool of lava. Watch the ice melt, the water boil and the lava next to it set into stone; the heat view (H) shows the temperatures.',
+    description: 'A block of ice touching a pool of lava: the ice melts, the water boils and the lava sets into stone (H).',
   },
   steamCeiling: {
     label: 'Steam on a cold ceiling',
     group: 'heat',
-    description: 'A closed box with a row of steam under a metal ceiling at -50 °C. Watch the steam condense into water against the ceiling.',
+    description: 'A closed box with steam under a metal ceiling at -50 °C: the steam condenses into water on the ceiling.',
   },
   moltenMetal: {
     label: 'Molten metal',
     group: 'heat',
-    description: 'A pool of molten metal at 1,600 °C on a cold metal floor. Watch the floor take the heat and the pool set back into metal.',
+    description: 'A pool of molten metal at 1,600 °C on a cold metal floor: the floor takes the heat and the pool sets.',
   },
   explosion: {
     label: 'Buried charge',
     group: 'air',
-    description: 'A gunpowder charge buried in sand, with a fire cell against it and a stone wall to its right. Watch the blast throw sand and push the air; the air view (A) shows the pressure.',
+    description: 'A gunpowder charge buried in sand, lit by a fire cell: the blast throws sand and pushes the air (A).',
   },
   plume: {
     label: 'Hot plate plume',
     group: 'air',
-    description: 'A metal plate at 1,000 °C on the floor of a tall box, with a block of smoke on each side. The plate warms the air above it, which rises; the heat view (H) shows the warm air and the smoke shows the flow.',
+    description: 'A metal plate at 1,000 °C in a tall box with smoke on each side: the warm air rises and drags the smoke (H).',
   },
   mound: {
     label: 'Gunpowder mound',
     group: 'air',
-    description: 'A triangle of gunpowder inside a triangle of sand. Light the gunpowder at its left foot with fire and watch the blast break the mound; the air view (A) shows the pressure.',
+    description: 'A triangle of gunpowder inside a triangle of sand, lit at its left foot: the blast breaks the mound (A).',
   },
   physics: {
     label: 'Physics lab',
     group: 'labs',
-    description: 'Eight rooms side by side: a pot of water on a hot plate, dam breaks of water, oil and lava, hoppers of sand and gunpowder, an oil fire under a ceiling and a pond under a freezing ceiling.',
+    description: 'Eight rooms side by side: pot, dam breaks, hoppers, an oil fire and a pond under a freezing ceiling.',
   },
   showcase: {
     label: 'Showcase',
     group: 'labs',
-    description: 'One of everything the finished look draws: sand, water with oil, lava beside stone, a hot metal bar, a fire on gunpowder and smoke over a hot plate. Press C to see the cells look.',
+    description: 'One of everything the finished look draws; press C to see the cells look.',
   },
   ...SCENARIO_INFO,
 };

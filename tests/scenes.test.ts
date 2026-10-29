@@ -5,7 +5,7 @@ import { unpackHalf2 } from '../src/half';
 import { packCell, WALL } from '../src/scene-canvas';
 import { HOURGLASS, SCENARIO_SCENES, heatedLayer, hourglass, iceCup, sealedBars, steamBurn } from '../src/scenarios';
 import {
-  BLAST, BLAST_CENTER, BLAST_MARK, EXPLOSION, explosion, findScene, HEAT_BARS, heatBars, ICE_LAVA, iceLava, MOLTEN_METAL, moltenMetal, PHYSICS, PHYSICS_ROOMS, physicsRooms, PLUME, plume, SCENE_GROUPS, SCENE_INFO, SCENES, SHOWCASE, STEAM_CEILING, steamCeiling, uTube,
+  BLAST, BLAST_CENTER, BLAST_MARK, EXPLOSION, explosion, findScene, HEAT_BARS, heatBars, ICE_LAVA, iceLava, MOLTEN_METAL, moltenMetal, PHYSICS, PHYSICS_ROOMS, physicsRooms, PLUME, plume, DESCRIPTION_MAX, SCENE_GROUPS, SCENE_INFO, SCENES, SHOWCASE, STEAM_CEILING, steamCeiling, uTube,
   type PhysicsRoom,
 } from '../src/scenes';
 import { chamberLevel, liquidVolume } from './metrics';
@@ -34,6 +34,29 @@ describe('scenes', () => {
       expect(groups, name).toContain(info.group);
     }
     for (const name of Object.keys(SCENARIO_SCENES)) expect(SCENE_INFO[name].group, name).toBe('scenarios');
+  });
+
+  it('I31 AC10: keep every description to one sentence on one line, at most 110 characters', () => {
+    expect(DESCRIPTION_MAX).toBe(110);
+    for (const [name, { description }] of Object.entries(SCENE_INFO)) {
+      expect([...description].length, name).toBeLessThanOrEqual(DESCRIPTION_MAX);
+      expect(description, name).not.toMatch(/[\r\n]/);
+      // One sentence: no full stop followed by another sentence ("2.2 cm" and "0.3 mm" have a digit after the dot).
+      expect(description, name).not.toMatch(/[.!?]\s+\S/);
+      expect(description, name).toBe(description.trim());
+    }
+  });
+
+  it('I31 AC15: allow waitsFor on scenarios only, with IDs of the roadmap or backlog', () => {
+    const waiting = Object.entries(SCENE_INFO).filter(([, info]) => info.waitsFor !== undefined);
+    expect(waiting.map(([name]) => name).sort()).toEqual(
+      ['freeFall', 'heatedLayer', 'heatedLayer-below', 'hourglass', 'hourglass-wide', 'lavaCrust', 'redHotBar', 'viscousSpread'].sort(),
+    );
+    for (const [name, info] of waiting) {
+      expect(info.group, name).toBe('scenarios');
+      expect(info.waitsFor!.length, name).toBeGreaterThan(0);
+      for (const id of info.waitsFor!) expect(id, name).toMatch(/^[BIM]\d+(\.\d+)?$/);
+    }
   });
 
   it('I31 AC7: register each version a scenario test builds through a builder parameter, the main one under the bare name and the others as <name>-<version>', () => {

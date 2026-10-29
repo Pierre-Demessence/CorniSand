@@ -1,8 +1,21 @@
 import { expect, it } from 'vitest';
+import { SCENE_INFO } from '../src/scenes';
 
 // The helper of the real-world scenarios (`AGENTS.md`, "Real-world scenarios"). It imports no GPU code: a
 // scenario's `measure` callback is the only place that uses the device, and it runs inside the test, under the
 // calling file's `describe.skipIf(!device)`.
+
+/**
+ * The items a scenario's test waits for, read from its menu entry (`SCENE_INFO[scene].waitsFor`) so that the test titles
+ * and the menu cannot disagree. `only` narrows it to the items one check waits for when the scene has several; each
+ * must be in the entry. Delete the entry's `waitsFor` in the commit that makes the scenario pass.
+ */
+export function waitsFor(scene: string, ...only: string[]): string[] {
+  const ids = SCENE_INFO[scene]?.waitsFor;
+  if (!ids || ids.length === 0) throw new Error(`${scene} has no waitsFor in SCENE_INFO`);
+  for (const id of only) if (!ids.includes(id)) throw new Error(`${scene} does not wait for ${id} in SCENE_INFO`);
+  return only.length > 0 ? only : [...ids];
+}
 
 /** An inclusive range [min, max]. */
 export type Range = readonly [number, number];

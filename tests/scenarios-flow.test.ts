@@ -5,7 +5,7 @@ import { packCell, WALL } from '../src/scene-canvas';
 import { HOURGLASS, freeFall, hourglass, hourglassLayout, viscousSpread } from '../src/scenarios';
 import { cellType, createSim, device, runMany } from './gpu';
 import { columnTops, pileAngle } from './metrics';
-import { control, scenario } from './scenario';
+import { control, scenario, waitsFor } from './scenario';
 
 // The flow scenarios of M8.9 (`docs/plans/m8.9-real-world-scenarios.md`, AC10 to AC12): sand through an outlet, a thick
 // liquid spreading, a grain falling. Each target is a calculation from the physical data cited beside it.
@@ -117,21 +117,21 @@ describe.skipIf(!device)('hourglass', () => {
         value: 'ratio',
         outcome: 'widening the outlet from 8 to 16 cells multiplies the rate by 2.83 to 3.56',
         target: BEVERLOO,
-        waitsFor: ['B17'],
+        waitsFor: waitsFor('hourglass', 'B17'),
         companion: [1, 4],
       },
       {
         value: 'angle',
         outcome: 'the pile under an outlet of 8 stands at 34 ± 4 degrees',
         target: REPOSE,
-        waitsFor: ['B18'],
+        waitsFor: waitsFor('hourglass', 'B18'),
         companion: [20, 50],
       },
       {
         value: 'wideAngle',
         outcome: 'the pile under an outlet of 16 stands at 34 ± 4 degrees',
         target: REPOSE,
-        waitsFor: ['B18'],
+        waitsFor: waitsFor('hourglass-wide', 'B18'),
         companion: [20, 50],
       },
     ],
@@ -198,13 +198,13 @@ describe.skipIf(!device)('viscousSpread', () => {
       return { at3, at30, ratio: at30 / at3 };
     },
     checks: [
-      { value: 'at3', outcome: 'the lava front is 52 to 78 cells from the wall after 3 s', target: FRONT_3S, waitsFor: ['I35'], companion: [10, 80] },
+      { value: 'at3', outcome: 'the lava front is 52 to 78 cells from the wall after 3 s', target: FRONT_3S, waitsFor: waitsFor('viscousSpread'), companion: [10, 80] },
       { value: 'at30', outcome: 'the lava front is 82 to 124 cells from the wall after 30 s', target: FRONT_30S },
       {
         value: 'ratio',
         outcome: 'the front after 30 s is 1.45 to 1.75 times as far as after 3 s',
         target: [1.45, 1.75],
-        waitsFor: ['I35'],
+        waitsFor: waitsFor('viscousSpread'),
         companion: [1, 5],
       },
     ],
@@ -259,7 +259,7 @@ describe.skipIf(!device)('freeFall', () => {
         value: 'seconds',
         outcome: 'a sand grain falls 734 cells (1 m) in 0.58 to 0.74 s',
         target: TARGET,
-        waitsFor: ['I34'],
+        waitsFor: waitsFor('freeFall'),
         companion: [0.4, 1.5],
       },
     ],

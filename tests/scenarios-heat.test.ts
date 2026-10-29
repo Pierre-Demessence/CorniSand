@@ -10,7 +10,7 @@ import {
 } from '../src/scenarios';
 import type { Scene } from '../src/scenes';
 import { FRAME_SUPERSTEPS, cellType, createSim, device, runMany } from './gpu';
-import { control, scenario, type Range } from './scenario';
+import { control, scenario, waitsFor, type Range } from './scenario';
 
 // The heat scenarios of M8.9 (`docs/plans/m8.9-real-world-scenarios.md`). AC4 to AC6: sealed experiments whose target is a
 // heat balance of the rows' own data; they run without the air, the cells sit in WALL, which holds no heat, or at the grid's
@@ -308,15 +308,15 @@ describe.skipIf(!device)('redHotBar', () => {
     },
   );
 
-  for (const [version, target, waitsFor, outcome] of [
-    ['fast', FAST_TARGET, ['I26'], 'a steel bar 16x16 cells at 1,000 °C is at 565 to 655 °C after 125 s (the row\'s constant capacity)'],
-    ['full', FULL_TARGET, ['I26', 'I30'], 'a steel bar 16x16 cells at 1,000 °C is at 715 to 755 °C after 125 s'],
+  for (const [version, target, waits, outcome] of [
+    ['fast', FAST_TARGET, waitsFor('redHotBar', 'I26'), 'a steel bar 16x16 cells at 1,000 °C is at 565 to 655 °C after 125 s (the row\'s constant capacity)'],
+    ['full', FULL_TARGET, waitsFor('redHotBar'), 'a steel bar 16x16 cells at 1,000 °C is at 715 to 755 °C after 125 s'],
   ] as const) {
     scenario({
       name: 'redHotBar',
       version,
       measure: async () => ({ end: await barTemp(ELEMENTS) }),
-      checks: [{ value: 'end', outcome, target, waitsFor, companion: [target[0], 1000] }],
+      checks: [{ value: 'end', outcome, target, waitsFor: waits, companion: [target[0], 1000] }],
       timeout: 120_000,
     });
   }
@@ -391,9 +391,9 @@ describe.skipIf(!device)('lavaCrust', () => {
       return { crust1, crust9, ratio: crust1 > 0 ? crust9 / crust1 : 0 };
     },
     checks: [
-      { value: 'crust1', outcome: 'has a crust of 4.9 to 11.1 cells after 1 min', target: CRUST_1, waitsFor: ['I26', 'B16'], companion: [0, 12] },
-      { value: 'crust9', outcome: 'has a crust of 14.8 to 33.2 cells after 9 min', target: CRUST_9, waitsFor: ['I26', 'B16'], companion: [0, 34] },
-      { value: 'ratio', outcome: 'has a crust 2.5 to 3.6 times as thick at 9 min as at 1', target: RATIO, waitsFor: ['I26', 'B16'], companion: [0, 4] },
+      { value: 'crust1', outcome: 'has a crust of 4.9 to 11.1 cells after 1 min', target: CRUST_1, waitsFor: waitsFor('lavaCrust'), companion: [0, 12] },
+      { value: 'crust9', outcome: 'has a crust of 14.8 to 33.2 cells after 9 min', target: CRUST_9, waitsFor: waitsFor('lavaCrust'), companion: [0, 34] },
+      { value: 'ratio', outcome: 'has a crust 2.5 to 3.6 times as thick at 9 min as at 1', target: RATIO, waitsFor: waitsFor('lavaCrust'), companion: [0, 4] },
     ],
     timeout: 300_000,
   });
@@ -473,8 +473,8 @@ describe.skipIf(!device)('heatedLayer', () => {
     name: 'heatedLayer',
     measure: async () => ({ above: await nusselt('above', false), below: await nusselt('below', false) }),
     checks: [
-      { value: 'below', outcome: 'carries heat across a layer 3 cells deep at 1 °C (Rayleigh 970) at 0.8 to 1.2 times conduction', target: BELOW, waitsFor: ['I29'], companion: [0.8, 6] },
-      { value: 'above', outcome: 'carries heat across a layer 8 cells deep at 2 °C (Rayleigh 36,780) at 2.6 to 4.0 times conduction', target: ABOVE, waitsFor: ['I29'], companion: [2.6, 12] },
+      { value: 'below', outcome: 'carries heat across a layer 3 cells deep at 1 °C (Rayleigh 970) at 0.8 to 1.2 times conduction', target: BELOW, waitsFor: waitsFor('heatedLayer-below'), companion: [0.8, 6] },
+      { value: 'above', outcome: 'carries heat across a layer 8 cells deep at 2 °C (Rayleigh 36,780) at 2.6 to 4.0 times conduction', target: ABOVE, waitsFor: waitsFor('heatedLayer'), companion: [2.6, 12] },
     ],
     timeout: 300_000,
   });

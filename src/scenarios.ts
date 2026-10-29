@@ -391,99 +391,108 @@ export const SCENARIO_SCENES: Record<string, () => Scene> = {
 };
 
 /**
- * The menu's entry for each scenario scene, in the same order as `SCENARIO_SCENES`. A description says the experiment,
- * the target as its test states it, and how long to wait in game time (1x is real time: 240 supersteps per second);
- * when the test waits for an item, it says so too. It changes with the test's target, in the same commit.
+ * The menu's entry for each scenario scene, in the same order as `SCENARIO_SCENES`. A description is one line: what to
+ * watch, and the target only when it fits; it changes with the test's target, in the same commit. `waitsFor` lists the
+ * items a scenario's test waits for and the test takes its `[waits for ...]` title from it; delete it in the commit
+ * that makes the scenario pass.
  */
 export const SCENARIO_INFO: Record<string, SceneInfo> = {
   iceCup: {
     label: 'Ice in water',
     group: 'scenarios',
-    description: "A cube of ice (100 cells) in a sealed, insulated cup of water (900 cells): 1 part ice to 9 by mass, nothing leaves the cup. Reality: all the ice melts and the cup ends at 10.0 °C. The game should end at 9.8 to 10.2 °C once the ice is gone; read it with the pointer or the heat view (H). The last ice melts after about 7 minutes at 1x; the water does not stir, so the cup is not even until much later.",
+    description: 'A cube of ice in a sealed cup of water, 1 part to 9 by mass: all the ice melts and the cup ends at 10 °C.',
   },
   'iceCup-fast': {
     label: 'Ice in water (chips)',
     group: 'scenarios',
-    description: 'The same cup with the ice as chips, one cell in ten spread through the cup, so it melts sooner: the last ice goes after about 30 s at 1x. Target as for the cube: the cup ends at 10.0 °C, 9.8 to 10.2 in the game.',
+    description: 'The same cup with the ice as chips spread through the cup, so it melts sooner and ends at 10 °C.',
   },
   steamBurn: {
     label: 'Steam on steel',
     group: 'scenarios',
-    description: "Why steam scalds worse than boiling water: 10 cells of steam at 100 °C sealed in a cavity inside a box of 100 steel cells at 20 °C. Reality: the steam condenses and the box ends at 80.7 to 86.2 °C (steel's heat capacity is known to within that range). Wait about 20 s at 1x until the box is even, and read it with the pointer or the heat view (H).",
+    description: 'Why steam scalds worse than boiling water: 10 cells of steam at 100 °C sealed in 100 cells of steel at 20 °C.',
   },
   'steamBurn-water': {
     label: 'Boiling water on steel',
     group: 'scenarios',
-    description: 'The same box with 10 cells of boiling water at 100 °C instead of steam: no latent heat, so the box ends far cooler, at 27.8 to 28.6 °C. Wait about 25 s at 1x until the box is even.',
+    description: 'The same steel box with boiling water instead of steam: no latent heat, so it ends far cooler.',
   },
   contactTemp: {
     label: 'Contact temperature',
     group: 'scenarios',
-    description: 'Why metal feels colder than wood: a steel block at 80 °C (left, 100 cells) pressed against a granite block at 20 °C (60 cells). Reality: their contact face jumps at once to 69.1 to 72.7 °C (71.0 from the rows) and stays within 1 °C of it until the heat reaches a far end. Check it with the heat view (H) from 10 s to 60 s at 1x.',
+    description: 'Why metal feels colder than wood: steel at 80 °C against granite at 20 °C, the contact face jumps to 71 °C.',
   },
   redHotBar: {
     label: 'Red-hot bar',
     group: 'scenarios',
-    description: "A steel bar 2.2 cm square (16x16 cells) at 1,000 °C hanging in still room air, in a box open at the top. Reality: after 125 s the bar is at 715 to 755 °C (radiation and convection, steel's heat capacity changing with temperature); with a constant heat capacity, 565 to 655 °C. The 565 to 655 °C target waits for radiation (I26); the 715 to 755 °C target waits for radiation (I26) and a heat capacity that follows temperature (I30); the game reaches neither yet. Read the bar at 125 s at 1x.",
+    description: 'A steel bar 2.2 cm square at 1,000 °C cooling in still air: it should reach 715-755 °C after 125 s.',
+    waitsFor: ['I26', 'I30'],
   },
   lavaCrust: {
     label: 'Lava crust',
     group: 'scenarios',
-    description: "A pool of lava at 1,300 °C (64 cells wide, 80 deep) open to still air. Reality (Hon et al. 1994, Kilauea's pahoehoe flows, extrapolated to the first minutes by a stated factor of 1.5): a crust of stone grows down from the surface, 4.9 to 11.1 cells thick after 1 minute and 14.8 to 33.2 after 9, so 2.5 to 3.6 times as thick at 9 minutes as at 1. This scenario waits for radiation (I26, B16), so the game does not reach it yet. Wait 9 minutes at 1x (8x is faster).",
+    description: 'A pool of lava at 1,300 °C open to still air: a crust of stone grows down from the surface.',
+    waitsFor: ['I26', 'B16'],
   },
   heatedLayer: {
     label: 'Heated water layer',
     group: 'scenarios',
-    description: 'A layer of water 8 cells deep between two metal plates, the lower one 2 °C warmer. Reality: the layer is well above the threshold where heated water starts to stir, so it carries 2.6 to 4.0 times the heat that conduction alone would (3.2 to 3.3 by the published fit). Watch the water roll in the heat view (H); the heat is measured from 2 to 3 minutes at 1x. This scenario waits for the onset of convection (I29), so the game does not reach it yet.',
+    description: 'Water 8 cells deep between plates, the lower 2 °C warmer: it stirs and carries 2.6 to 4.0 times conduction.',
+    waitsFor: ['I29'],
   },
   'heatedLayer-below': {
     label: 'Heated water layer (below the threshold)',
     group: 'scenarios',
-    description: 'A layer of water 3 cells deep between two metal plates, the lower one 1 °C warmer: under the threshold, so the water stays still and heat crosses by conduction alone, 0.8 to 1.2 times the conduction rate. The heat is measured from 2 to 3 minutes at 1x (heat view, H). This scenario waits for the onset of convection (I29): the game stirs the water anyway.',
+    description: 'Water 3 cells deep, the lower plate 1 °C warmer: under the threshold, so it stays still and conducts only.',
+    waitsFor: ['I29'],
   },
   hourglass: {
     label: 'Hourglass',
     group: 'scenarios',
-    description: "A silo of sand 6 silo widths high over an outlet 8 cells wide, above a bulb. Reality: sand runs through at a steady rate however much is left above it (within 10% of its mean from 6 to 1.5 widths of sand), and the pile stands at 34 ± 4 degrees. The test reads the angle after plugging the outlet and letting the pile settle for 12 s, so in the live scene it is approximate while sand still falls. The window takes about 42 s at 1x (8x is faster). The pile's angle waits for B18, so the game does not reach it yet.",
+    description: 'A silo of sand over an 8-cell outlet: sand runs at a steady rate and the pile stands at 34 ± 4 degrees.',
+    waitsFor: ['B17', 'B18'],
   },
   'hourglass-wide': {
     label: 'Hourglass (wide outlet)',
     group: 'scenarios',
-    description: "The same silo with an outlet 16 cells wide: it empties 2.83 to 3.56 times as fast as the 8-cell one (Beverloo's law in two dimensions), and the pile stands at 34 ± 4 degrees (read, as for the 8-cell silo, after plugging the outlet and settling for 12 s, so approximate in the live scene). The rate window (from 6 to 1.5 silo widths of sand above) takes about 23 s at 1x today; at the target rate it would take 12 to 15 s. The rate waits for B17 and the angle for B18, so the game does not reach them yet.",
+    description: 'The same silo with a 16-cell outlet: it empties 2.83 to 3.56 times as fast as the 8-cell one.',
+    waitsFor: ['B17', 'B18'],
   },
   viscousSpread: {
     label: 'Lava spread',
     group: 'scenarios',
-    description: "A column of lava 14 cells wide and 40 high released against a wall. Reality (Huppert 1982): the front is 52 to 78 cells from the wall after 3 s and 82 to 124 after 30 s, so 1.45 to 1.75 times as far at 30 s as at 3 s. Count the front from the wall at 1x. The 30 s position is met; the 3 s position and the ratio wait for I35, because the game's lava spreads too slowly at first.",
+    description: 'A column of lava released against a wall: the front is 52 to 78 cells out after 3 s and 82 to 124 after 30 s.',
+    waitsFor: ['I35'],
   },
   freeFall: {
     label: 'Free fall',
     group: 'scenarios',
-    description: 'One grain of sand dropped from 1 m (734 cells) above the floor in a narrow column. Reality: a 0.3 mm grain lands in 0.58 to 0.74 s. It waits for I34 (grains of every size fall with the same drag), so the game does not reach it yet. Slow the game to 1/4x to watch it.',
+    description: 'One grain of sand dropped from 1 m in a narrow column: a 0.3 mm grain lands in 0.58 to 0.74 s.',
+    waitsFor: ['I34'],
   },
   sealedBars: {
     label: 'Steel bar relaxing',
     group: 'scenarios',
-    description: 'A steel bar one cell high and 40 cells long, the left half at 100 °C and the right half at 0 °C, with nothing around it that holds heat (a thin line, heat view H). Reality: the difference between the halves decays as e^(−t/τ) with τ = L² / (π² α), 21 s for this bar. The game should decay at that time constant within 15%. Wait about 30 s at 1x.',
+    description: 'A steel bar 40 cells long, halves at 100 and 0 °C: the difference decays with a 21 s time constant.',
   },
   'sealedBars-stone': {
     label: 'Stone bar relaxing',
     group: 'scenarios',
-    description: 'A stone bar one cell high and 12 cells long, the left half at 100 °C and the right half at 0 °C, nothing around it holding heat. Reality: the difference decays with τ = L² / (π² α), 24 s for this bar, and the game should match it within 15%. Wait about 35 s at 1x (heat view, H).',
+    description: 'A stone bar 12 cells long, halves at 100 and 0 °C: the difference decays with a 24 s time constant.',
   },
   'sealedBars-ice': {
     label: 'Ice bar relaxing',
     group: 'scenarios',
-    description: 'An ice bar one cell high and 12 cells long, the left half at −5 °C and the right half at −25 °C, so it stays ice, nothing around it holding heat. Reality: the difference decays with τ = L² / (π² α), 23 s for this bar, and the game should match it within 15%. Wait about 35 s at 1x (heat view, H).',
+    description: 'An ice bar 12 cells long, halves at -5 and -25 °C: the difference decays with a 23 s time constant.',
   },
   coolingBlock: {
     label: 'Cooling steel block',
     group: 'scenarios',
-    description: "A steel block 50 cells (68 mm) wide at 500 °C hanging in a large box of still room air. Reality: natural convection in still air carries 5 to 25 W/m²·K away from objects of a centimetre to a metre. The game should cool with an effective surface coefficient of 5 to 20 W/m²·K (within a factor of 2 of the typical 10): after 37.5 s at 1x the block's mean has fallen by about 1.5 to 6 °C only (heat view, H).",
+    description: 'A steel block 68 mm wide at 500 °C in still air: it cools with a surface coefficient of 5 to 20 W/m²·K.',
   },
   heatedPot: {
     label: 'Heated pot',
     group: 'scenarios',
-    description: 'A block of water 4x4 cells at 90 °C on the floor of a tank of water 32 cells deep at 20 °C. Reality: the warm block rises at the free-convection speed, about 0.12 m/s by the free-convection scale (an estimate, not a measured speed), crossing the middle half of the tank in 0.18 s. The game should be within a factor of 3 of that speed: 0.06 to 0.55 s for the same stretch. It reaches three quarters of the way up in under a second; slow the game to 1/4x and use the heat view (H).',
+    description: 'A 4x4 block of water at 90 °C on the floor of a 20 °C tank: it rises at about 0.12 m/s (within a factor of 3).',
   },
 };
