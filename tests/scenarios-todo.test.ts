@@ -30,7 +30,7 @@ describe('scenarios to build with M8.1 materials', () => {
     // For I22's design: the volume research's 8-bit amount per cell (a full cell about 200 units) changes mercury's
     //   capacity by one unit per 27.6 °C, and a bulb at one temperature crosses each unit in all its cells at once, so the
     //   column would rise in jumps of 27.6 °C; reading to the degree takes about 13 bits, or rounding spread across the cells.
-    // Needs: MERCURY (M8.1g) and GLASS (M8.1e), then waits for I22. M8.1g builds it as waiting.
+    // Needs: MERCURY (M8.1g) and GLASS (M8.1e), then waits for I22 (M12.5). M8.1g builds it as waiting.
     it.todo('thermometer: the mercury in a 33x33-cell bulb stands on the mark of its temperature (one mark per 5 °C) within one mark, loaded at 0, 20, 60 and 100 °C (fast) and dipped from 20 °C into a 60 °C bath (full)');
   });
 
@@ -49,7 +49,7 @@ describe('scenarios to build with M8.1 materials', () => {
     // Experiment: liquid nitrogen poured onto water.
     // Target: it floats (807 kg/m³ at -196 °C against water's 1,000), boils off until no liquid nitrogen is left and
     //   freezes a skin of ice on the water. Its drops skitter on their own vapor (Leidenfrost, below -160 °C on any
-    //   room-temperature surface, `docs/research/physical-properties.md`); the skitter waits for film boiling.
+    //   room-temperature surface, `docs/research/physical-properties.md`); the skitter waits for film boiling (M12.4).
     // Calculation (estimate, handbook: latent heat of vaporisation 199 kJ/kg, gas capacity 1.04 kJ/kg·K): a cell is one
     //   unit of matter in every state, so a nitrogen cell takes 199 x 807 = 160.6 MJ/m³ to boil and 1.04 x 196 x 807 =
     //   164.5 MJ/m³ more to warm its gas to 0 °C: at most 325.1 MJ/m³ from the water. A water cell at 20 °C gives up
@@ -57,7 +57,7 @@ describe('scenarios to build with M8.1 materials', () => {
     //   freezes at most 325.1 / 417.6 = 0.78 water cells.
     // Measure: ICE cells, LIQUID_NITROGEN cells left, and the height of the gas above the water after a measured number
     //   of supersteps.
-    // Needs: LIQUID_NITROGEN (M8.1g; M8.1 AC20); the skitter waits for film boiling (`docs/research/physical-properties.md`).
+    // Needs: LIQUID_NITROGEN (M8.1g; M8.1 AC20); the skitter waits for film boiling (M12.4).
     it.todo('nitrogenOnWater: liquid nitrogen floats on water and boils off to nothing, freezing at most 0.78 ice cells per nitrogen cell, and its gas rises above the water');
   });
 
@@ -139,7 +139,7 @@ describe('scenarios to build later', () => {
     // Calculation: a column 40 cells high is H = 40 x 1.3625 mm = 54.5 mm, so 2 x sqrt(9.81 x 0.0545) = 1.46 m/s, more than
     //   twice the grid's top speed of one cell per dispatch (1.3625 mm / 2.08 ms = 0.65 m/s); columns over 8 cells reach it.
     // Source: tilupy's analytic solutions for Ritter's solution.
-    // Needs: I27.
+    // Needs: I27 (M12.6).
     it.todo('damBreak: the front of a released water column 40 cells high runs at up to 1.46 m/s (2 sqrt(g H))');
   });
 
@@ -149,7 +149,7 @@ describe('scenarios to build later', () => {
     //   polished steel (150 to 265 °C across studies, `docs/research/physical-properties.md`). The lifetimes come from
     //   Gottfried et al. 1966, to source when it is built. A cell is 2.5 µL against the tens of µL measured, so a cell's
     //   lifetime is shorter than the measured ones (estimate).
-    // Needs: film boiling (`docs/research/physical-properties.md`, Leidenfrost point).
+    // Needs: film boiling (M12.4; `docs/research/physical-properties.md`, Film boiling).
     it.todo('leidenfrost: a water drop on a pan at 250 °C outlasts one on a pan at 150 °C many times over');
   });
 
@@ -158,7 +158,7 @@ describe('scenarios to build later', () => {
     // Target: it climbs 7.5 to 8 cells.
     // Calculation: h = 2 gamma cos(theta) / (rho g w) with gamma 0.0728 N/m, rho 1,000 kg/m³ and w = 1.3625 mm:
     //   2 x 0.0728 / (1,000 x 9.81 x 0.0013625) = 10.9 mm = 8.0 cells at theta 0°, 7.5 cells at 20° (cos 20° = 0.940).
-    // Needs: surface tension, GLASS.
+    // Needs: surface tension (M12.7), GLASS (M8.1e).
     it.todo('capillary: water climbs 7.5 to 8 cells up a one-cell glass slot (2 gamma cos(theta) / (rho g w), theta 0 to 20°)');
   });
 
@@ -167,7 +167,7 @@ describe('scenarios to build later', () => {
     // Target: it stops spreading 3.2 cells deep.
     // Calculation: 2 l_c sin(theta / 2) with the capillary length l_c = sqrt(gamma / (rho g)) = sqrt(0.0728 / (1,000 x 9.81))
     //   = 2.72 mm (2.0 cells) and the contact angle theta = 107°: 2 x 2.72 mm x sin(53.5°) = 4.37 mm = 3.2 cells.
-    // Needs: surface tension, WAX.
+    // Needs: surface tension (M12.7), WAX (M8.1g).
     it.todo('puddleOnWax: water on wax stops spreading 3.2 cells deep (2 l_c sin(theta / 2), theta 107°)');
   });
 
@@ -175,7 +175,7 @@ describe('scenarios to build later', () => {
     // Experiment: damp sand packed into a wall.
     // Target: it stands in a vertical wall 100 to 170 cells high (14 to 23 cm). The research behind this catalogue gave no
     //   calculation or source for the range; cite one when it is built (the target is not final until then).
-    // Needs: moisture.
+    // Needs: moisture (M12.7).
     it.todo('sandCastle: damp sand stands in a vertical wall 100 to 170 cells high');
   });
 
@@ -183,7 +183,7 @@ describe('scenarios to build later', () => {
     // Experiment: water draining through a bed of gravel and through a bed of sand.
     // Target: it drains through gravel tens of times faster. Permeability grows with the square of the grain size
     //   (Kozeny-Carman), so the ratio is that of the rows' grain sizes squared, computed from them when it is built.
-    // Needs: grain size, moisture, GRAVEL (M8.1e).
+    // Needs: grain size (M12.1), moisture (M12.7), GRAVEL (M8.1e).
     it.todo('drainage: water drains through gravel tens of times faster than through sand');
   });
 
@@ -191,8 +191,7 @@ describe('scenarios to build later', () => {
     // Experiment: a lit match dropped into diesel and into petrol, both at room temperature.
     // Target: it goes out in diesel and lights the petrol. A liquid gives off a flammable vapor only above its flash
     //   point: diesel at least 52 °C, petrol -43 °C (handbook), so at 20 °C only petrol's vapor lights.
-    // Needs: M8.2 and a flash point apart from the ignition temperature (proposed for M8.2 in
-    //   `docs/research/physical-properties.md`, not in the roadmap's M8.2).
+    // Needs: M8.2's flash point apart from the ignition temperature (data in `docs/research/physical-properties.md`).
     it.todo('matchInDiesel: a lit match dropped into diesel goes out, and into petrol it lights it (flash points: diesel at least 52 °C, petrol -43 °C)');
   });
 
@@ -200,7 +199,7 @@ describe('scenarios to build later', () => {
     // Experiment: flour dispersed in air, and a heap of flour, each with a flame.
     // Target: the dispersed flour explodes, the heap smoulders. The research behind this catalogue gave no figure; the
     //   targets (the burn's duration, the pressure of the burst) are calculated and sourced when it is built.
-    // Needs: M8.2.
+    // Needs: M8.2, and grain size (M12.1) for the burn speed.
     it.todo('flourDust: flour dispersed in air explodes, a heap of it smoulders');
   });
 
@@ -215,15 +214,14 @@ describe('scenarios to build later', () => {
   describe('pressureCooker', () => {
     // Experiment: water heated in a sealed vessel at one atmosphere over ambient.
     // Target: it boils at about 120 °C (steam tables, IAPWS: 120.2 °C at 202.65 kPa absolute).
-    // Needs: M8.3 and a physical pressure scale (D33).
+    // Needs: M8.3's boiling points that follow the pressure, on a physical pressure scale for the air.
     it.todo('pressureCooker: water boils at about 120 °C at one atmosphere over ambient');
   });
 
   describe('saltOnIce', () => {
     // Experiment: salt on ice.
     // Target: it makes brine that cools to -21.1 °C, the salt-water eutectic (handbook).
-    // Needs: M8.4 and a freezing point that falls with the salt dissolved (proposed for M8.4 in
-    //   `docs/research/physical-properties.md`; the roadmap's M8.4 dissolves salt but does not lower the freezing point).
+    // Needs: M8.4's freezing point that falls with the salt dissolved.
     it.todo('saltOnIce: salt on ice makes brine that cools to -21.1 °C');
   });
 
@@ -231,8 +229,7 @@ describe('scenarios to build later', () => {
     // Experiment: a copper-constantan junction heated at one end.
     // Target: it gives about 40 µV per °C (type T thermocouple sensitivity, handbook; the Seebeck coefficient,
     //   `docs/research/physical-properties.md`, M7). The tolerance is fixed from the handbook's range when it is built.
-    // Needs: M7 and a Seebeck coefficient per element (proposed in `docs/research/physical-properties.md`; the roadmap's M7
-    //   lists resistivity, transparency and reflection).
+    // Needs: M7's Seebeck coefficient per element (data in `docs/research/physical-properties.md`).
     it.todo('thermocouple: a copper-constantan junction gives about 40 µV per °C');
   });
 
@@ -241,8 +238,7 @@ describe('scenarios to build later', () => {
     // Target: it splits into colors, blue bending more than red. Refractive indices (handbook): water 1.33, crown glass
     //   1.52, diamond 2.42; for BK7 crown glass 1.5143 at red (656 nm) and 1.5224 at blue (486 nm). The deviation angle
     //   of the chosen prism is calculated from them when it is built.
-    // Needs: M7 and refraction with dispersion (proposed in `docs/research/physical-properties.md`; the roadmap's M7 lists
-    //   transparency and reflection).
+    // Needs: M7's refraction with dispersion (data in `docs/research/physical-properties.md`).
     it.todo('prism: a glass prism splits white light, blue bending more than red (crown glass 1.5143 for red, 1.5224 for blue)');
   });
 });
@@ -255,11 +251,11 @@ describe('scenarios to build beside the built ones', () => {
 
     // Pebble: a 5 mm grain settles at about 12 m/s, so drag adds little to the 0.452 s of free fall in a vacuum
     //   (sqrt(2 x 1 / 9.81) = 0.452 s); drag growing with the square of the speed (estimate) gives 0.46 s.
-    // Needs: GRAVEL (M8.1e) and grain size (backlog I34); M8.1e turns it into a waiting test.
+    // Needs: GRAVEL (M8.1e) and grain size (backlog I34, M12.1); M8.1e turns it into a waiting test.
     it.todo('freeFall (pebble): a pebble lands from 1 m (734 cells) in 0.46 s');
 
     // Flour: 50 µm grains settle at 0.07 to 0.1 m/s, so 1 m takes 1 / 0.1 = 10 s to 1 / 0.07 = 14.3 s.
-    // Needs: FLOUR (M8.2) and grain size (backlog I34).
+    // Needs: FLOUR (M8.2) and grain size (backlog I34, M12.1).
     it.todo('freeFall (flour): a pinch of flour hangs for 10 to 14 s over a fall of 1 m (734 cells)');
   });
 

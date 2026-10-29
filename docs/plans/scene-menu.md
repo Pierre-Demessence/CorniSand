@@ -1,6 +1,6 @@
 # I31 Scene menu
 
-Status: approved; starts once the M8.9 run has ended: that run edits `src/scenes.ts`, `src/scenarios.ts`, the scenario tests, `docs/backlog.md` and `AGENTS.md`, which this plan edits too. Next: I31.1.
+Status: approved; runs first, before M8.1 (`docs/roadmap.md`, Order). Next: I31.1.
 
 ## Goal
 
@@ -10,7 +10,7 @@ A Scenes button in the toolbar lists every scene the game has, grouped (liquids,
 
 In: per-scene menu info; the menu; every scenario variant the tests build registered as its own scene; `sealedBars`, `coolingBlock` and `heatedPot` built as scenes; the docs below.
 
-Not in: save files (I32; scenes stay code: `docs/decisions.md` entry below), a live readout of a scenario's measurement in the game (I33), loading a scene without a page reload, `freezingPond` and `sandPile` as scenes (a test-only ceiling row, a brush pour; the `physics` lab shows both).
+Not in: save files (I32; scenes stay code: `docs/decisions.md` entry below), a live readout of a scenario's measurement in the game (I33, roadmap M15.1), loading a scene without a page reload, `freezingPond` and `sandPile` as scenes (a test-only ceiling row, a brush pour; the `physics` lab shows both).
 
 ## Choices approved by the user
 
@@ -61,7 +61,7 @@ Needs you: open the menu, pick two scenes and Empty world, say if anything reads
 - [ ] `sealedBars`, `coolingBlock`, `heatedPot` as scenes (AC8) in `src/scenarios.ts`, their tests in `tests/physics.test.ts`, `tests/air-heat.test.ts` and `tests/convection.test.ts` built from them.
 - [ ] Rule in `AGENTS.md` "Real-world scenarios": a scenario's description states its target and changes with it.
 - [ ] Verify: lint, typecheck, `npm test`, build; the menu shows the scenarios group (browser check).
-- [ ] Finish: I31 deleted from the backlog, this plan deleted in the commit.
+- [ ] Finish: I31 deleted from the backlog and from the roadmap's Order line, this plan deleted in the commit.
 
 Visible after: the menu's real-world scenarios group, each saying what to expect and how long to wait, with the fast and full versions as separate entries.
 Needs you: open `iceCup` and one waiting scenario (`redHotBar`) from the menu and say whether the description tells you what to look for (at the end).

@@ -68,11 +68,11 @@ Rejected: advection-only coupling (above).
 
 ## One cell per CSS pixel, grid fixed at load
 
-The grid matches the canvas size in CSS pixels when the page loads and ignores `devicePixelRatio`: the falling-sand look is one visible pixel per cell, and a HiDPI grid would multiply memory and GPU cost by up to 4× or more. Resizing reconfigures the swap chain and stretches the existing grid instead of reallocating it, so the world is never lost on resize.
+The grid matches the canvas size in CSS pixels when the page loads and ignores `devicePixelRatio`: the falling-sand look is one visible pixel per cell, and a HiDPI grid would multiply memory and GPU cost by up to 4× or more. Drawing the canvas at device pixels over the same grid, so the smooth look's edges are sharp on high-density screens, is part of roadmap M13 (`docs/research/rendering.md`). Resizing reconfigures the swap chain and stretches the existing grid instead of reallocating it, so the world is never lost on resize.
 
 If the grid would exceed the device's storage-buffer limits (`maxStorageBufferBindingSize`, `maxBufferSize`, both requested at the adapter's maximum), the grid uses the smallest integer cells-per-pixel scale that fits, so a huge window still renders, coarser.
 
-Rejected: resizing the grid on window resize (loses or crops the world), rendering at device pixels.
+Rejected: resizing the grid on window resize (loses or crops the world), a grid at device pixels.
 
 ## Tuned on a desktop GPU first, then scaled down
 
@@ -96,7 +96,7 @@ Rejected: hand-tuned ranks for heat (no way to say what a value means or to chec
 
 A cell holds one unit of matter whatever its state, so a gas row's heat capacity is its specific heat times its liquid's density, and a latent heat is per kilogram times the density of the denser phase (water: 334 and 2,257 MJ/m³). STEAM's conductivity of 42 W/m·K is the consequence: steam's real 0.025 W/m·K is for a cell of steam's own mass, and a cell of the water's mass (capacity 2.0 MJ/m³·K) keeps steam's real diffusivity (0.025 / (0.59 kg/m³ × 2.0 kJ/kg·K) × 2.0 MJ/m³·K), so the row is about 1,700 times the literal value. With the literal value a steam cell would outlast a cold plate for minutes where real steam gives its heat up within a second. The cost is that steam released into open air hardly condenses, since the air cannot take a whole cell's latent heat (backlog I25).
 
-Rejected: the literal 0.025 W/m·K for STEAM; a conserved amount of matter per cell with volume changes (research in `docs/research/volume-changes.md`, backlog I22).
+Rejected: the literal 0.025 W/m·K for STEAM. A conserved amount of matter per cell, which lets volume change, is roadmap M12.5, to be confirmed (`docs/research/volume-changes.md`, backlog I22).
 
 ## No code or data tables from The Powder Toy
 
