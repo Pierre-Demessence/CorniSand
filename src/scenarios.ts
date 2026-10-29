@@ -1,5 +1,5 @@
 import { ELEMENT as T } from './elements';
-import { Canvas, WALL } from './scene-canvas';
+import { Canvas, packCell, WALL } from './scene-canvas';
 import type { Scene } from './scenes';
 
 // The scenario scenes (`?scene=<name>`), each built from `scene-canvas.ts`'s primitives and registered here by
@@ -107,8 +107,99 @@ export function contactTemp(): Scene {
   return { name: 'contactTemp', width, height, fields: canvas.fields, floorY: 0, chambers: [] };
 }
 
+/**
+ * `redHotBar`: a steel bar 16x16 cells (2.2 cm square) at 1,000 °C hanging in still room air, in a box 96 cells wide and
+ * 128 high that is open at the top, so the bar loses heat through its four sides, as a long bar does. The bar's cells
+ * are aligned to the air's 4x4 cells.
+ */
+export const RED_HOT_BAR = {
+  boxWidth: 96,
+  boxHeight: 128,
+  side: 16,
+  x0: 40,
+  y0: 24,
+  temp: 1000,
+} as const;
+
+export function redHotBar(): Scene {
+  const { boxWidth, boxHeight, side, x0, y0, temp } = RED_HOT_BAR;
+  const canvas = new Canvas(boxWidth, boxHeight);
+  canvas.fill(T.WALL, 0, WALL, 0, boxHeight);
+  canvas.fill(T.WALL, boxWidth - WALL, boxWidth, 0, boxHeight);
+  canvas.fill(T.WALL, 0, boxWidth, 0, WALL);
+  canvas.fill(T.METAL, x0, x0 + side, y0, y0 + side);
+  canvas.fillTemp(temp, x0, x0 + side, y0, y0 + side);
+  return { name: 'redHotBar', width: boxWidth, height: boxHeight, fields: canvas.fields, floorY: WALL, chambers: [] };
+}
+
+/**
+ * `lavaCrust`: a pool of lava open to still room air, in a box of WALL (floor and sides hold no heat) with `airHeight`
+ * rows of air above it. The crust is the run of STONE cells that grows down from the surface. The lava starts at
+ * `lavaTemp`.
+ */
+export const LAVA_CRUST = {
+  poolWidth: 64,
+  poolDepth: 80,
+  airHeight: 34,
+  lavaTemp: 1300,
+} as const;
+
+export function lavaCrust(lavaTemp: number = LAVA_CRUST.lavaTemp): Scene {
+  const { poolWidth, poolDepth, airHeight } = LAVA_CRUST;
+  const width = poolWidth + 2 * WALL;
+  const height = WALL + poolDepth + airHeight;
+  const canvas = new Canvas(width, height);
+  canvas.fill(T.WALL, 0, WALL, 0, height);
+  canvas.fill(T.WALL, width - WALL, width, 0, height);
+  canvas.fill(T.WALL, 0, width, 0, WALL);
+  canvas.fill(T.LAVA, WALL, WALL + poolWidth, WALL, WALL + poolDepth);
+  canvas.fillTemp(lavaTemp, WALL, WALL + poolWidth, WALL, WALL + poolDepth);
+  return { name: 'lavaCrust', width, height, fields: canvas.fields, floorY: WALL, chambers: [] };
+}
+
+/**
+ * `heatedLayer`: a layer of water between two METAL plates (`plateRows` rows each, so that a plate's temperature drifts by
+ * a fraction of the difference over minutes), the lower one warmer than the upper by `delta`, centred on `mean`, in WALL
+ * sides `width` cells apart. The layer starts with conduction's straight-line profile between the plates. `above` is a
+ * layer well above the threshold of convection (8 cells and 2 °C: a Rayleigh number of 36,780), `below` one under it
+ * (3 cells and 1 °C: 970). `liquid` is the element of the layer, for a test that swaps in another.
+ */
+export const HEATED_LAYER = {
+  width: 64,
+  plateRows: 70,
+  mean: 20,
+  above: { depth: 8, delta: 2 },
+  below: { depth: 3, delta: 1 },
+} as const;
+
+export type HeatedLayerKind = 'above' | 'below';
+
+export function heatedLayer(kind: HeatedLayerKind = 'above', liquid: number = T.WATER): Scene {
+  const { width: layerWidth, plateRows, mean } = HEATED_LAYER;
+  const { depth, delta } = HEATED_LAYER[kind];
+  const width = layerWidth + 2 * WALL;
+  const height = 2 * plateRows + depth;
+  const [x0, x1] = [WALL, WALL + layerWidth];
+  const layerY0 = plateRows;
+  const canvas = new Canvas(width, height);
+  canvas.fill(T.WALL, 0, width, 0, height);
+  canvas.fill(T.METAL, x0, x1, 0, plateRows);
+  canvas.fillTemp(mean + delta / 2, x0, x1, 0, plateRows);
+  canvas.fill(T.METAL, x0, x1, layerY0 + depth, height);
+  canvas.fillTemp(mean - delta / 2, x0, x1, layerY0 + depth, height);
+  canvas.fill(T.WATER, x0, x1, layerY0, layerY0 + depth);
+  // Another element of a test table is not in the default one `fill` reads temperatures from: swap the kind afterwards.
+  for (let y = layerY0; y < layerY0 + depth; y++) canvas.fields.kind.fill(packCell(liquid), y * width + x0, y * width + x1);
+  // The cell j of the layer is j + 1 cells from the lower plate's top row, of depth + 1 between the two plate rows.
+  for (let j = 0; j < depth; j++) canvas.fillTemp(mean + delta * (0.5 - (j + 1) / (depth + 1)), x0, x1, layerY0 + j, layerY0 + j + 1);
+  return { name: 'heatedLayer', width, height, fields: canvas.fields, floorY: 0, chambers: [] };
+}
+
 export const SCENARIO_SCENES: Record<string, () => Scene> = {
   iceCup: () => iceCup('full'),
   steamBurn: () => steamBurn('steam'),
   contactTemp,
+  redHotBar,
+  lavaCrust: () => lavaCrust(),
+  heatedLayer: () => heatedLayer('above'),
 };

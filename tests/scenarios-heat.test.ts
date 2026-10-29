@@ -2,14 +2,19 @@ import { describe } from 'vitest';
 import { tempView } from '../src/cell-fields';
 import { ELEMENT as T, ELEMENTS, elementByKey, elementConductivity, elementHeatCapacity, type ElementDef } from '../src/elements';
 import { effectiveTemp } from '../src/heat';
-import { CONTACT_TEMP, ICE_CUP, STEAM_BURN, contactTemp, iceCup, steamBurn, type IceCupVersion, type SteamBurnFill } from '../src/scenarios';
+import { CELL_SIZE, HEAT_UNIT, PAIR_TIME } from '../src/physics';
+import { WALL } from '../src/scene-canvas';
+import {
+  CONTACT_TEMP, HEATED_LAYER, ICE_CUP, LAVA_CRUST, STEAM_BURN, contactTemp, heatedLayer, iceCup, lavaCrust, redHotBar, steamBurn,
+  type HeatedLayerKind, type IceCupVersion, type SteamBurnFill,
+} from '../src/scenarios';
 import type { Scene } from '../src/scenes';
-import { cellType, createSim, device, runMany } from './gpu';
+import { FRAME_SUPERSTEPS, cellType, createSim, device, runMany } from './gpu';
 import { control, scenario, type Range } from './scenario';
 
-// The heat bookkeeping scenarios of M8.9 (`docs/plans/m8.9-real-world-scenarios.md`, AC4 to AC6): sealed experiments
-// whose target is a heat balance of the rows' own data. All three run without the air; the cells sit in WALL, which
-// holds no heat, or at the grid's edge, which holds none either.
+// The heat scenarios of M8.9 (`docs/plans/m8.9-real-world-scenarios.md`). AC4 to AC6: sealed experiments whose target is a
+// heat balance of the rows' own data; they run without the air, the cells sit in WALL, which holds no heat, or at the grid's
+// edge, which holds none either. AC7 to AC9 (`redHotBar`, `lavaCrust`, `heatedLayer`) wait for mechanics the game lacks.
 
 const NO_AIR = { air: false };
 // A superstep is 1/240 s of game time.
@@ -247,5 +252,247 @@ describe.skipIf(!device)('contactTemp', () => {
     measure: async () => (await face(1, ELEMENTS.map((e) => (e.key === 'STONE' ? { ...e, conductivity: 25 } : e)))).face,
     target: FACE_TARGET,
     timeout: 120_000,
+  });
+});
+
+/** Memoizes an async measurement by its key, so that a scenario's tests and its control share one run. */
+function memo<A extends unknown[], R>(key: (...args: A) => string, measure: (...args: A) => Promise<R>): (...args: A) => Promise<R> {
+  const runs = new Map<string, Promise<R>>();
+  return (...args) => {
+    const k = key(...args);
+    if (!runs.has(k)) runs.set(k, measure(...args));
+    return runs.get(k)!;
+  };
+}
+
+describe.skipIf(!device)('redHotBar', () => {
+  // Experiment: a steel bar 2.2 cm square (16x16 cells) taken out of a forge at 1,000 °C and left in still room air, hanging
+  //   in it, so that it loses heat through its four sides, as a long bar does.
+  // Target: lumped cooling (the bar's Biot number is 0.03) through radiation at oxidized steel's emissivity, 0.9 to 0.6 (to
+  //   room walls at 20 °C), and natural convection at 10 W/m²·K. Full: with steel's heat capacity by temperature (EN 1993-1-2:
+  //   440 J/kg·K at 20 °C, 760 at 600 °C, a peak near 735 °C, where its crystal structure changes and a cooling bar pauses, and
+  //   650 above 900 °C): 715 to 755 °C after 125 s; the emissivity alone spans 730 to 751 °C, convection (nearer 19 W/m²·K than
+  //   10 on a bar this small) lowers it by about 8 °C, and a cooling bar changes structure at a somewhat lower temperature than
+  //   EN 1993-1-2's heating curve gives (inferred). Fast: the same cooling at the METAL row's constant 3.5 MJ/m³·K (iron at 20 °C):
+  //   578 to 650 °C for emissivity 0.6 to 0.9 at 10 W/m²·K, about 10 °C lower with convection at 19 W/m²·K (estimate), so 565 to 655.
+  //   Sources: EN 1993-1-2 (steel's specific heat); Incropera et al., Fundamentals of Heat and Mass Transfer (Table 1.1,
+  //   convection coefficients; the emissivity of oxidized steel).
+  // Measure: the bar's mean displayed temperature at 125 s (30,000 supersteps).
+  // Leaves out: radiation coming back from the room (taken at 20 °C).
+  // Waits: the game's cells lose heat to the air only (backlog I26, radiation); the full one also needs a heat capacity that follows
+  //   temperature (backlog I30).
+  const FAST_TARGET = [565, 655] as const;
+  const FULL_TARGET = [715, 755] as const;
+
+  const barTemp = memo(
+    (elements: readonly ElementDef[]) => String(elements.find((e) => e.id === T.METAL)!.heatCapacity),
+    async (elements: readonly ElementDef[]): Promise<number> => {
+      const scene = redHotBar();
+      const sim = createSim(scene.width, scene.height, 1, { elements });
+      sim.load(scene.fields);
+      const metal = elements.find((e) => e.id === T.METAL)!;
+      await runMany(sim, 125 * SUPERSTEPS_PER_SECOND, FRAME_SUPERSTEPS);
+      const kind = await sim.fields.read('kind');
+      const temp = tempView({ temp: await sim.fields.read('temp') });
+      let sum = 0;
+      let count = 0;
+      for (let i = 0; i < kind.length; i++) {
+        if (cellType(kind[i]) !== T.METAL) continue;
+        sum += effectiveTemp(metal, temp[i]);
+        count++;
+      }
+      return sum / count;
+    },
+  );
+
+  for (const [version, target, waitsFor, outcome] of [
+    ['fast', FAST_TARGET, ['I26'], 'a steel bar 16x16 cells at 1,000 °C is at 565 to 655 °C after 125 s (the row\'s constant capacity)'],
+    ['full', FULL_TARGET, ['I26', 'I30'], 'a steel bar 16x16 cells at 1,000 °C is at 715 to 755 °C after 125 s'],
+  ] as const) {
+    scenario({
+      name: 'redHotBar',
+      version,
+      measure: async () => ({ end: await barTemp(ELEMENTS) }),
+      checks: [{ value: 'end', outcome, target, waitsFor, companion: [target[0], 1000] }],
+      timeout: 120_000,
+    });
+  }
+
+  // Steel at twice its capacity cools half as fast and ends near 957 °C, far above the fast window.
+  control({
+    name: 'redHotBar',
+    version: 'fast',
+    wrong: 'METAL at twice its heat capacity',
+    measure: () => barTemp(ELEMENTS.map((e) => (e.key === 'METAL' ? { ...e, heatCapacity: elementHeatCapacity(e) * 2 } : e))),
+    target: FAST_TARGET,
+    timeout: 120_000,
+  });
+});
+
+describe.skipIf(!device)('lavaCrust', () => {
+  // Experiment: a pool of basaltic lava open to still air grows a solid crust.
+  // Target: crust thickness C = 0.0779 sqrt(t), C in metres and t in hours (Hon et al. 1994, Kilauea's pahoehoe flows; written
+  //   t = 164.8 C² by Speiser 2017, whose text says centimetres but whose results fit metres only: its 45 cm crust is dated 35.6
+  //   hours, near the 33 that metres give). That is 1 cm (7.4 cells) after 59 s and 3 cm (22.1 cells) after 9 minutes. The fit
+  //   covers crusts of centimetres to about a metre over hours to days, so the first minutes extrapolate it: a factor of 1.5 on the
+  //   thickness (estimate), 4.9 to 11.1 cells at 1 min and 14.8 to 33.2 at 9. The crust at 9 minutes is sqrt(9) = 3 times the
+  //   crust at 1 minute whatever the constant, read to one cell at each end: 2.5 to 3.6.
+  // Measure: the thickness of the STONE layer over the middle half of the pool, as the run of STONE cells from its surface down
+  //   (0 where the surface cell is not STONE), averaged over those columns, at 1 and 9 minutes. The ratio is the crust at 9 over
+  //   the crust at 1 minute, 0 when there is no crust at 1 minute.
+  // Leaves out: real basalt sets over a range of temperatures, the game's lava at one (1,200 °C, the LAVA row); the pool starts
+  //   at the row's painted 1,300 °C; gas bubbles in the crust, wind, rain.
+  // Waits: radiation (backlog I26): at 1,150 °C a surface of emissivity 0.9 radiates 209 kW/m², 18 times the 11 kW/m² still air
+  //   carries away; and a pool surface in the game loses far less than a bar's sides (backlog B16).
+  const CRUST_1 = [4.9, 11.1] as const;
+  const CRUST_9 = [14.8, 33.2] as const;
+  const RATIO = [2.5, 3.6] as const;
+
+  /** The crust over the middle of the pool at each of `minutes`, in cells. */
+  async function crusts(latentScale: number, minutes: readonly number[]): Promise<number[]> {
+    const scene = lavaCrust();
+    const elements = ELEMENTS.map((e): ElementDef => {
+      if (latentScale === 1) return e;
+      if (e.key === 'LAVA') return { ...e, below: { ...e.below, latent: e.below.latent * latentScale } };
+      if (e.key === 'STONE') return { ...e, above: { ...e.above, latent: e.above.latent * latentScale } };
+      return e;
+    });
+    const sim = createSim(scene.width, scene.height, 1, { elements });
+    sim.load(scene.fields);
+    const x0 = WALL + LAVA_CRUST.poolWidth / 4;
+    const x1 = WALL + (3 * LAVA_CRUST.poolWidth) / 4;
+    const result: number[] = [];
+    let done = 0;
+    for (const minute of minutes) {
+      await runMany(sim, (minute - done) * 60 * SUPERSTEPS_PER_SECOND, FRAME_SUPERSTEPS);
+      done = minute;
+      const kind = await sim.fields.read('kind');
+      let sum = 0;
+      for (let x = x0; x < x1; x++) {
+        let y = scene.height - 1;
+        while (y >= 0 && cellType(kind[y * scene.width + x]) === T.EMPTY) y--;
+        while (y >= 0 && cellType(kind[y * scene.width + x]) === T.STONE) {
+          sum++;
+          y--;
+        }
+      }
+      result.push(sum / (x1 - x0));
+    }
+    return result;
+  }
+
+  scenario({
+    name: 'lavaCrust',
+    measure: async () => {
+      const [crust1, crust9] = await crusts(1, [1, 9]);
+      return { crust1, crust9, ratio: crust1 > 0 ? crust9 / crust1 : 0 };
+    },
+    checks: [
+      { value: 'crust1', outcome: 'has a crust of 4.9 to 11.1 cells after 1 min', target: CRUST_1, waitsFor: ['I26', 'B16'], companion: [0, 12] },
+      { value: 'crust9', outcome: 'has a crust of 14.8 to 33.2 cells after 9 min', target: CRUST_9, waitsFor: ['I26', 'B16'], companion: [0, 34] },
+      { value: 'ratio', outcome: 'has a crust 2.5 to 3.6 times as thick at 9 min as at 1', target: RATIO, waitsFor: ['I26', 'B16'], companion: [0, 4] },
+    ],
+    timeout: 300_000,
+  });
+
+  // Four times the latent heat slows the crust to about half (the thickness goes with the inverse square root of the latent heat),
+  // which misses the 1 minute window once the scenario passes; today there is no crust at all, which misses it too.
+  control({
+    name: 'lavaCrust',
+    wrong: 'LAVA and STONE with four times their shared latent heat',
+    measure: async () => (await crusts(4, [1]))[0],
+    target: CRUST_1,
+    timeout: 300_000,
+  });
+});
+
+describe.skipIf(!device)('heatedLayer', () => {
+  // Experiment: a layer of water heated gently from below conducts and stays still until the difference across it passes a
+  //   threshold, then stirs into rolls (Rayleigh-Benard convection): a Rayleigh number of 1,708 between two rigid plates. For
+  //   water at 20 °C that is 1.76 °C across a layer 3 cells deep (4.1 mm) and 0.093 °C across 8 cells (1.09 cm).
+  // Target: below the threshold (3 cells and 1 °C: a Rayleigh number of 970) heat crosses by conduction alone, k dT / d, within
+  //   20%: 0.8 to 1.2 times it. Well above it (8 cells and 2 °C: 36,780, Prandtl number 7) it crosses 3.2 to 3.3 times faster in the
+  //   steady state, by Hollands 1984 (both forms of its last term), so 2.6 to 4.0 (+-20%, inferred: the correlation's scatter is
+  //   not sourced). A gentler gradient cannot be measured: at 0.05 °C across 8 cells a conduction exchange moves a cell by
+  //   2e-6 °C, the spacing of f32 values near 20 °C. k is water's 0.6 W/m·K (CRC Handbook).
+  // Measure: from 2 to 3 minutes (28,800 to 43,200 supersteps), when the rolls have grown, the heat the layer carries across: the
+  //   change of the plates' heat content (C x T summed) over the window, the mean of the lower plate's loss and the upper one's
+  //   gain, as a flux over the layer's width, over k dT / d, with dT the difference of the plate rows touching the layer, taken
+  //   as the mean of its values at the two ends of the window (the plates drift by a fraction of it). The plates are METAL, 70
+  //   rows each, the layer starts on conduction's straight-line profile between them, `air: false`.
+  // Leaves out: the walls' heat (WALL holds none), the plates' own resistance (0.4% of the layer's).
+  // Waits: a convection onset (backlog I29): the game swaps two cells for any density difference.
+  const ABOVE = [2.6, 4.0] as const;
+  const BELOW = [0.8, 1.2] as const;
+  const CONDUCTION = [0.9, 1.1] as const;
+  const WATER_CONDUCTIVITY = 0.6;
+  const FLAT_ID = 221;
+  const FLAT_WATER: ElementDef = { ...elementByKey(ELEMENTS, 'WATER'), key: 'FLAT_WATER', id: FLAT_ID, label: 'Flat water', toolbar: 71, densityKnots: undefined };
+  const TABLE = [...ELEMENTS, FLAT_WATER];
+  const METAL_CAPACITY = elementHeatCapacity(elementByKey(ELEMENTS, 'METAL'));
+
+  // How many times conduction's flux crosses the layer, in water or in water with one density at every temperature.
+  const nusselt = memo(
+    (kind: HeatedLayerKind, flat: boolean) => `${kind}${flat}`,
+    async (kind: HeatedLayerKind, flat: boolean): Promise<number> => {
+      const scene = heatedLayer(kind, flat ? FLAT_ID : T.WATER);
+      const { width, plateRows } = HEATED_LAYER;
+      const { depth } = HEATED_LAYER[kind];
+      const sim = createSim(scene.width, scene.height, 1, { ...NO_AIR, elements: TABLE });
+      sim.load(scene.fields);
+
+      const read = async (): Promise<{ lower: number; upper: number; gap: number }> => {
+        const temp = tempView({ temp: await sim.fields.read('temp') });
+        let [lower, upper, lowerFace, upperFace] = [0, 0, 0, 0];
+        for (let x = WALL; x < WALL + width; x++) {
+          for (let y = 0; y < plateRows; y++) lower += METAL_CAPACITY * temp[y * scene.width + x];
+          for (let y = plateRows + depth; y < scene.height; y++) upper += METAL_CAPACITY * temp[y * scene.width + x];
+          lowerFace += temp[(plateRows - 1) * scene.width + x];
+          upperFace += temp[(plateRows + depth) * scene.width + x];
+        }
+        return { lower, upper, gap: (lowerFace - upperFace) / width };
+      };
+      const [from, to] = [2 * 60 * SUPERSTEPS_PER_SECOND, 3 * 60 * SUPERSTEPS_PER_SECOND];
+      await runMany(sim, from);
+      const start = await read();
+      await runMany(sim, to - from);
+      const end = await read();
+
+      // MJ/m³ summed over cells, times a cell's area: J per metre of depth.
+      const joules = (heat: number): number => heat * HEAT_UNIT * CELL_SIZE ** 2;
+      const flux = (joules(start.lower - end.lower) + joules(end.upper - start.upper)) / 2 / (width * CELL_SIZE) / ((to - from) * PAIR_TIME);
+      const conduction = (WATER_CONDUCTIVITY * (start.gap + end.gap)) / 2 / (depth * CELL_SIZE);
+      return flux / conduction;
+    },
+  );
+
+  scenario({
+    name: 'heatedLayer',
+    measure: async () => ({ above: await nusselt('above', false), below: await nusselt('below', false) }),
+    checks: [
+      { value: 'below', outcome: 'carries heat across a layer 3 cells deep at 1 °C (Rayleigh 970) at 0.8 to 1.2 times conduction', target: BELOW, waitsFor: ['I29'], companion: [0.8, 6] },
+      { value: 'above', outcome: 'carries heat across a layer 8 cells deep at 2 °C (Rayleigh 36,780) at 2.6 to 4.0 times conduction', target: ABOVE, waitsFor: ['I29'], companion: [2.6, 12] },
+    ],
+    timeout: 300_000,
+  });
+
+  // Without a density that changes with temperature nothing stirs: the measure itself is right, in both layers.
+  scenario({
+    name: 'heatedLayer',
+    version: 'flat water',
+    measure: async () => ({ above: await nusselt('above', true), below: await nusselt('below', true) }),
+    checks: [
+      { value: 'below', outcome: 'carries heat across a layer 3 cells deep at 0.9 to 1.1 times conduction', target: CONDUCTION },
+      { value: 'above', outcome: 'carries heat across a layer 8 cells deep at 0.9 to 1.1 times conduction', target: CONDUCTION },
+    ],
+    timeout: 300_000,
+  });
+
+  control({
+    name: 'heatedLayer',
+    wrong: 'flat-density water above the threshold',
+    measure: () => nusselt('above', true),
+    target: ABOVE,
+    timeout: 300_000,
   });
 });

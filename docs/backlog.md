@@ -2,7 +2,7 @@
 
 IDs are stable: B = bug, D = tech debt, I = idea.
 
-Next ID: B16, D37, I29.
+Next ID: B17, D37, I31.
 
 ## Bugs
 
@@ -12,6 +12,7 @@ Next ID: B16, D37, I29.
 - **B11** Number keys ignore modifiers, so Ctrl+1 (browser tab switch) also selects a tool. `src/main.ts` keydown handler
 - **B14** A tall pour of lava can still leave a few stone cells hanging in mid-air: a cell that spreads sideways in the stream moves too slowly to skip the air exchange (`AIR.stillSpeed`), sets, and a solid never moves (4 stone cells above row 40 in AC28's 380-cell pour; a sparse column of them in a 700-cell pour, `tests/air-heat.test.ts`). A liquid that would set while unsupported could wait until it rests on something. `src/shaders/air.wgsl.ts` `airExchangeWGSL`, `src/shaders/ca.wgsl.ts` `transitionCell`
 - **B15** (M8) A sealed cup of water with a melting ice cube evens out in about an hour, where a real cup mixes in a minute or so: the cold meltwater (0 °C, 999.8 kg/m³) is denser than the 20 °C water (998.2) and should sink, but in `iceCup` (a full 25×40 cup, 100 ice in 900 water) the temperatures still span 8.9 to 11.1 °C 5 min after the last ice melts (mean 10.01 °C, so the heat balance is right). Cause not found: the `convect` chance for a 0.16% density difference may be too small to stir a cup this size, or the full walled cup leaves it no room to circulate. `src/physics.ts` `convectionChance`, `src/shaders/ca.wgsl.ts` `convect`, `tests/scenarios-heat.test.ts` `iceCup`
+- **B16** (M8) A pool of lava open to still air hardly cools at its surface: in `lavaCrust` (a pool 64 wide and 80 deep at 1,300 °C under 34 rows of air) the top cells lose 0.3 K in 2 minutes and no STONE forms in 9 minutes (3 seeds), where a 16×16 steel bar at 1,000 °C loses 85 K in 125 s through its four sides (`redHotBar`). Inferred cause, not isolated: a liquid cell trades heat with the air cell it stands in (`airOf`), not with the air above it, so the 4×4 air cells over the pool sit at the pool's temperature and the air column above fills with hot air (400 to 1,000 °C up to 20 cells above the surface) that the plume and the diffusion remove too slowly. `src/shaders/air.wgsl.ts` `airExchangeWGSL`, `tests/scenarios-heat.test.ts` `lavaCrust`
 
 ## Tech debt
 
@@ -48,3 +49,5 @@ Next ID: B16, D37, I29.
 - **I27** (M8) Liquids level about 5 to 10 times slower than real: a column of water 100 cells high (14 cm) takes about 3 s at 1x to drop to a flat pool, real water well under a second, so a pour piles up at 45° while it runs. A liquid cell moves at most one cell per dispatch and only into an empty neighbor of its own row. Faster leveling (for example a whole row of surface cells shifting toward a lower neighbor per dispatch) only if it fits the frame budget (`npm run bench`). `src/shaders/ca.wgsl.ts` `spreadRow`
 - **I28** (M8) Water on lava boils only by conduction at the contact, so a layer 1 to 2 cm deep takes tens of seconds to minutes to boil away. Real water also sinks into cracks, mixes and is stirred by its own steam bubbles, which boils it much faster. A mixing between a liquid and a much hotter neighbor would model that. `src/shaders/heat.wgsl.ts` `exchangeHeat`
 - **I12** Choose a license for CorniSand. With no license file nobody may reuse the code; a permissive license (MIT, Apache-2.0) lets others reuse it without requiring them, or this project, to publish source. Decide before accepting outside contributions.
+- **I29** (M8) Convection has no onset: two cells of one liquid swap with a chance for any density difference, so a layer heated gently from below stirs at once, where real water conducts until its Rayleigh number passes about 1,708. A water layer 3 cells deep across 1 °C (Rayleigh 970) carries 2.85 times the heat conduction would, one 8 cells deep across 2 °C (36,780) 7.3 times, where real water carries 1 and about 3.3 times (`heatedLayer`). `src/physics.ts` `convectionChance`, `src/shaders/ca.wgsl.ts` `convect`
+- **I30** (M8) A row's heat capacity is one number: steel's runs from 440 J/kg·K at 20 °C through a peak near 735 °C to 650 above 900 °C (EN 1993-1-2), which moves a red-hot bar cooling in air by more than 100 °C (`redHotBar`, full). `src/elements.ts`, `src/shaders/heat.wgsl.ts`
