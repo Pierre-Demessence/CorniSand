@@ -65,6 +65,40 @@ describe.skipIf(!device)('M5 heat', () => {
     expect(painted, 'cells painted').toBeGreaterThan(4);
   });
 
+  it.each([
+    { name: 'water at 110 °C paints steam at 110 °C', type: T.WATER, temperature: 110, painted: T.STEAM, expected: 110 },
+    { name: 'water at -10 °C paints ice at -10 °C', type: T.WATER, temperature: -10, painted: T.ICE, expected: -10 },
+    { name: 'water at exactly 100 °C paints water', type: T.WATER, temperature: 100, painted: T.WATER, expected: 100 },
+    { name: 'stone at 1,300 °C paints lava at 1,300 °C', type: T.STONE, temperature: 1300, painted: T.LAVA, expected: 1300 },
+    { name: 'oil at 300 °C paints oil (it ignites by itself)', type: T.OIL, temperature: 300, painted: T.OIL, expected: 300 },
+    { name: 'no temperature paints the element at its own', type: T.ICE, temperature: undefined, painted: T.ICE, expected: -20 },
+  ])('M8.1 AC32: the brush writes the element a temperature makes of it: $name', async ({ type, temperature, painted, expected }) => {
+    const width = 16;
+    const height = 16;
+    const sim = createSim(width, height);
+    // The brush alone: the CA would change the painted cells.
+    await run(sim, 0, {
+      ...idleInput,
+      mousePos: { x: 8, y: 8 },
+      prevMousePos: { x: 8, y: 8 },
+      mouseActive: true,
+      brushSize: 2,
+      particleType: type,
+      temperature,
+    });
+
+    const kinds = await readCells(sim);
+    const temps = await readTemps(sim);
+    let count = 0;
+    for (let i = 0; i < kinds.length; i++) {
+      if (cellType(kinds[i]) === T.EMPTY) continue;
+      count++;
+      expect(cellType(kinds[i]), `painted cell ${i}`).toBe(painted);
+      expect(temps[i], `painted cell ${i}`).toBe(expected);
+    }
+    expect(count, 'cells painted').toBeGreaterThan(4);
+  });
+
   it('AC3: a scene loaded without temperatures starts every cell at its element temperature', async () => {
     const width = 16;
     const height = 8;

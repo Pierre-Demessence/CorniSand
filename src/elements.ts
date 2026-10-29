@@ -421,7 +421,7 @@ export const ELEMENTS = [
     category: 'Solids',
     description: 'Heavy rock that melts into lava when very hot and breaks into sand in a blast.',
   },
-  // Ice: 917 kg/m³, 2.2 W/m·K and 1.9 MJ/m³·K (2.05 kJ/kg·K). Painted at -20 °C. It does not float: a solid never moves.
+  // Ice: 917 kg/m³, 2.2 W/m·K and 1.9 MJ/m³·K (2.05 kJ/kg·K). No button: Water painted below 0 °C is ice (`paintTarget`), at -20 °C by default. It does not float: a solid never moves.
   {
     key: 'ICE',
     id: 9,
@@ -434,15 +434,12 @@ export const ELEMENTS = [
     heatCapacity: 1.9,
    
     above: { temp: 0, becomes: 'WATER', latent: WATER_FUSION },
-    toolbar: 3,
-    category: 'Solids',
-    description: 'Frozen water, painted well below freezing; it melts into water at 0 °C.',
   },
   // Steam: 0.59 kg/m³ at 100 °C (`densityTemp`; the ideal-gas law gives the rest). A cell is one unit of matter: its capacity is steam's 2.0 kJ/kg·K times the 1,000 kg/m³ of
   // the water it came from, 2.0 MJ/m³·K, and its conductivity keeps steam's real thermal diffusivity at that capacity:
   // 0.025 W/m·K / (0.59 kg/m³ × 2.0 kJ/kg·K) = 2.1e-5 m²/s, times 2.0 MJ/m³·K is 42 W/m·K. (Steam's own 0.025 would let
   // a cell of the water's mass out-stay a cold plate for minutes, where real steam gives its heat up within a second.)
-  // Painted at 110 °C, just past its condensing point.
+  // No button: Water painted above 100 °C is steam, at 110 °C by default, just past its condensing point.
   {
     key: 'STEAM',
     id: 10,
@@ -456,15 +453,13 @@ export const ELEMENTS = [
     heatCapacity: 2,
    
     below: { temp: 100, becomes: 'WATER', latent: WATER_VAPORIZATION },
-    toolbar: 2,
-    category: 'Gases',
-    description: 'Hot water vapor: it rises, then condenses back into water as it cools.',
   },
   // Lava is molten stone: liquid stone at 2,700 kg/m³, painted at 1,300 °C and setting at 1,200. Its latent heat is rock's
   // physical one: about 450 kJ/kg (basalt) at 2,700 kg/m³ is 1,200 MJ/m³. It is what keeps a pile of lava flowing in open
   // air for a while. Molten basalt conducts about 1 W/m·K and holds 4.0 MJ/m³·K (1.5 kJ/kg·K). One molten element per
   // meltable material (backlog I15). Molten silicate expands by about 4e-5 per K: 2,700 kg/m³ at 1,200 °C, 2,668 at 1,500.
-  // Viscosity 30 Pa·s, the middle of basaltic lava at eruption temperatures (10 to 100 Pa·s).
+  // Viscosity 30 Pa·s, the middle of basaltic lava at eruption temperatures (10 to 100 Pa·s). No button: Stone painted above 1,200 °C
+  // is lava, at 1,300 °C by default.
   {
     key: 'LAVA',
     id: 11,
@@ -480,13 +475,10 @@ export const ELEMENTS = [
     // Opaque: it hides the wall and casts a shadow like rock, and it shines on its own, so it takes no depth tint.
     look: { opacity: 1 },
     below: { temp: 1200, becomes: 'STONE', latent: LAVA_LATENT },
-    toolbar: 3,
-    category: 'Liquids',
-    description: 'Molten rock: thick, heavy and glowing; it hardens back into stone as it cools.',
   },
   // Molten steel: 7,000 kg/m³, painted at 1,600 °C, sets back into METAL at 1,538. Liquid iron conducts about 35 W/m·K and
   // holds 5.7 MJ/m³·K (0.82 kJ/kg·K). Its density falls by about 0.83 kg/m³ per K from 7,000 at the melting point. Viscosity
-  // 6 mPa·s (liquid iron, 5 to 7 mPa·s near its melting point). Not paintable: metal melts into it.
+  // 6 mPa·s (liquid iron, 5 to 7 mPa·s near its melting point). No button: Metal painted above 1,538 °C is molten steel, at 1,600 °C by default.
   {
     key: 'MOLTEN_METAL',
     id: 12,

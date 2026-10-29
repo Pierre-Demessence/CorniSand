@@ -159,11 +159,14 @@ async function main(): Promise<void> {
   let heating = 0;
   // Whether the Wind tool is selected.
   let wind = false;
-  function select(entry: PickerEntry): void {
+  // The °C the brush paints at; the brush writes what that temperature makes of the selected element (`paintTarget`).
+  let paintTemperature = 0;
+  function select(entry: PickerEntry, temperature: number): void {
     if (entry.kind === 'element') {
       heating = 0;
       wind = false;
       input.particleType = entry.id;
+      paintTemperature = temperature;
     } else {
       const tool: Tool = entry.tool;
       heating = tool.heating;
@@ -177,13 +180,15 @@ async function main(): Promise<void> {
       tabs: document.getElementById('picker-tabs')!,
       entries: document.getElementById('picker-entries')!,
       selected: document.getElementById('picker-selected')!,
+      paint: document.getElementById('picker-paint')!,
       search: document.getElementById('picker-search') as HTMLInputElement,
     },
     tabs,
     initial,
     select,
+    ELEMENTS,
   );
-  select(initial);
+  select(initial, picker.temperature());
   const viewButtonsEl = document.getElementById('view-buttons')!;
 
   // The heat view draws each cell that holds heat in its temperature's color; the legend explains the colors.
@@ -350,6 +355,7 @@ async function main(): Promise<void> {
       replacing,
       brushSize: input.brushSize,
       particleType: input.particleType,
+      temperature: paintTemperature,
       heating,
       wind,
     });

@@ -3,7 +3,7 @@ import { ABSOLUTE_ZERO, MAX_TEMP } from '../heat';
 import { cellWGSL } from './cell.wgsl';
 import { elementsWGSL } from './elements.wgsl';
 
-// Brush uniform: vec2f prev, vec2f cur, f32 radius, 3 x u32 flags, u32 seed, f32 heating, 2 pad = 48 bytes
+// Brush uniform: vec2f prev, vec2f cur, f32 radius, 3 x u32 flags, u32 seed, f32 heating, f32 paintTemp, 1 pad = 48 bytes
 export const BRUSH_UNIFORM_WORDS = 12;
 
 // The brush uniform (group 0, binding 0) and the test of whether a stroke reaches a position: shared by the cell brush
@@ -18,7 +18,7 @@ struct BrushUniforms {
   replacing: u32,
   seed: u32,
   heating: f32,
-  _pad1: u32,
+  paintTemp: f32,
   _pad2: u32,
 };
 
@@ -38,8 +38,7 @@ fn brushReaches(pos: vec2f) -> bool {
 
 // Paints or erases along the segment prev -> cur, in place. Each thread only
 // touches its own cell, so the pass runs before the CA steps and block rules
-// never see a half-painted block. A painted cell starts at its element's
-// temperature; replacing a cell discards its temperature with the rest of it. With `heating` set (the Heat and Cool
+// never see a half-painted block. A painted cell starts at the brush's paint temperature (the element's own by default); replacing a cell discards its temperature with the rest of it. With `heating` set (the Heat and Cool
 // tools) it paints nothing: it adds `heating` °C to the stored temperature of every cell that holds heat, within
 // absolute zero and the table's maximum, widened to the whole latent range of the element's thresholds (a condensing
 // steam cell's stored temperature runs under absolute zero, and the tools never cut that progress), and leaves empty
@@ -83,7 +82,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   if (cellType(current) == EL_EMPTY || (b.replacing == 1u && cellType(current) != EL_WALL)) {
     let variant = hash2(gid.x, gid.y, b.seed) & 0xffu;
     let painted = makeCell(b.particleType, variant, elLifeStart(b.particleType));
-    storeCell(idx, withTemp(painted, elTemperature(b.particleType)));
+    storeCell(idx, withTemp(painted, b.paintTemp));
   }
 }
 `;

@@ -6,6 +6,8 @@ import { caWGSL } from './shaders/ca.wgsl';
 import { RULES } from './shaders/rules';
 import { ElementTable } from './element-table';
 import { ELEMENTS, MAX_ELEMENTS, elementTemperature, type ElementDef } from './elements';
+import { ROOM_TEMP } from './heat';
+import { paintTarget } from './toolbar';
 import { CellFields } from './cell-field-buffers';
 import { FIELD_BYTES, tempView, type CellData } from './cell-fields';
 import { Flyers } from './flyers';
@@ -21,6 +23,12 @@ export interface SimulationInput {
   replacing: boolean;
   brushSize: number;
   particleType: number;
+  /**
+   * °C the stroke paints at. The brush then writes the element `paintTarget` gives for `particleType` at this temperature
+   * (water at 110 °C paints steam), as a stored temperature with no latent heat taken in yet. Absent: `particleType` itself at
+   * its row's `temperature`.
+   */
+  temperature?: number;
   /** °C added to every cell that holds heat inside the stroke per frame, negative to cool; absent or 0 when painting. */
   heating?: number;
   /** The Wind tool: the stroke blows the air under the brush along the pointer's movement and paints nothing; the right button still erases. */
@@ -296,13 +304,16 @@ export class Simulation {
     f[2] = input.mousePos.x;
     f[3] = input.mousePos.y;
     f[4] = input.brushSize;
-    w[5] = input.particleType;
+    const target = input.temperature === undefined ? input.particleType : paintTarget(this.elements.elements, input.particleType, input.temperature).id;
+    w[5] = target;
     w[6] = input.erasing ? 1 : 0;
     const heating = input.heating ?? 0;
     // A heating stroke never replaces: the flyer brush would remove the flyers it passes over.
     w[7] = input.replacing && heating === 0 ? 1 : 0;
     w[8] = this.seedSource();
     f[9] = heating;
+    const row = this.elements.elements.find((e) => e.id === input.particleType);
+    f[10] = input.temperature ?? (row ? elementTemperature(row) : ROOM_TEMP);
     this.device.queue.writeBuffer(this.brushUniformBuffer, 0, this.brushUniformData);
 
     const pass = passes.pass('brush');

@@ -1,5 +1,5 @@
-import type { ElementDef } from './elements';
-import { HEAT_TOOL_RATE } from './heat';
+import { elementTemperature, type ElementDef, type Transition } from './elements';
+import { ABSOLUTE_ZERO, HEAT_TOOL_RATE, MAX_TEMP } from './heat';
 
 /**
  * The picker's tabs for elements, in order. A paintable element names one in `ElementDef.category`; a tab with no entry is
@@ -41,8 +41,10 @@ interface EntryBase {
 /** A paintable element. */
 export interface ElementEntry extends EntryBase {
   kind: 'element';
-  /** The element ID the entry paints. */
+  /** The element ID the entry selects: the row of a button, or for a row without one the row with a button it is painted from. */
   id: number;
+  /** °C the temperature field shows once the entry is picked: its row's `temperature`. */
+  temperature: number;
   /** Linear RGB, 0-1: the swatch's color. */
   color: readonly [number, number, number];
 }
@@ -71,7 +73,7 @@ export function pickerTabs(elements: readonly ElementDef[], tools: readonly Tool
     const entries = elements
       .filter((e) => e.toolbar !== undefined && e.category === category)
       .sort((a, b) => a.toolbar! - b.toolbar!)
-      .map((e): ElementEntry => ({ kind: 'element', id: e.id, label: e.label, description: e.description ?? '', tab: category, color: e.color }));
+      .map((e): ElementEntry => ({ kind: 'element', id: e.id, label: e.label, description: e.description ?? '', tab: category, color: e.color, temperature: elementTemperature(e) }));
     if (entries.length > 0) tabs.push({ name: category, entries });
   }
   if (tools.length > 0) {
@@ -80,11 +82,96 @@ export function pickerTabs(elements: readonly ElementDef[], tools: readonly Tool
   return tabs;
 }
 
-/** The entries whose label contains `query`, ignoring case, in tab order; none for a query of only spaces. */
-export function searchEntries(tabs: readonly PickerTab[], query: string): PickerEntry[] {
+/**
+ * The row with a button (a `toolbar` position) that paints `row`: `row` itself, or the nearest one along its transitions
+ * (`below` and `above`), found breadth first. Undefined when none is reachable.
+ */
+export function buttonRow(table: readonly ElementDef[], row: ElementDef): ElementDef | undefined {
+  const byKey = new Map(table.map((e) => [e.key, e]));
+  const seen = new Set<string>();
+  let frontier = [row];
+  while (frontier.length > 0) {
+    const found = frontier.find((e) => e.toolbar !== undefined);
+    if (found) return found;
+    const next: ElementDef[] = [];
+    for (const e of frontier) {
+      seen.add(e.key);
+      for (const step of [e.below, e.above]) {
+        const target = step && byKey.get(step.becomes);
+        if (target && !seen.has(target.key) && !next.includes(target)) next.push(target);
+      }
+    }
+    frontier = next;
+  }
+  return undefined;
+}
+
+/**
+ * The entries whose label contains `query`, ignoring case, in tab order; none for a query of only spaces. With the `table`,
+ * a row without a button of its own that matches follows them, as an entry that selects the row with a button it is
+ * painted from, at the matching row's temperature (Steam: Water at 110 °C).
+ */
+export function searchEntries(tabs: readonly PickerTab[], query: string, table: readonly ElementDef[] = []): PickerEntry[] {
   const needle = query.trim().toLowerCase();
   if (needle === '') return [];
-  return tabs.flatMap((tab) => tab.entries).filter((entry) => entry.label.toLowerCase().includes(needle));
+  const entries = tabs.flatMap((tab) => tab.entries);
+  const direct = entries.filter((entry) => entry.label.toLowerCase().includes(needle));
+  const buttons = new Map(entries.flatMap((entry) => (entry.kind === 'element' ? [[entry.id, entry] as const] : [])));
+  const reached = table
+    .filter((row) => row.toolbar === undefined && row.label.toLowerCase().includes(needle))
+    .flatMap((row): ElementEntry[] => {
+      const button = buttonRow(table, row);
+      const entry = button && buttons.get(button.id);
+      if (!entry) return [];
+      const temperature = elementTemperature(row);
+      return [{ ...entry, label: row.label, color: row.color, temperature, description: `Painted as ${entry.label} at ${temperature} °C.` }];
+    });
+  return [...direct, ...reached];
+}
+
+/** What the brush writes: the element, and whether a flammable row painted past its ignition temperature catches fire by itself. */
+export interface PaintTarget {
+  id: number;
+  ignites: boolean;
+}
+
+/**
+ * The element a brush of `id` painted at `temp` (°C) writes: from the row, follows `above` while `temp` is above its
+ * threshold and `below` while it is under (the stored temperature is compared with the threshold itself, latent heat not
+ * yet taken in), so water at -10 °C is ice and steel at 1,600 °C is molten metal. At exactly a threshold the row stays.
+ * A change into a plasma (fire) is never followed: the row is painted as itself, flagged as igniting.
+ */
+export function paintTarget(table: readonly ElementDef[], id: number, temp: number): PaintTarget {
+  const byKey = new Map<string, ElementDef>(table.map((e) => [e.key, e]));
+  let row: ElementDef | undefined = table.find((e) => e.id === id);
+  if (!row) throw new Error(`paintTarget: no element with id ${id}`);
+  const seen = new Set<number>();
+  while (!seen.has(row.id)) {
+    seen.add(row.id);
+    const step: Transition | undefined = row.above && temp > row.above.temp ? row.above : row.below && temp < row.below.temp ? row.below : undefined;
+    const next: ElementDef | undefined = step && byKey.get(step.becomes);
+    if (!next) break;
+    if (next.state === 'plasma') return { id: row.id, ignites: true };
+    row = next;
+  }
+  return { id: row.id, ignites: false };
+}
+
+/** The paint temperature kept to whole degrees inside `ABSOLUTE_ZERO`..`MAX_TEMP`. */
+export function clampPaintTemp(temp: number): number {
+  return Math.min(MAX_TEMP, Math.max(Math.ceil(ABSOLUTE_ZERO), Math.round(temp)));
+}
+
+/** The paint temperature one step up (`direction` 1) or down (-1): 10 °C, 100 °C when `big`. */
+export function stepPaintTemp(temp: number, direction: 1 | -1, big: boolean): number {
+  return clampPaintTemp(temp + direction * (big ? 100 : 10));
+}
+
+/** The preview beside the temperature field: the name of what a brush of `id` at `temp` paints, and whether it ignites. */
+export function paintPreview(table: readonly ElementDef[], id: number, temp: number): string {
+  const target = paintTarget(table, id, temp);
+  const label = table.find((e) => e.id === target.id)?.label ?? '';
+  return `→ ${label}${target.ignites ? ' (ignites)' : ''}`;
 }
 
 /** The number key that selects the entry at `index` of the entries shown: 1 to 9, none after the ninth. */
@@ -119,30 +206,92 @@ export interface PickerParts {
   entries: HTMLElement;
   /** Names the selected entry. */
   selected: HTMLElement;
+  /** Receives the paint temperature field: its steps, the field and the preview. Hidden while a tool is selected. */
+  paint: HTMLElement;
   search: HTMLInputElement;
 }
 
 export interface Picker {
   /** The entries on show: the search's matches, or the tab's. The n-th is selected by number key n. */
   shown(): PickerEntry[];
-  /** Selects `entry`: shows its tab, clears the search and calls `onSelect`. */
+  /** Selects `entry`: shows its tab, clears the search, sets the paint temperature to the entry's and calls `onChange`. */
   choose(entry: PickerEntry): void;
+  /** The paint temperature in °C (meaningless while a tool is selected). */
+  temperature(): number;
   focusSearch(): void;
 }
 
 /**
- * Fills `parts` from `tabs` and keeps them in step with the selection. `initial` is selected without calling `onSelect`
- * (the caller applies it). Enter in the search selects its first match, Escape clears it; picking an entry clears it too.
+ * Fills `parts` from `tabs` and keeps them in step with the selection. `initial` is selected without calling `onChange`
+ * (the caller applies it). `onChange` hears every pick and every change of the paint temperature. Enter in the search
+ * selects its first match, Escape clears it; picking an entry clears it too. `elements` names what the brush will paint
+ * and lets the search find rows without a button.
  */
-export function renderPicker(parts: PickerParts, tabs: readonly PickerTab[], initial: PickerEntry, onSelect: (entry: PickerEntry) => void): Picker {
+export function renderPicker(
+  parts: PickerParts,
+  tabs: readonly PickerTab[],
+  initial: PickerEntry,
+  onChange: (entry: PickerEntry, temperature: number) => void,
+  elements: readonly ElementDef[],
+): Picker {
   const doc = parts.tabs.ownerDocument;
   let activeTab = Math.max(0, tabs.findIndex((tab) => tab.name === initial.tab));
   let selected = initial;
+  let temperature = initial.kind === 'element' ? initial.temperature : 0;
   let query = '';
   let entryButtons = new Map<PickerEntry, HTMLButtonElement>();
   const tabButtons: HTMLButtonElement[] = [];
 
-  const shown = (): PickerEntry[] => (query.trim() === '' ? tabs[activeTab].entries : searchEntries(tabs, query));
+  const shown = (): PickerEntry[] => (query.trim() === '' ? tabs[activeTab].entries : searchEntries(tabs, query, elements));
+
+  // The paint temperature: steps of 10 °C (100 with Shift), the field and what will be painted.
+  const stepButton = (text: string, label: string): HTMLButtonElement => {
+    const button = doc.createElement('button');
+    button.setAttribute('type', 'button');
+    button.className = 'tool-btn picker-step';
+    button.setAttribute('aria-label', label);
+    button.textContent = text;
+    return button;
+  };
+  const minus = stepButton('−', 'Colder by 10 degrees (Shift: 100)');
+  const plus = stepButton('+', 'Warmer by 10 degrees (Shift: 100)');
+  const field = doc.createElement('input');
+  field.setAttribute('type', 'number');
+  field.setAttribute('step', '10');
+  field.id = 'picker-temperature';
+  field.setAttribute('aria-label', 'Paint temperature in degrees Celsius');
+  const unit = doc.createElement('span');
+  unit.textContent = '°C';
+  const preview = doc.createElement('span');
+  preview.className = 'picker-preview';
+  preview.setAttribute('aria-live', 'polite');
+  parts.paint.append(minus, field, unit, plus, preview);
+
+  function renderPaint(writeField: boolean): void {
+    parts.paint.hidden = selected.kind !== 'element';
+    if (writeField) field.value = String(temperature);
+    preview.textContent = selected.kind === 'element' ? paintPreview(elements, selected.id, temperature) : '';
+  }
+
+  function setTemperature(next: number): void {
+    temperature = clampPaintTemp(next);
+    renderPaint(true);
+    onChange(selected, temperature);
+  }
+
+  minus.addEventListener('click', (e) => setTemperature(stepPaintTemp(temperature, -1, e.shiftKey)));
+  plus.addEventListener('click', (e) => setTemperature(stepPaintTemp(temperature, 1, e.shiftKey)));
+  field.addEventListener('input', () => {
+    const typed = field.valueAsNumber;
+    if (!Number.isFinite(typed)) return;
+    temperature = clampPaintTemp(typed);
+    renderPaint(false);
+    onChange(selected, temperature);
+  });
+  field.addEventListener('change', () => renderPaint(true));
+  field.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === 'Escape') field.blur();
+  });
 
   function renderSelected(): void {
     parts.selected.replaceChildren();
@@ -152,6 +301,7 @@ export function renderPicker(parts: PickerParts, tabs: readonly PickerTab[], ini
     parts.selected.appendChild(label);
     if (selected.kind === 'element') parts.selected.appendChild(swatch(selected));
     parts.selected.appendChild(doc.createTextNode(selected.label));
+    renderPaint(true);
   }
 
   function swatch(entry: ElementEntry): HTMLElement {
@@ -211,13 +361,15 @@ export function renderPicker(parts: PickerParts, tabs: readonly PickerTab[], ini
   function choose(entry: PickerEntry): void {
     const tab = tabs.findIndex((t) => t.name === entry.tab);
     const rebuild = query.trim() !== '' || (tab >= 0 && tab !== activeTab);
-    selected = entry;
+    // A row without a button selects the button's own entry, at the temperature of the row that was found.
+    selected = entry.kind === 'element' ? tabs.flatMap((t) => t.entries).find((e) => e.kind === 'element' && e.id === entry.id) ?? entry : entry;
+    if (entry.kind === 'element') temperature = entry.temperature;
     if (tab >= 0) activeTab = tab;
     clearSearch();
     renderSelected();
     if (rebuild) renderEntries();
     else markSelected();
-    onSelect(entry);
+    onChange(selected, temperature);
   }
 
   tabs.forEach((tab, i) => {
@@ -254,7 +406,7 @@ export function renderPicker(parts: PickerParts, tabs: readonly PickerTab[], ini
 
   renderSelected();
   renderEntries();
-  return { shown, choose, focusSearch: () => parts.search.focus() };
+  return { shown, choose, temperature: () => temperature, focusSearch: () => parts.search.focus() };
 }
 
 /** Which of the two views that replace the materials' colors is on; at most one is. */

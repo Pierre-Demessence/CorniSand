@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { ELEMENTS, type ElementDef } from '../src/elements';
-import { CATEGORIES, TOOLS, TOOLS_TAB, entryForKey, entryKey, pickerTabs, searchEntries, swatchColor, type PickerEntry } from '../src/toolbar';
+import { ELEMENT, ELEMENTS, elementTemperature, type ElementDef } from '../src/elements';
+import { ABSOLUTE_ZERO, MAX_TEMP } from '../src/heat';
+import {
+  CATEGORIES, TOOLS, TOOLS_TAB, buttonRow, clampPaintTemp, entryForKey, entryKey, paintPreview, paintTarget, pickerTabs, searchEntries, stepPaintTemp, swatchColor,
+  type PickerEntry,
+} from '../src/toolbar';
 
 const MUD: ElementDef = {
   key: 'MUD', id: 200, label: 'Mud', color: [0.4, 0.3, 0.2], state: 'powder', density: 1300, toolbar: 50, category: 'Powders', description: 'Wet earth.',
@@ -33,9 +37,9 @@ describe('M8.1 AC2 picker tabs', () => {
     const byTab = Object.fromEntries(tabs.map((t) => [t.name, labels(t.entries)]));
     expect(byTab).toEqual({
       Powders: ['Sand'],
-      Liquids: ['Water', 'Oil', 'Lava'],
-      Gases: ['Smoke', 'Steam'],
-      Solids: ['Wall', 'Stone', 'Ice'],
+      Liquids: ['Water', 'Oil'],
+      Gases: ['Smoke'],
+      Solids: ['Wall', 'Stone'],
       Metals: ['Metal'],
       Explosives: ['Fire', 'Gunpowder'],
       Tools: ['Heat', 'Cool', 'Wind'],
@@ -80,9 +84,9 @@ describe('M8.1 AC4 search', () => {
   const tabs = pickerTabs(ELEMENTS);
 
   it('matches the label ignoring case, in tab order', () => {
-    expect(labels(searchEntries(tabs, 'ea'))).toEqual(['Steam', 'Heat']);
+    expect(labels(searchEntries(tabs, 'ea'))).toEqual(['Heat']);
     expect(labels(searchEntries(tabs, 'SAND'))).toEqual(['Sand']);
-    expect(labels(searchEntries(tabs, 'l'))).toEqual(['Oil', 'Lava', 'Wall', 'Metal', 'Cool']);
+    expect(labels(searchEntries(tabs, 'l'))).toEqual(['Oil', 'Wall', 'Metal', 'Cool']);
   });
 
   it('finds tools as well as elements', () => {
@@ -105,5 +109,108 @@ describe('picker swatch', () => {
     expect(swatchColor([0, 0, 0])).toBe('rgb(0 0 0)');
     expect(swatchColor([1, 1, 1])).toBe('rgb(255 255 255)');
     expect(swatchColor([0.5, 0.2, 0.0031308])).toBe('rgb(188 124 10)');
+  });
+});
+
+describe('M8.1 AC31 paintTarget', () => {
+  const target = (key: keyof typeof ELEMENT, temp: number) => paintTarget(ELEMENTS, ELEMENT[key], temp);
+
+  it('follows the transitions the temperature passes', () => {
+    expect(target('WATER', -10)).toEqual({ id: ELEMENT.ICE, ignites: false });
+    expect(target('WATER', 20)).toEqual({ id: ELEMENT.WATER, ignites: false });
+    expect(target('WATER', 110)).toEqual({ id: ELEMENT.STEAM, ignites: false });
+    expect(target('STONE', 1300)).toEqual({ id: ELEMENT.LAVA, ignites: false });
+    expect(target('METAL', 1600)).toEqual({ id: ELEMENT.MOLTEN_METAL, ignites: false });
+    expect(target('ICE', 20)).toEqual({ id: ELEMENT.WATER, ignites: false });
+    expect(target('STEAM', 20)).toEqual({ id: ELEMENT.WATER, ignites: false });
+  });
+
+  it('stays at exactly a threshold', () => {
+    expect(target('WATER', 100).id).toBe(ELEMENT.WATER);
+    expect(target('WATER', 0).id).toBe(ELEMENT.WATER);
+    expect(target('STONE', 1200).id).toBe(ELEMENT.STONE);
+  });
+
+  it('never paints fire: a flammable row past its ignition is itself, flagged as igniting', () => {
+    expect(target('OIL', 300)).toEqual({ id: ELEMENT.OIL, ignites: true });
+    expect(target('OIL', 250).ignites).toBe(false);
+    expect(target('GUNPOWDER', 500)).toEqual({ id: ELEMENT.GUNPOWDER, ignites: true });
+  });
+
+  it('gives a row with nothing to pass back as itself', () => {
+    expect(target('SAND', 9000)).toEqual({ id: ELEMENT.SAND, ignites: false });
+    expect(target('FIRE', 1000)).toEqual({ id: ELEMENT.FIRE, ignites: false });
+  });
+
+  it('paints every row except EMPTY: it has a button, or a button row at its own temperature makes it', () => {
+    const table: readonly ElementDef[] = ELEMENTS;
+    const buttons = table.filter((e) => e.toolbar !== undefined);
+    for (const row of table) {
+      if (row.id === ELEMENT.EMPTY || row.toolbar !== undefined) continue;
+      const reachedBy = buttons.filter((b) => paintTarget(ELEMENTS, b.id, elementTemperature(row)).id === row.id);
+      expect(reachedBy.length, `${row.key} has no button and no button's row paints it`).toBeGreaterThan(0);
+    }
+  });
+
+  it('ICE, STEAM, LAVA and MOLTEN_METAL have no button', () => {
+    for (const key of ['ICE', 'STEAM', 'LAVA', 'MOLTEN_METAL'] as const) {
+      expect((ELEMENTS as readonly ElementDef[]).find((e) => e.key === key)?.toolbar, key).toBeUndefined();
+    }
+  });
+});
+
+describe('M8.1 AC33 paint temperature', () => {
+  const tabs = pickerTabs(ELEMENTS);
+  const entry = (label: string): PickerEntry => tabs.flatMap((t) => t.entries).find((e) => e.label === label)!;
+
+  it('starts an entry at its row temperature', () => {
+    expect(entry('Water')).toMatchObject({ temperature: 20 });
+    expect(entry('Smoke')).toMatchObject({ temperature: 150 });
+    expect(entry('Fire')).toMatchObject({ temperature: 1000 });
+  });
+
+  it('names what will be painted', () => {
+    expect(paintPreview(ELEMENTS, ELEMENT.WATER, -10)).toBe('→ Ice');
+    expect(paintPreview(ELEMENTS, ELEMENT.WATER, 110)).toBe('→ Steam');
+    expect(paintPreview(ELEMENTS, ELEMENT.STONE, 1300)).toBe('→ Lava');
+    expect(paintPreview(ELEMENTS, ELEMENT.OIL, 300)).toBe('→ Oil (ignites)');
+    expect(paintPreview(ELEMENTS, ELEMENT.OIL, 20)).toBe('→ Oil');
+  });
+
+  it('steps by 10 °C, 100 with Shift, and stays inside absolute zero and the maximum', () => {
+    expect(stepPaintTemp(20, 1, false)).toBe(30);
+    expect(stepPaintTemp(20, -1, false)).toBe(10);
+    expect(stepPaintTemp(20, 1, true)).toBe(120);
+    expect(stepPaintTemp(-270, -1, false)).toBe(Math.ceil(ABSOLUTE_ZERO));
+    expect(stepPaintTemp(MAX_TEMP - 5, 1, false)).toBe(MAX_TEMP);
+    expect(clampPaintTemp(20.4)).toBe(20);
+    expect(clampPaintTemp(1e9)).toBe(MAX_TEMP);
+    expect(clampPaintTemp(-1e9)).toBe(Math.ceil(ABSOLUTE_ZERO));
+  });
+
+  it('finds the nearest row with a button along the transitions', () => {
+    const row = (key: string) => ELEMENTS.find((e: ElementDef) => e.key === key)!;
+    expect(buttonRow(ELEMENTS, row('STEAM'))?.key).toBe('WATER');
+    expect(buttonRow(ELEMENTS, row('ICE'))?.key).toBe('WATER');
+    expect(buttonRow(ELEMENTS, row('LAVA'))?.key).toBe('STONE');
+    expect(buttonRow(ELEMENTS, row('MOLTEN_METAL'))?.key).toBe('METAL');
+    expect(buttonRow(ELEMENTS, row('SAND'))?.key).toBe('SAND');
+    expect(buttonRow(ELEMENTS, row('EMPTY'))).toBeUndefined();
+  });
+
+  it('search finds a row without a button as the material it is painted from, at its own temperature', () => {
+    const steam = searchEntries(tabs, 'steam', ELEMENTS);
+    expect(steam).toHaveLength(1);
+    expect(steam[0]).toMatchObject({ kind: 'element', id: ELEMENT.WATER, label: 'Steam', temperature: 110 });
+    const lava = searchEntries(tabs, 'lava', ELEMENTS);
+    expect(lava[0]).toMatchObject({ id: ELEMENT.STONE, label: 'Lava', temperature: 1300 });
+    expect(labels(searchEntries(tabs, 'ice', ELEMENTS))).toEqual(['Ice']);
+    expect(labels(searchEntries(tabs, 'molten', ELEMENTS))).toEqual(['Molten metal']);
+    expect(searchEntries(tabs, 'empty', ELEMENTS)).toEqual([]);
+    for (const hit of [...steam, ...lava]) expect(hit.description.trim()).not.toBe('');
+  });
+
+  it('search without a table matches buttons only', () => {
+    expect(searchEntries(tabs, 'steam')).toEqual([]);
   });
 });

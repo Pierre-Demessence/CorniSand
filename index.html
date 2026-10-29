@@ -148,6 +148,44 @@
             white-space: nowrap;
         }
 
+        /* The paint temperature: steps, the field and the preview of what will be painted. */
+        #picker-paint {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            color: #9ca3af;
+            font-size: 13px;
+            white-space: nowrap;
+        }
+
+        #picker-paint[hidden] {
+            display: none;
+        }
+
+        #picker-temperature {
+            width: 64px;
+            padding: 2px 4px;
+            border: 1px solid rgba(255, 255, 255, 0.25);
+            border-radius: 6px;
+            background: rgba(255, 255, 255, 0.06);
+            color: #f3f4f6;
+            font: inherit;
+            text-align: right;
+            user-select: text;
+            -webkit-user-select: text;
+        }
+
+        #picker-temperature:focus-visible {
+            outline: 2px solid rgba(255, 255, 255, 0.7);
+            outline-offset: 1px;
+        }
+
+        .picker-preview {
+            margin-left: 4px;
+            color: #f3f4f6;
+            font-weight: 700;
+        }
+
         .picker-selected-label {
             color: #9ca3af;
             font-weight: 500;
@@ -660,6 +698,7 @@
         <div class="picker-row">
             <div id="picker-tabs"></div>
             <span id="picker-selected" aria-live="polite"></span>
+            <span id="picker-paint"></span>
             <input type="search" id="picker-search" placeholder="Search (/)" aria-label="Search elements and tools" autocomplete="off" spellcheck="false" />
         </div>
         <div class="picker-row" id="picker-entries"></div>
