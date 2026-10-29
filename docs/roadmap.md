@@ -2,9 +2,9 @@
 
 Direction: elements that behave by real physics, with The Powder Toy as the inspiration for what to simulate, in the browser on the GPU, on a larger playing field, then what only a GPU can afford. The reasoning and the frame budget are in `docs/powder-toy.md`. Every milestone keeps the frame budget set there on the reference RTX 4080, measured by `npm run bench`, with every size and resolution a setting so M10 can scale it down (`docs/decisions.md`). IDs are stable. Next ID: M17.
 
-Order: I31 (the Scenes menu, a backlog item with its plan, `docs/plans/scene-menu.md`), M8.1, M12.13, M12.1, M12.12, M12.2 to M12.4, M15.1, M8.2, M13, M14, M12.6, M12.7, M8.3, M8.4, M15.2, M8.5 to M8.7, M12.8 to M12.11, M7, M9, M16, M10. To be confirmed, outside the order until then: M12.5.
+Order: M8.1, M12.13, M12.1, M12.12, M12.2 to M12.4, M15.1, M8.2, M13, M14, M12.6, M12.7, M8.3, M8.4, M15.2, M8.5 to M8.7, M12.8 to M12.11, M7, M9, M16, M10. To be confirmed, outside the order until then: M12.5.
 
-Why: the two approved plans first, the Scenes menu before M8.1 so its new scenes open from the menu; then a scenario for every physical property and mechanic, so the gaps are known before the physics slices; then the cheap physics the scenarios already measure, on M8.1's new materials, and a readout that shows those scenarios' numbers in the game; the smooth look and the light once fire and the new materials exist to draw; depth and moisture before chemistry, which reuses their per-cell amounts; the light before M7, whose optics build on it. A finished item leaves this line in the commit that finishes it.
+Why: the approved plan first; then a scenario for every physical property and mechanic, so the gaps are known before the physics slices; then the cheap physics the scenarios already measure, on M8.1's new materials, and a readout that shows those scenarios' numbers in the game; the smooth look and the light once fire and the new materials exist to draw; depth and moisture before chemistry, which reuses their per-cell amounts; the light before M7, whose optics build on it. A finished item leaves this line in the commit that finishes it.
 
 ## M8 Element catalogue
 

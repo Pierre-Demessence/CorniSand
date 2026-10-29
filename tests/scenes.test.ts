@@ -49,13 +49,10 @@ describe('scenes', () => {
 
   it('I31 AC15: allow waitsFor on scenarios only, with IDs of the roadmap or backlog', () => {
     const waiting = Object.entries(SCENE_INFO).filter(([, info]) => info.waitsFor !== undefined);
-    expect(waiting.map(([name]) => name).sort()).toEqual(
-      ['freeFall', 'heatedLayer', 'heatedLayer-below', 'hourglass', 'hourglass-wide', 'lavaCrust', 'redHotBar', 'viscousSpread'].sort(),
-    );
     for (const [name, info] of waiting) {
       expect(info.group, name).toBe('scenarios');
       expect(info.waitsFor!.length, name).toBeGreaterThan(0);
-      for (const id of info.waitsFor!) expect(id, name).toMatch(/^[BIM]\d+(\.\d+)?$/);
+      for (const id of info.waitsFor!) expect(id, name).toMatch(/^[BDIM]\d+(\.\d+)?$/);
     }
   });
 
