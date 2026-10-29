@@ -1,6 +1,6 @@
 # I31 Scene menu
 
-Status: I31.1 to I31.4 done; the user's review asked for one-line descriptions, a search bar and a menu that scales to hundreds of scenes (I31.4 and I31.5, written in as accepted, awaiting the user's approval). Next: I31.5. The Finish step is at the end of I31.5.
+Status: I31.1 to I31.5 done except the Finish step, which waits for the user's review of the menu and then their "finish". Next: none; finished, waiting for the user's review.
 
 ## Goal
 
@@ -113,11 +113,18 @@ Needs you: nothing.
 
 Depends on: I31.4
 
-- [ ] Rebuild the panel in `src/scene-menu.ts`, `index.html` and `main.ts` as the Design describes: search field, category list, two-column rows, chips, the "Waits for" badge and its category, keyboard handling, empty state, phone layout.
-- [ ] Browser check of AC4 to AC6 (as before, still valid) and AC12 to AC14 and AC16 at 1280 and 390 px (Sonnet sub-agent with Playwright, own dev server on another port; no localStorage of the user touched).
-- [ ] `AGENTS.md` layout line for `src/scene-menu.ts`; README sentence if it describes the old list.
-- [ ] Verify: lint, typecheck, `npm test`, build.
+- [x] Rebuild the panel in `src/scene-menu.ts`, `index.html` and `main.ts` as the Design describes: search field, category list, two-column rows, chips, the "Waits for" badge and its category, keyboard handling, empty state, phone layout.
+- [x] Browser check of AC4 to AC6 (as before, still valid) and AC12 to AC14 and AC16 at 1280 and 390 px (Sonnet sub-agent with Playwright, own dev server on another port; no localStorage of the user touched).
+- [x] `AGENTS.md` layout line for `src/scene-menu.ts`; README sentence if it describes the old list.
+- [x] Verify: lint, typecheck, `npm test`, build.
 - [ ] Finish: I31 deleted from the backlog and from the roadmap's Order line, this plan deleted in the commit.
+
+Decided during the run: the panel shows the full text of the highlighted row in a footer line, because a one-line row cuts its description at about 70 characters and the plan gave the full text only to the accessible name. The footer follows the arrow keys and the pointer. Alternative: no footer. Change by deleting `.scene-detail` and `detail` in `src/scene-menu.ts` and `index.html`.
+Decided during the run: choosing a category clears the search, and a search leaves no category pressed (it covers every category, AC11); Empty world is listed only in "All" and when the search words match its text. Alternative: keep the query when a category is picked. Change in `renderSceneMenu`.
+Decided during the run: a family's chips are one per version, the main first, and the word "current" sits on the current chip (the row itself carries it when it has no chips); the row's border and bold label mark any row that holds the current scene. Alternative: the word on the row always. Change in `buildRow`.
+Decided during the run: the backdrop leaves the 48 px toolbar uncovered so that the Scenes button toggles the menu (AC4); the browser check ran in this session with Playwright on a dev server on port 5197, stopped afterwards, rather than in a sub-agent; no localStorage touched. The renderer has no DOM unit test (no DOM test environment in the project); the unit logic stays in `sceneMenuFilter`.
+Decided during the run: the global hotkeys in `src/main.ts` (C, H, A, digits, brackets) ignore a key whose target is a text field and every key while the Scenes menu is open; the menu is modal, so a hotkey behind it is not wanted either. Escape stays with `renderSceneMenu`. Alternative: guard on the text field only. Change by dropping `!sceneMenuEl.hidden` in the keydown handler.
+Decided during the run: the review's other findings go to `docs/backlog.md` (D38, the renderer has no automated test, since jsdom or happy-dom would be a new dependency; D39, the listbox holds chip buttons and `aria-modal` disagrees with the clickable toolbar) rather than into this item: the review marked them optional or for a later accessibility pass. Alternative: fix them here. Change by taking D38 and D39 up in a plan of their own.
 
 Visible after: the new Scenes panel: type to search, pick a category, arrow keys and Enter, variants as chips, a badge on scenarios that wait for a mechanic.
 Needs you: open the menu on desktop width and in a narrow window, search for "ice", step through with the arrows, open a variant chip, look at the "Waiting for a mechanic" category, and say if anything is awkward to use (at the end).

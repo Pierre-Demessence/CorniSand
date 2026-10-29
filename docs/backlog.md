@@ -2,7 +2,7 @@
 
 IDs are stable: B = bug, D = tech debt, I = idea.
 
-Next ID: B19, D38, I36.
+Next ID: B19, D40, I36.
 
 ## Bugs
 
@@ -31,6 +31,8 @@ Next ID: B19, D38, I36.
 - **D36** (M8) The two CA passes cost 0.4 to 0.6 ms more per 1x frame on the busy bench scenes since M8.8 (`mix75` 2.10 to 2.53 ms, `full100` 1.90 to 2.29, `thermal` 2.29 to 2.85; ca0 and ca1 of `thermal` 0.86 and 0.88 to 0.96 and 0.98 ms), accepted at M8.8j. The cause is not isolated; candidates (inferred): the table row growing from 96 to 144 bytes, the density columns read in `convect`, the viscosity gate and the repose slide. A profiling pass (one candidate removed at a time under `npm run bench`) would show which is worth recovering; judge it once M8.1 and M8.2 show how much of the 4 ms engine budget is used. `src/shaders/ca.wgsl.ts`, `src/element-table.ts`
 - **D17** Page load stalls 2–4 s before the first frames run (seen in the browser at 1920×898 before the liquids moved to CA rules). In Node, creating the `Simulation` takes about 0.5–0.8 s the first time (compiling the pipelines; the CA's per-slot variables doubled its share) and 2–9 ms after (`npm run bench`), so profile the load in the browser again before optimizing; if it still stalls, create the pipelines with `createComputePipelineAsync` and show a loading state. `src/simulation.ts`
 - **D37** (M10) Renderer costs left from M11's review, inside the 1 ms budget: `shimmerShift` computes the pressure gradient (four air samples) at every pixel, even over still air; the coverage pass reads each cell's `kind` up to four times and walks its 16 cells twice; `liquidDepth` loops up to 32 texels per liquid pixel, which a running sum per column written by the coverage pass would replace. `tests/look.test.ts` builds a new `Display` (every renderer pipeline) per render, which slows the suite. `src/shaders/display.wgsl.ts`, `src/shaders/glow.wgsl.ts`, `tests/look.test.ts`
+- **D38** The Scenes menu renderer has no automated test (keyboard handling, the Escape stages, the current marking, the hotkey guard in `main.ts`): the project has no DOM test environment, and jsdom or happy-dom would be a new dev dependency, or a small Playwright script kept in the repo. `src/scene-menu.ts` `renderSceneMenu`
+- **D39** The Scenes menu's accessibility: the listbox holds rows with chip buttons beside the option (a listbox should hold options only), and the dialog says `aria-modal` while the toolbar behind it stays clickable so the Scenes button can toggle. `src/scene-menu.ts` `buildRow`, `index.html` `.scene-menu`
 
 ## Ideas
 

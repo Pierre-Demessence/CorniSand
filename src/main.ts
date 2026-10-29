@@ -143,9 +143,10 @@ async function main(): Promise<void> {
 
   const entries = toolbarEntries(ELEMENTS);
   // Picking a scene reloads the page at its URL, so the link stays shareable and Back works.
+  const sceneMenuEl = document.getElementById('scene-menu')!;
   renderSceneMenu(
     document.getElementById('scenes-btn') as HTMLButtonElement,
-    document.getElementById('scene-menu')!,
+    sceneMenuEl,
     SCENE_INFO,
     currentScene,
     (key) => { window.location.search = sceneSearch(window.location.search, key); },
@@ -219,6 +220,8 @@ async function main(): Promise<void> {
   airViewButton.addEventListener('click', () => toggle('air'));
 
   document.addEventListener('keydown', (e) => {
+    // Typing in the Scenes search, or any key while the menu is open, is not a game hotkey (C, H, A, digits, brackets).
+    if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || !sceneMenuEl.hidden) return;
     if (!e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey) {
       if (e.key.toLowerCase() === 'h') toggle('heat');
       if (e.key.toLowerCase() === 'a') toggle('air');

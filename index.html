@@ -200,29 +200,137 @@
             white-space: nowrap;
         }
 
-        /* The Scenes panel opens above the toolbar and scrolls when it is taller than the window. */
+        /* The Scenes menu: a dialog centered over a dimmed backdrop that leaves the toolbar (and its Scenes button) uncovered. */
         .scene-menu {
             position: fixed;
-            bottom: 56px;
-            left: 16px;
-            width: min(440px, calc(100vw - 32px));
-            max-height: calc(100vh - 72px);
-            overflow-y: auto;
-            padding: 8px;
-            background: rgba(16, 16, 20, 0.95);
-            border: 1px solid rgba(255, 255, 255, 0.15);
-            border-radius: 6px;
+            inset: 0 0 48px 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 16px;
+            background: rgba(0, 0, 0, 0.55);
             z-index: 15;
-            scrollbar-width: thin;
-            scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
         }
 
         .scene-menu[hidden] {
             display: none;
         }
 
+        .scene-dialog {
+            display: flex;
+            flex-direction: column;
+            width: min(960px, 100%);
+            height: min(640px, 100%);
+            background: rgba(16, 16, 20, 0.98);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 8px;
+            overflow: hidden;
+            color: #9ca3af;
+            font-size: 12px;
+        }
+
+        .scene-dialog button,
+        .scene-dialog input {
+            font: inherit;
+        }
+
+        .scene-dialog button:focus-visible,
+        .scene-dialog input:focus-visible {
+            outline: 2px solid rgba(255, 255, 255, 0.7);
+            outline-offset: 1px;
+        }
+
+        .scene-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .scene-search {
+            flex: 1 1 auto;
+            min-width: 0;
+            padding: 8px 10px;
+            border: 1px solid rgba(255, 255, 255, 0.25);
+            border-radius: 6px;
+            background: rgba(255, 255, 255, 0.06);
+            color: #f3f4f6;
+            font-size: 14px;
+            user-select: text;
+            -webkit-user-select: text;
+        }
+
+        .scene-count {
+            flex: none;
+            color: #9ca3af;
+            font-size: 12px;
+        }
+
+        .scene-body {
+            display: flex;
+            flex: 1 1 auto;
+            min-height: 0;
+        }
+
+        .scene-cats {
+            display: flex;
+            flex: none;
+            flex-direction: column;
+            gap: 4px;
+            width: 220px;
+            padding: 12px;
+            overflow-y: auto;
+            border-right: 1px solid rgba(255, 255, 255, 0.1);
+            scrollbar-width: thin;
+            scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
+        }
+
+        .scene-cat {
+            display: flex;
+            justify-content: space-between;
+            gap: 8px;
+            padding: 6px 10px;
+            border: 1px solid transparent;
+            border-radius: 6px;
+            background: transparent;
+            color: #9ca3af;
+            cursor: pointer;
+            text-align: left;
+        }
+
+        .scene-cat:hover {
+            background: rgba(255, 255, 255, 0.08);
+            color: #d1d5db;
+        }
+
+        .scene-cat[aria-pressed="true"] {
+            border-color: rgba(255, 255, 255, 0.4);
+            background: rgba(255, 255, 255, 0.12);
+            color: #f3f4f6;
+            font-weight: 700;
+        }
+
+        .scene-cat-count {
+            color: #6b7280;
+        }
+
+        .scene-rows {
+            display: grid;
+            flex: 1 1 auto;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            align-content: start;
+            gap: 6px;
+            min-width: 0;
+            padding: 12px;
+            overflow-y: auto;
+            scrollbar-width: thin;
+            scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
+        }
+
         .scene-group {
-            margin: 10px 4px 4px;
+            grid-column: 1 / -1;
+            margin-top: 8px;
             color: #6b7280;
             font-size: 11px;
             font-weight: 600;
@@ -230,49 +338,168 @@
             text-transform: uppercase;
         }
 
-        .scene-item {
-            display: flex;
-            flex-direction: column;
-            gap: 2px;
-            width: 100%;
-            margin-top: 4px;
-            padding: 6px 10px;
-            border: 1px solid transparent;
-            background: rgba(255, 255, 255, 0.04);
+        .scene-group:first-child {
+            margin-top: 0;
+        }
+
+        .scene-empty {
+            grid-column: 1 / -1;
+            padding: 24px 0;
             color: #9ca3af;
+            font-size: 13px;
+            text-align: center;
+        }
+
+        .scene-row {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            min-width: 0;
+            border: 1px solid transparent;
             border-radius: 6px;
-            cursor: pointer;
-            font: inherit;
-            font-size: 12px;
-            text-align: left;
+            background: rgba(255, 255, 255, 0.04);
         }
 
-        .scene-item:hover,
-        .scene-item:focus-visible {
-            background: rgba(255, 255, 255, 0.1);
+        .scene-row.active {
+            background: rgba(255, 255, 255, 0.12);
             color: #d1d5db;
         }
 
-        .scene-item.current {
+        .scene-row.current {
             border-color: rgba(255, 255, 255, 0.5);
-            color: #d1d5db;
+        }
+
+        .scene-row.current .scene-label {
+            font-weight: 700;
+        }
+
+        .scene-open {
+            display: flex;
+            flex: 1 1 0;
+            align-items: baseline;
+            gap: 8px;
+            min-width: 0;
+            padding: 6px 10px;
+            border: 0;
+            background: transparent;
+            color: #9ca3af;
+            cursor: pointer;
+            text-align: left;
         }
 
         .scene-head {
             display: flex;
-            justify-content: space-between;
-            gap: 8px;
+            flex: none;
+            align-items: baseline;
+            gap: 6px;
+            max-width: 55%;
             color: #e5e7eb;
             font-size: 13px;
         }
 
-        .scene-item.current .scene-label {
+        .scene-label {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .scene-current,
+        .scene-waits {
+            flex: none;
+            padding: 0 5px;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: 4px;
+            color: #d1d5db;
+            font-size: 10px;
+            white-space: nowrap;
+        }
+
+        .scene-description {
+            flex: 1 1 auto;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .scene-chips {
+            display: flex;
+            flex: none;
+            gap: 4px;
+            padding-right: 6px;
+        }
+
+        .scene-chip {
+            display: inline-flex;
+            align-items: baseline;
+            gap: 4px;
+            padding: 2px 8px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.04);
+            color: #9ca3af;
+            cursor: pointer;
+            font-size: 11px;
+            white-space: nowrap;
+        }
+
+        .scene-chip:hover {
+            background: rgba(255, 255, 255, 0.12);
+            color: #f3f4f6;
+        }
+
+        .scene-chip.current {
+            border-color: rgba(255, 255, 255, 0.6);
+            color: #f3f4f6;
             font-weight: 700;
         }
 
-        .scene-current {
-            color: #9ca3af;
-            font-size: 11px;
+        .scene-detail {
+            flex: none;
+            min-height: 2.6em;
+            padding: 8px 12px;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            color: #d1d5db;
+            font-size: 12px;
+            line-height: 1.3;
+        }
+
+        @media (max-width: 700px) {
+            .scene-body {
+                flex-direction: column;
+            }
+
+            .scene-cats {
+                flex-direction: row;
+                flex-wrap: wrap;
+                width: auto;
+                max-height: 112px;
+                padding: 8px 12px;
+                border-right: 0;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            }
+
+            .scene-cat {
+                padding: 3px 8px;
+                border-color: rgba(255, 255, 255, 0.15);
+                border-radius: 999px;
+            }
+
+            .scene-rows {
+                grid-template-columns: minmax(0, 1fr);
+            }
+
+            .scene-row {
+                flex-wrap: wrap;
+            }
+
+            .scene-open {
+                flex-basis: 100%;
+            }
+
+            .scene-chips {
+                padding: 0 10px 6px;
+            }
         }
 
         .help-hint {
@@ -314,7 +541,7 @@
         <div class="heat-legend-labels" id="heat-legend-labels"></div>
     </div>
 
-    <div class="scene-menu" id="scene-menu" role="dialog" aria-label="Scenes" hidden></div>
+    <div class="scene-menu" id="scene-menu" hidden></div>
 
     <div id="toolbar">
         <div id="tool-buttons"></div>
