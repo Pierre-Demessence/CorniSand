@@ -518,6 +518,10 @@ export interface SceneInfo {
   description: string;
   /** Roadmap or backlog IDs that a scenario's test waits for; only a scenario has them (`tests/scenes.test.ts`). */
   waitsFor?: string[];
+  /** On a variant: the key of the main scene of its family, which has no `family` of its own (`tests/scenes.test.ts`). */
+  family?: string;
+  /** The chip's label of a scene with variants, the main one included ("full", "fast", "steel"). */
+  version?: string;
 }
 
 /** The longest description the menu shows on its one line. */

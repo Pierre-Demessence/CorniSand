@@ -82,6 +82,20 @@ describe('scenes', () => {
     }
   });
 
+  it('I31 AC14: tie each variant to a main scene of its family, and give both a chip label', () => {
+    for (const [name, info] of Object.entries(SCENE_INFO)) {
+      if (info.family === undefined) continue;
+      const main = SCENE_INFO[info.family];
+      expect(main, name).toBeDefined();
+      expect(main.family, name).toBeUndefined();
+      expect(info.version?.trim(), name).toBeTruthy();
+      expect(main.version?.trim(), name).toBeTruthy();
+      expect(name.startsWith(`${info.family}-`), name).toBe(true);
+    }
+    // The variants AC7 registers.
+    expect(Object.values(SCENE_INFO).filter((info) => info.family !== undefined)).toHaveLength(6);
+  });
+
   it('build every scene with consistent sizes and only known particle types', () => {
     for (const [name, build] of Object.entries(SCENES)) {
       const scene = build();

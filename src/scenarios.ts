@@ -400,21 +400,27 @@ export const SCENARIO_INFO: Record<string, SceneInfo> = {
   iceCup: {
     label: 'Ice in water',
     group: 'scenarios',
+    version: 'full',
     description: 'A cube of ice in a sealed cup of water, 1 part to 9 by mass: all the ice melts and the cup ends at 10 °C.',
   },
   'iceCup-fast': {
     label: 'Ice in water (chips)',
     group: 'scenarios',
+    family: 'iceCup',
+    version: 'fast',
     description: 'The same cup with the ice as chips spread through the cup, so it melts sooner and ends at 10 °C.',
   },
   steamBurn: {
     label: 'Steam on steel',
     group: 'scenarios',
+    version: 'steam',
     description: 'Why steam scalds worse than boiling water: 10 cells of steam at 100 °C sealed in 100 cells of steel at 20 °C.',
   },
   'steamBurn-water': {
     label: 'Boiling water on steel',
     group: 'scenarios',
+    family: 'steamBurn',
+    version: 'water',
     description: 'The same steel box with boiling water instead of steam: no latent heat, so it ends far cooler.',
   },
   contactTemp: {
@@ -437,24 +443,30 @@ export const SCENARIO_INFO: Record<string, SceneInfo> = {
   heatedLayer: {
     label: 'Heated water layer',
     group: 'scenarios',
+    version: 'above',
     description: 'Water 8 cells deep between plates, the lower 2 °C warmer: it stirs and carries 2.6 to 4.0 times conduction.',
     waitsFor: ['I29'],
   },
   'heatedLayer-below': {
     label: 'Heated water layer (below the threshold)',
     group: 'scenarios',
+    family: 'heatedLayer',
+    version: 'below',
     description: 'Water 3 cells deep, the lower plate 1 °C warmer: under the threshold, so it stays still and conducts only.',
     waitsFor: ['I29'],
   },
   hourglass: {
     label: 'Hourglass',
     group: 'scenarios',
+    version: 'outlet 8',
     description: 'A silo of sand over an 8-cell outlet: sand runs at a steady rate and the pile stands at 34 ± 4 degrees.',
     waitsFor: ['B17', 'B18'],
   },
   'hourglass-wide': {
     label: 'Hourglass (wide outlet)',
     group: 'scenarios',
+    family: 'hourglass',
+    version: 'outlet 16',
     description: 'The same silo with a 16-cell outlet: it empties 2.83 to 3.56 times as fast as the 8-cell one.',
     waitsFor: ['B17', 'B18'],
   },
@@ -473,16 +485,21 @@ export const SCENARIO_INFO: Record<string, SceneInfo> = {
   sealedBars: {
     label: 'Steel bar relaxing',
     group: 'scenarios',
+    version: 'steel',
     description: 'A steel bar 40 cells long, halves at 100 and 0 °C: the difference decays with a 21 s time constant.',
   },
   'sealedBars-stone': {
     label: 'Stone bar relaxing',
     group: 'scenarios',
+    family: 'sealedBars',
+    version: 'stone',
     description: 'A stone bar 12 cells long, halves at 100 and 0 °C: the difference decays with a 24 s time constant.',
   },
   'sealedBars-ice': {
     label: 'Ice bar relaxing',
     group: 'scenarios',
+    family: 'sealedBars',
+    version: 'ice',
     description: 'An ice bar 12 cells long, halves at -5 and -25 °C: the difference decays with a 23 s time constant.',
   },
   coolingBlock: {

@@ -12,17 +12,91 @@ export interface SceneMenuGroup {
   scenes: SceneMenuEntry[];
 }
 
-/** The groups in `SCENE_GROUPS` order with their scenes in the order of `info`; a group with no scene is left out. */
+/**
+ * The category of the scenarios whose test waits for a mechanic: virtual, since the scene's `group` stays `scenarios`
+ * and it moves back when its `waitsFor` is deleted.
+ */
+export const WAITING_CATEGORY = { id: 'waiting', label: 'Waiting for a mechanic' } as const;
+
+const CATEGORIES: readonly { id: string; label: string }[] = [...SCENE_GROUPS, WAITING_CATEGORY];
+
+function categoryOf(scene: SceneInfo): string {
+  return scene.waitsFor !== undefined && scene.waitsFor.length > 0 ? WAITING_CATEGORY.id : scene.group;
+}
+
+/**
+ * The categories in `SCENE_GROUPS` order, then "Waiting for a mechanic", with their scenes in the order of `info`; a
+ * category with no scene is left out. A scenario with `waitsFor` is in the last one only.
+ */
 export function sceneMenuGroups(info: Readonly<Record<string, SceneInfo>>): SceneMenuGroup[] {
-  return SCENE_GROUPS
-    .map((group) => ({
-      id: group.id,
-      label: group.label,
+  return CATEGORIES
+    .map((category) => ({
+      id: category.id,
+      label: category.label,
       scenes: Object.entries(info)
-        .filter(([, scene]) => scene.group === group.id)
+        .filter(([, scene]) => categoryOf(scene) === category.id)
         .map(([key, scene]) => ({ key, label: scene.label, description: scene.description })),
     }))
     .filter((group) => group.scenes.length > 0);
+}
+
+export interface SceneMenuVersion {
+  key: string;
+  /** The chip's label. */
+  version: string;
+  waitsFor: string[];
+}
+
+/** One row of the menu: a scene, or a family of scenes folded under its first member (the main version when it is listed). */
+export interface SceneMenuRow {
+  key: string;
+  label: string;
+  description: string;
+  waitsFor: string[];
+  /** The category of the row's scene. */
+  category: string;
+  /** One entry per member of the family in the result, the row's own scene first; empty for a scene alone. */
+  versions: SceneMenuVersion[];
+}
+
+/** Lower case with the accents removed, so that "ete" finds "été". */
+function fold(text: string): string {
+  return text.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
+}
+
+/**
+ * The rows the menu lists. A non-empty `query` searches every category: a scene matches when its label, description
+ * and group label together contain each word of the query (case and accents ignored). With an empty query, `category`
+ * (an id of `sceneMenuGroups`, or `null` for all) selects the scenes. Rows come in the order of `info`; the scenes
+ * of one family that are in the result share a row.
+ */
+export function sceneMenuFilter(info: Readonly<Record<string, SceneInfo>>, query: string, category: string | null): SceneMenuRow[] {
+  const words = fold(query).split(/\s+/).filter((word) => word !== '');
+  const families = new Map<string, [string, SceneInfo][]>();
+  for (const entry of Object.entries(info)) {
+    const [key, scene] = entry;
+    const groupLabel = CATEGORIES.find((c) => c.id === scene.group)?.label ?? '';
+    const haystack = fold(`${scene.label} ${scene.description} ${groupLabel}`);
+    const matches = words.length > 0
+      ? words.every((word) => haystack.includes(word))
+      : category === null || categoryOf(scene) === category;
+    if (!matches) continue;
+    const familyKey = scene.family ?? key;
+    families.set(familyKey, [...(families.get(familyKey) ?? []), entry]);
+  }
+  return [...families.values()].map((members) => {
+    const [key, scene] = members[0];
+    return {
+      key,
+      label: scene.label,
+      description: scene.description,
+      waitsFor: scene.waitsFor ?? [],
+      category: categoryOf(scene),
+      versions: members.length === 1
+        ? []
+        : members.map(([memberKey, member]) => ({ key: memberKey, version: member.version ?? memberKey, waitsFor: member.waitsFor ?? [] })),
+    };
+  });
 }
 
 /** The query string (with its `?`, or empty) that opens `key` and keeps every other parameter; `null` removes the scene. */

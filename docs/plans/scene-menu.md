@@ -1,6 +1,6 @@
 # I31 Scene menu
 
-Status: I31.1 to I31.3 done; the user's review asked for one-line descriptions, a search bar and a menu that scales to hundreds of scenes (I31.4 and I31.5, written in as accepted, awaiting the user's approval). Next: I31.4. The Finish step is at the end of I31.5.
+Status: I31.1 to I31.4 done; the user's review asked for one-line descriptions, a search bar and a menu that scales to hundreds of scenes (I31.4 and I31.5, written in as accepted, awaiting the user's approval). Next: I31.5. The Finish step is at the end of I31.5.
 
 ## Goal
 
@@ -100,8 +100,11 @@ Needs you: nothing.
 
 ### I31.4 Menu search and families
 
-- [ ] `SceneInfo.family` / `version` on the variants registered in I31.2 (AC7 keys keep their names); `sceneMenuFilter` and the category split with their unit tests (AC11, the unit part of AC16).
-- [ ] Verify: lint, typecheck, `npm test`, build.
+- [x] `SceneInfo.family` / `version` on the variants registered in I31.2 (AC7 keys keep their names); `sceneMenuFilter` and the category split with their unit tests (AC11, the unit part of AC16).
+- [x] Verify: lint, typecheck, `npm test`, build.
+
+Decided during the run: the main version of a family carries a `version` (its chip label: "full", "steam", "above", "outlet 8", "steel") and no `family`; each variant carries `family` (the main's key) and `version`. `tests/scenes.test.ts` checks the pairing (AC14's data). Alternative: the main names itself in `family`. Change by editing `SCENARIO_INFO`.
+Decided during the run: `sceneMenuGroups` derives the categories, so "Waiting for a mechanic" (`WAITING_CATEGORY`, last) already shows in the old panel, and its AC2 test expects it after the scenarios. `sceneMenuFilter(info, query, category)` takes `null` for "All" and returns rows (`SceneMenuRow`: key, label, description, `waitsFor`, category, `versions` chips); a family's members that are in the result share the row of the first one, a variant alone is a row without chips. Alternative: fold a family whole whenever one member matches. Change in `sceneMenuFilter`.
 
 Visible after: nothing: the panel still shows the old list; I31.5 uses these.
 Needs you: nothing.
