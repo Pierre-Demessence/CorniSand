@@ -8,6 +8,7 @@ import { ABSOLUTE_ZERO, ROOM_TEMP } from '../src/heat';
 import { CELL_SIZE, CONVECTION_GAIN, DISPATCH_TIME, G, convectionChance } from '../src/physics';
 import type { Simulation } from '../src/simulation';
 import { cell, cellType, createSim, device, readCells, runMany } from './gpu';
+import { control, scenario } from './scenario';
 
 const NO_AIR = { air: false };
 
@@ -219,9 +220,14 @@ describe.skipIf(!device)('M8.8 AC10: a tank of water heated from below', () => {
     expect(flat, `the flat tank took longer than ${convecting! * 10} supersteps`).toBeNull();
   }, 300_000);
 
-  it('M8.8 AC10: lifts its hot cells at a speed within a factor of 3 of the free-convection estimate', async () => {
+  // heatedPot: a 4×4 block of water at the plate's temperature on the floor of a 32-cell tank at 20 °C rises at the free-convection
+  // speed sqrt(g β ΔT L) (the free-convection velocity scale, `docs/simulation.md`), β from the water's own density curve
+  // between the two temperatures, L the height of the tank, to within a factor of 3 (the scale is an estimate, inferred, not a
+  // measured speed). The measure is the speed over that estimate; a block that never gets three quarters of the
+  // way up within the run counts as 0, which misses the target.
+  async function riseRatio(liquid: number): Promise<number> {
     const depth = 32;
-    const layout = tank({ depth, liquid: T.WATER, temp: START });
+    const layout = tank({ depth, liquid, temp: START });
     // A block of cells at the plate's temperature in the middle of the floor of the tank.
     const temps = tempView({ temp: layout.temp });
     for (let y = 0; y < 4; y++) for (let x = 7; x < 11; x++) temps[(layout.y0 + y) * WIDTH + x] = PLATE;
@@ -252,17 +258,32 @@ describe.skipIf(!device)('M8.8 AC10: a tank of water heated from below', () => {
       if (atLower === undefined && height >= lower) atLower = step * 4;
       if (atLower !== undefined && height >= upper) atUpper = step * 4;
     }
-    expect(atUpper, 'the hot block never reached three quarters of the way up').toBeDefined();
+    if (atUpper === undefined) return 0;
     // Cells per dispatch: a superstep is two dispatches.
-    const measured = (upper - lower) / ((atUpper! - atLower!) * 2);
+    const measured = (upper - lower) / ((atUpper - atLower!) * 2);
 
     // sqrt(g beta dT L): beta from the water's own curve between the two temperatures, L the height of the tank.
     const beta = (densityAt(WATER, START) - densityAt(WATER, PLATE)) / (densityAt(WATER, START) * (PLATE - START));
     const estimate = (Math.sqrt(G * beta * (PLATE - START) * depth * CELL_SIZE) * DISPATCH_TIME) / CELL_SIZE;
-    const note = `rose ${measured.toFixed(3)} cells per dispatch against an estimate of ${estimate.toFixed(3)}`;
-    expect(measured / estimate, note).toBeGreaterThan(1 / 3);
-    expect(measured / estimate, note).toBeLessThan(3);
-  }, 120_000);
+    return measured / estimate;
+  }
+  const RISE_TARGET = [1 / 3, 3] as const;
+
+  scenario({
+    name: 'heatedPot',
+    measure: async () => ({ rise: await riseRatio(T.WATER) }),
+    checks: [{ value: 'rise', outcome: 'lifts its hot cells at a speed within a factor of 3 of the free-convection estimate', target: RISE_TARGET }],
+    timeout: 120_000,
+  });
+
+  // Without a density that changes with temperature the hot block has nothing to rise with: it never reaches three quarters of the way up.
+  control({
+    name: 'heatedPot',
+    wrong: 'flat-density water',
+    measure: () => riseRatio(FLAT_ID),
+    target: RISE_TARGET,
+    timeout: 120_000,
+  });
 });
 
 describe.skipIf(!device)('M8.8 AC11: a pond under a freezing ceiling', () => {
@@ -306,21 +327,48 @@ describe.skipIf(!device)('M8.8 AC11: a pond under a freezing ceiling', () => {
     return result;
   }
 
-  it('M8.8 AC11: freezes first in the top quarter and keeps the bottom water at 3.5 °C or more until the top row has frozen over', async () => {
+  // freezingPond: water is densest at 4 °C (the knots of its density curve, `WATER.densityKnots`), so a 10 °C pond cooled from
+  // above stirs down to 4 °C before its surface freezes, and ice forms at the top, where the water is coldest; the bottom water
+  // stays at 3.5 °C or more until then and ends under 4.5 °C. The pond is 16 cells deep under a ceiling at -20 °C.
+  const measurePond = async (): Promise<Pond> => {
     const r = await pond(T.WATER, 60_000);
     expect(r.frozenAt, 'supersteps until the top row has frozen over').not.toBeNull();
     expect(r.firstIce, 'the first ice').not.toBeNull();
-    expect(r.firstIce!.inTopQuarter, 'cells of the first ice that lie in the top quarter').toBe(r.firstIce!.count);
-    expect(Math.min(...r.bottom), 'coldest bottom cell at any sample before the top row froze').toBeGreaterThanOrEqual(3.5);
-    // The pond has been stirred down to its densest temperature, 4 °C, by then.
-    expect(r.bottom[r.bottom.length - 1], 'bottom water when the top row froze').toBeLessThan(4.5);
-  }, 120_000);
+    return r;
+  };
+  const BOTTOM_AT_FREEZE = [-Infinity, 4.5] as const;
+  scenario({
+    name: 'freezingPond',
+    measure: async () => {
+      const r = await measurePond();
+      return {
+        topQuarterShare: r.firstIce!.inTopQuarter / r.firstIce!.count,
+        coldestBottom: Math.min(...r.bottom),
+        bottomAtFreeze: r.bottom[r.bottom.length - 1],
+      };
+    },
+    checks: [
+      { value: 'topQuarterShare', outcome: 'freezes first in the top quarter (all the cells of the first ice)', target: [1, 1] },
+      { value: 'coldestBottom', outcome: 'keeps the bottom water at 3.5 °C or more until the top row has frozen over', target: [3.5, Infinity] },
+      { value: 'bottomAtFreeze', outcome: 'has stirred its bottom water down to under 4.5 °C when the top row has frozen', target: BOTTOM_AT_FREEZE },
+    ],
+    timeout: 120_000,
+  });
 
-  it('M8.8 AC11: the same pond with flat density keeps its bottom water where it started', async () => {
-    const r = await pond(FLAT_ID, 60_000);
-    expect(r.frozenAt).not.toBeNull();
-    expect(r.bottom[r.bottom.length - 1], 'bottom water of the pond without convection').toBeGreaterThan(9.5);
-  }, 120_000);
+  // The same pond with flat density keeps its bottom water near where it started (10 °C): it never stirs.
+  control({
+    name: 'freezingPond',
+    wrong: 'flat-density water',
+    measure: async () => {
+      const r = await pond(FLAT_ID, 60_000);
+      expect(r.frozenAt).not.toBeNull();
+      const bottom = r.bottom[r.bottom.length - 1];
+      expect(bottom, 'bottom water of the pond without convection').toBeGreaterThan(9.5);
+      return bottom;
+    },
+    target: BOTTOM_AT_FREEZE,
+    timeout: 120_000,
+  });
 });
 
 describe.skipIf(!device)('M8.8 AC12: a body of one liquid at one temperature stays still', () => {

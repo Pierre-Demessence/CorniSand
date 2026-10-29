@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { AIR, airShare, type AirCellSize } from '../src/air';
 import { emptyCellData, tempView } from '../src/cell-fields';
-import { ELEMENT as T, ELEMENTS, elementByKey, elementHeatCapacity } from '../src/elements';
+import { ELEMENT as T, ELEMENTS, elementByKey, elementHeatCapacity, type ElementDef } from '../src/elements';
 import { packHalf2 } from '../src/half';
 import { ROOM_TEMP } from '../src/heat';
 import { CELL_SIZE, HEAT_UNIT, PAIR_TIME } from '../src/physics';
@@ -9,6 +9,7 @@ import { PLUME, plume } from '../src/scenes';
 import type { Simulation } from '../src/simulation';
 import { FRAME_SUPERSTEPS, airWords, cell, cellType, createSim, device, idleInput, mulberry32, readCells, run, runMany, countTypes } from './gpu';
 import { heatContent } from './metrics';
+import { control, scenario } from './scenario';
 
 // Measured with the constants in `AIR` (the M6.4 results are in the deleted plan, `git log --all -- docs/plans/m6-air.md`; re-measured
 // in M8.8d with the air's physical capacity and surface coefficient).
@@ -175,14 +176,19 @@ describe.skipIf(!device)('M6 ambient heat', () => {
     }, 120_000);
   });
 
-  describe('M8.8 AC7: cooling in still air', () => {
+  describe('coolingBlock: cooling in still air', () => {
     // A steel block 50 cells (68 mm) wide at 500 °C hangs in a large box of room-temperature air. Its surface coefficient
     // is read from the cooling of its mean temperature in the lumped form: T - T_air falls as exp(-h P t / (C A)) with P
     // the perimeter of cells that touch the air (4 x 50 - 4, a corner cell touches it once), A the area and C the capacity.
-    it('M8.8 AC7: a steel block 50 cells wide at 500 °C cools with an effective surface coefficient within a factor of 2 of still-air natural convection (10 W/m²·K)', async () => {
+    // Target: natural convection in still air is 5 to 25 W/m²·K for objects from a centimetre to a metre (Incropera et al.,
+    // Fundamentals of Heat and Mass Transfer, Table 1.1); 10 W/m²·K is taken as typical for a block this size, and the game's
+    // coefficient must lie within a factor of 2 of it, 5 to 20. The coefficient is read with the capacity of real steel
+    // (`ELEMENTS`' METAL), whatever table the block is simulated in. Left out: radiation, which the game's air exchange does not model; once it
+    // does (backlog I26), the block is measured at emissivity 0, since the target is the convection coefficient alone.
+    async function surfaceCoefficient(elements: readonly ElementDef[]): Promise<number> {
       const [width, height, side, supersteps] = [160, 160, 50, 9000];
       const world = new World(width, height).fill(T.METAL, 55, 55 + side, 55, 55 + side, 500);
-      const sim = createSim(width, height, 1);
+      const sim = createSim(width, height, 1, { elements });
       sim.load(world.data);
 
       await runMany(sim, supersteps, FRAME_SUPERSTEPS);
@@ -191,11 +197,26 @@ describe.skipIf(!device)('M6 ambient heat', () => {
       const capacity = elementHeatCapacity(elementByKey(ELEMENTS, 'METAL')) * HEAT_UNIT;
       const heatPerKelvin = capacity * side * side * CELL_SIZE ** 2;
       const perimeter = (4 * side - 4) * CELL_SIZE;
-      const h = (-Math.log((mean - ROOM_TEMP) / (500 - ROOM_TEMP)) * heatPerKelvin) / (perimeter * supersteps * PAIR_TIME);
       // Measured: 9.2 W/m²·K (mean 497.3 °C after 9,000 supersteps, 37.5 s).
-      expect(h, `effective surface coefficient, W/m²·K (mean ${mean} °C)`).toBeGreaterThan(5);
-      expect(h, `effective surface coefficient, W/m²·K (mean ${mean} °C)`).toBeLessThan(20);
-    }, 120_000);
+      return (-Math.log((mean - ROOM_TEMP) / (500 - ROOM_TEMP)) * heatPerKelvin) / (perimeter * supersteps * PAIR_TIME);
+    }
+    const TARGET = [5, 20] as const;
+
+    scenario({
+      name: 'coolingBlock',
+      measure: async () => ({ h: await surfaceCoefficient(ELEMENTS) }),
+      checks: [{ value: 'h', outcome: 'a steel block 50 cells wide at 500 °C cools with an effective surface coefficient within a factor of 2 of still-air natural convection (10 W/m²·K)', target: TARGET }],
+      timeout: 120_000,
+    });
+
+    // Steel at four times its capacity cools four times slower, which read with real steel's capacity is about 2.3 W/m²·K.
+    control({
+      name: 'coolingBlock',
+      wrong: 'steel at four times its heat capacity',
+      measure: () => surfaceCoefficient(ELEMENTS.map((e) => (e.key === 'METAL' ? { ...e, heatCapacity: elementHeatCapacity(e) * 4 } : e))),
+      target: TARGET,
+      timeout: 120_000,
+    });
 
     it('M8.8 AC7: the air has the heat capacity of air, 1.2 kJ/m³·K per cell', () => {
       expect(AIR.heatCapacity * HEAT_UNIT).toBeCloseTo(1200, 6);

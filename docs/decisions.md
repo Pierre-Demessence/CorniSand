@@ -115,3 +115,9 @@ Rejected: one look with every effect on and no way to see the cells; effects swi
 Grain, opacity and absorption are columns of a table that only the display and its coverage pass bind (`src/display-table.ts`), generated from an optional `look` on each `ELEMENTS` row, not words of the CA's shared row, which already grew from 96 to 144 bytes and is a suspect in the CA's cost (backlog D36). The halo is the blurred light that hot cells radiate (a coverage pass writes it from temperature, a chain blurs it), not a bright-pass over the finished image.
 
 Rejected: more words in the shared row (every CA thread would pay for columns only the drawing reads); a bright-pass bloom over the finished frame (it needs a full-resolution HDR copy of the frame, and white things such as snow, steam and a bright wall would glow).
+
+## Scenario tests run inside `npm test`
+
+The real-world scenarios (`tests/scenarios-*.test.ts`) are ordinary GPU suites: they cost 116 s of `npm test` against 73 s before them, and the slowest takes 25 s. A scenario test slower than 60 s, or scenarios that add more than 3 minutes, move their full versions to `npm run test:full` (a `vitest.full.config.ts` over `tests/*.full.ts`, as the bench) and are listed in `AGENTS.md`; below that, one command running everything is worth more than the saved minutes.
+
+Rejected: a separate command from the start (the full versions would then run only when someone remembers them, and a regression in a waiting scenario's companion would go unseen).

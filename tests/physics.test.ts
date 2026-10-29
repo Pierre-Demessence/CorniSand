@@ -7,6 +7,7 @@ import type { Simulation } from '../src/simulation';
 import { formatProbe } from '../src/readout';
 import { TOOLS } from '../src/toolbar';
 import { cell, createSim, device, idleInput, readCells, run, runMany } from './gpu';
+import { control, scenario } from './scenario';
 
 const NO_AIR = { air: false };
 
@@ -156,14 +157,17 @@ describe.skipIf(!device)('M8.8 AC2: a single pair on the GPU', () => {
   });
 });
 
-describe.skipIf(!device)('M8.8 AC3: a sealed bar relaxes at the speed of its material', () => {
+describe.skipIf(!device)('sealedBars: a sealed bar relaxes at the speed of its material', () => {
   // A one-cell-high bar of `cells` cells, the left half at `hot` and the right half at `cold`, with nothing around it that
-  // holds heat. The difference between its halves decays as exp(-t / tau) with tau = L² / (pi² alpha), alpha = k / C.
-  async function timeConstant(key: string, cells: number, hot: number, cold: number): Promise<{ measured: number; expected: number }> {
+  // holds heat. The difference between its halves decays as exp(-t / tau) with tau = L² / (pi² alpha), alpha = k / C
+  // (a bar's lowest conduction mode; Carslaw and Jaeger, Conduction of Heat in Solids). The measure is the time constant the
+  // simulation gives over the one the row's own data give, so 1 is real; the table the bar is simulated in may differ from
+  // `ELEMENTS` (the control), the expected time constant always comes from the real row.
+  async function timeConstantRatio(key: string, cells: number, hot: number, cold: number, elements: readonly ElementDef[] = ELEMENTS): Promise<number> {
     const row = elementByKey(ELEMENTS, key);
     const alpha = (elementConductivity(row) / (elementHeatCapacity(row) * HEAT_UNIT));
     const expected = (cells * CELL_SIZE) ** 2 / (Math.PI ** 2 * alpha);
-    const sim = createSim(cells, 1, 1, NO_AIR);
+    const sim = createSim(cells, 1, 1, { ...NO_AIR, elements });
     const temp = uniformTemps(cells, cold);
     const temps = tempView({ temp });
     for (let x = 0; x < cells / 2; x++) temps[x] = hot;
@@ -185,19 +189,36 @@ describe.skipIf(!device)('M8.8 AC3: a sealed bar relaxes at the speed of its mat
     const first = await difference();
     await runMany(sim, supersteps(expected));
     const second = await difference();
-    return { measured: expected / Math.log(first / second), expected };
+    // The samples are one real time constant apart, so the decay between them is exp(-expected / measured).
+    return 1 / Math.log(first / second);
   }
 
-  it.each([
+  // Within 15% of the time constant the row's data give.
+  const TARGET = [0.85, 1.15] as const;
+  const bars = [
     ['METAL', 40, 100, 0],
     ['STONE', 12, 100, 0],
     ['ICE', 12, -5, -25],
-  ])('M8.8 AC3: a %s bar of %i cells decays with the time constant L² / (π² α) within 15%', async (key, cells, hot, cold) => {
-    const { measured, expected } = await timeConstant(key, cells, hot, cold);
-    // `measured` is the time constant the two samples give.
-    expect(measured / expected, `${key}: the decay took ${measured.toFixed(1)} s against ${expected.toFixed(1)} s`).toBeGreaterThan(0.85);
-    expect(measured / expected, `${key}: the decay took ${measured.toFixed(1)} s against ${expected.toFixed(1)} s`).toBeLessThan(1.15);
-  }, 120_000);
+  ] as const;
+  for (const [key, cells, hot, cold] of bars) {
+    scenario({
+      name: 'sealedBars',
+      version: `${key}, ${cells} cells`,
+      measure: async () => ({ ratio: await timeConstantRatio(key, cells, hot, cold) }),
+      checks: [{ value: 'ratio', outcome: 'decays with the time constant L² / (π² α) within 15%', target: TARGET }],
+      timeout: 120_000,
+    });
+  }
+
+  // Steel at half its conductivity relaxes in about twice the time of real steel: it is measured against real steel's.
+  control({
+    name: 'sealedBars',
+    version: 'METAL, 40 cells',
+    wrong: 'steel at half its conductivity',
+    measure: () => timeConstantRatio('METAL', 40, 100, 0, ELEMENTS.map((e) => (e.key === 'METAL' ? { ...e, conductivity: elementConductivity(e) / 2 } : e))),
+    target: TARGET,
+    timeout: 120_000,
+  });
 });
 
 describe.skipIf(!device)('M8.8 AC5: the stored temperature of a cell condensing steam', () => {

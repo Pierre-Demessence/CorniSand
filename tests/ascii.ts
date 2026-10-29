@@ -1,5 +1,5 @@
 import { ELEMENT as T } from '../src/elements';
-import { packCell } from '../src/scenes';
+import { packCell } from '../src/scene-canvas';
 
 const KINDS: Record<string, number> = { '.': T.EMPTY, '#': T.WALL, w: T.WATER, o: T.OIL, s: T.SAND };
 

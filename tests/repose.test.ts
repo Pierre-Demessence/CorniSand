@@ -4,6 +4,7 @@ import { ELEMENT as T, ELEMENTS, elementByKey, elementSlide, validateElements, t
 import { MAX_REPOSE, MIN_REPOSE, REPOSE_FIT, slideSpeed } from '../src/physics';
 import { cell, cellType, createSim, device, idleInput, loadScene, readCells, run, runMany } from './gpu';
 import { columnTops, pileAngle } from './metrics';
+import { control, scenario } from './scenario';
 
 const SAND: ElementDef = elementByKey(ELEMENTS, 'SAND');
 const GUNPOWDER: ElementDef = elementByKey(ELEMENTS, 'GUNPOWDER');
@@ -92,20 +93,37 @@ async function pouredAngle(elements: readonly ElementDef[], type: number, seed: 
 }
 
 describe.skipIf(!device)('M8.8 AC15: a pile poured from a point', () => {
+  // sandPile: dry sand poured from a point stands at its angle of repose, 30 to 35 degrees (Wikipedia 34, Dartmouth's engineering
+  // notes 35); the row's 34 is the middle, and the target is 34 ± 4 degrees. The tolerance is the test's of M8.8 AC15.
+  const SAND_TARGET = [30, 38] as const;
+  scenario({
+    name: 'sandPile',
+    measure: async () => ({ angle: await pouredAngle(ELEMENTS, T.SAND, 1) }),
+    checks: [{ value: 'angle', outcome: 'sand poured from a point stands at its angle of repose within 4 degrees of 34', target: SAND_TARGET }],
+    timeout: 120_000,
+  });
+
+  // Sand without its angle of repose piles at the steepest angle the grid allows, about 45 degrees.
+  control({
+    name: 'sandPile',
+    wrong: 'sand without its angle of repose',
+    measure: async () => {
+      const plain = TEST_ROWS.map((e) => (e.key === 'SAND' ? { ...e, repose: undefined } : e));
+      const measured = await pouredAngle(plain, T.SAND, 2);
+      expect(Math.abs(measured - MAX_REPOSE), `measured ${measured.toFixed(1)} degrees`).toBeLessThanOrEqual(4);
+      return measured;
+    },
+    target: SAND_TARGET,
+    timeout: 120_000,
+  });
+
   it.each([
-    ['sand', T.SAND, 34, ELEMENTS],
     ['gunpowder', T.GUNPOWDER, 30, ELEMENTS],
     ['a 25 degree test powder', FLAT, 25, TEST_ROWS],
     ['a 45 degree test powder', STEEP, 45, TEST_ROWS],
   ] as const)('M8.8 AC15: %s stands at its angle of repose within 4 degrees', async (_name, type, angle, elements) => {
     const measured = await pouredAngle(elements, type, 1);
     expect(Math.abs(measured - angle), `measured ${measured.toFixed(1)} degrees, expected ${angle}`).toBeLessThanOrEqual(4);
-  }, 120_000);
-
-  it('M8.8 AC15: a powder without an angle of repose piles as before, at the steepest angle', async () => {
-    const plain = TEST_ROWS.map((e) => (e.key === 'SAND' ? { ...e, repose: undefined } : e));
-    const measured = await pouredAngle(plain, T.SAND, 2);
-    expect(Math.abs(measured - MAX_REPOSE), `measured ${measured.toFixed(1)} degrees`).toBeLessThanOrEqual(4);
   }, 120_000);
 
   it('M8.8 AC15: a flatter powder makes a flatter pile from the same grains', async () => {
