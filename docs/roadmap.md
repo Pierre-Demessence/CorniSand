@@ -8,7 +8,6 @@ Order: M8, M7, M9, M10.
 
 The Powder Toy's elements that need only what the game simulates before M7 (heat, fire, air and pressure), slice by slice, with real physical properties. Each models a real material where one exists. Done when every slice is done: each element has a scene test of its main behavior, and the frame budget holds.
 
-- **M8.9** Real-world scenarios (`docs/plans/m8.9-real-world-scenarios.md`): real experiments as tests whose targets come from physical data, written before the mechanics that make them pass.
 - **M8.1** Materials and the element picker (`docs/plans/m8.1-materials.md`).
 - **M8.2** Fire and explosives: slow burning (wood, coal, fuse, ignition cord), acrylic (it burns; with M8.1's aluminium it makes the `iceOnMetal` scenario), dust that burns in a flash, flammable gas, plasma, cold flame, pressure-set explosives (C-4, nitroglycerin, diesel), TNT that goes off as a whole (backlog I18), bombs, thermite, fireworks, a cold-set explosive, and stored energy (uranium heats under pressure, vibranium, the singularity); ignition temperature, heat of combustion and burn speed as properties, oxygen in the air.
 - **M8.3** Air, gases and force: heavy gases (carbon dioxide, dry ice), gases that expand when heated or cool when compressed (Boyle gas, refrigerant), vents and vacuum, accelerators and decelerators, repellers, anti-air dust, glow that lights up under pressure, goo, concrete, dust colored by its speed, a wall that opens under pressure.
