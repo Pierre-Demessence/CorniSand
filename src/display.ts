@@ -35,7 +35,7 @@ export interface DisplayExtras {
   settings?: Partial<LookSettings>;
 }
 
-// Uniform: 23 f32 used, padded to 24 f32 = 96 bytes
+// Uniform: 22 f32 used, padded to 24 f32 = 96 bytes
 const UNIFORM_FLOATS = 24;
 const UNIFORM_SIZE = UNIFORM_FLOATS * 4;
 
@@ -157,12 +157,11 @@ export class Display {
     d[14] = this.settings.glowStrength; // glow
     d[15] = this.settings.shadowDarkness; // shadow
     d[16] = this.settings.gasOpacity; // gas
-    d[17] = this.settings.liquidSurface; // surface
-    d[18] = this.settings.depthScale; // depthScale
-    d[19] = opts.time ?? 0; // time
-    d[20] = this.settings.shimmer; // shimmer
-    d[21] = this.settings.shimmerPressure; // shimmerPressure
-    d[22] = this.settings.shimmerMax; // shimmerMax
+    d[17] = this.settings.depthScale; // depthScale
+    d[18] = opts.time ?? 0; // time
+    d[19] = this.settings.shimmer; // shimmer
+    d[20] = this.settings.shimmerPressure; // shimmerPressure
+    d[21] = this.settings.shimmerMax; // shimmerMax
 
     this.device.queue.writeBuffer(this.uniformBuffer, 0, this.uniformData);
 

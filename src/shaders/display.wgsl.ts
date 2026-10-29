@@ -1,9 +1,9 @@
 import { AIR, AIR_VIEW, PRESSURE_RAMP, type AirShape } from '../air';
 import type { ElementDef } from '../elements';
 import { ROOM_TEMP } from '../heat';
-import { DEPTH_TEXELS, LOOK, SHIMMER_DEAD, SHIMMER_RISE, SHIMMER_SIZE, SHIMMER_SPAN, SURFACE_ROWS, WALL_LEVEL, WALL_RANGE } from '../look';
+import { DEPTH_TEXELS, LOOK, SHIMMER_DEAD, SHIMMER_RISE, SHIMMER_SIZE, SHIMMER_SPAN, WALL_LEVEL, WALL_RANGE } from '../look';
 import { wgslFloat } from '../movement';
-import { COVER_CELLS } from './glow.wgsl';
+import { COVER_CELLS, EMISSION_CELLS } from './glow.wgsl';
 import { airSamplersWGSL } from './air.wgsl';
 import { cellWGSL } from './cell.wgsl';
 import { elementsWGSL } from './elements.wgsl';
@@ -188,56 +188,64 @@ fn toneMap(c: vec3f) -> vec3f {
 }
 `;
 
-// The finished look's liquids (a liquid with an absorption: src/display-table.ts). The surface line: the top `SURFACE_ROWS`
-// rows of a liquid, counted up to the first cell that is not liquid, carry it when that cell is empty space, gas or fire (not
-// stone, sand or the world's edge) and a liquid cell lies below: a lone cell or a thin film has none. The depth: the liquid
-// fraction of the cover texels (src/glow.ts, green channel) summed up the column above the pixel, at most `DEPTH_TEXELS`
-// texels of 4 cells, the pixel's own texel counted down to the pixel; it never decreases from one row to the next.
+// The finished look's liquids (a liquid with an absorption: src/display-table.ts) darken with depth: the liquid fraction of
+// the cover texels (src/glow.ts, green channel) summed up the column above the pixel's own texel, at most `DEPTH_TEXELS`
+// texels of 4 cells, up to the first texel without liquid, plus the liquid cells above the pixel inside its own texel.
 const liquidWGSL = /* wgsl */`
-const SURFACE_ROWS: u32 = ${SURFACE_ROWS}u;
 const DEPTH_TEXELS: i32 = ${DEPTH_TEXELS};
-
-fn surfaceShare(x: u32, y: u32, w: u32, h: u32) -> f32 {
-  if (y == 0u || elState(loadKind((y - 1u) * w + x) & 0xffu) != ST_LIQUID) { return 0.0; }
-  for (var j = 1u; j <= SURFACE_ROWS; j++) {
-    if (y + j >= h) { return 0.0; }
-    let state = elState(loadKind((y + j) * w + x) & 0xffu);
-    if (state == ST_LIQUID) { continue; }
-    if (state == ST_SOLID || state == ST_POWDER) { return 0.0; }
-    return 1.0 - f32(j - 1u) / f32(SURFACE_ROWS);
-  }
-  return 0.0;
-}
 
 // The depth of liquid above the pixel's cell, in cells.
 fn liquidDepth(x: u32, y: u32) -> f32 {
   let rows = textureDimensions(coverTex).y;
   let tx = i32(x) / ${COVER_CELLS};
   let ty = i32(y) / ${COVER_CELLS};
-  let rowsAbove = ${COVER_CELLS - 1} - i32(y) % ${COVER_CELLS};
-  var depth = textureLoad(coverTex, vec2i(tx, ty), 0).g * (f32(rowsAbove) + 0.5) / ${COVER_CELLS}.0;
+  let h = i32(u.simResolution.y);
+  // In the pixel's own texel, the liquid cells right above it, counted exactly so the top row of a pool and a lone cell
+  // keep their table color.
+  var own = 0.0;
+  for (var j = i32(y) + 1; j < (ty + 1) * ${COVER_CELLS} && j < h; j++) {
+    if (elState(loadKind(u32(j) * u32(u.simResolution.x) + x) & 0xffu) == ST_LIQUID) { own += 1.0; }
+  }
+  var texels = 0.0;
   for (var k = 1; k <= DEPTH_TEXELS; k++) {
     if (u32(ty + k) >= rows) { break; }
     let fraction = textureLoad(coverTex, vec2i(tx, ty + k), 0).g;
     if (fraction == 0.0) { break; }
-    depth += fraction;
+    texels += fraction;
   }
-  return min(depth, f32(DEPTH_TEXELS)) * ${COVER_CELLS}.0;
+  return own + texels * ${COVER_CELLS}.0;
 }
 
-// A liquid cell's color in the finished look: tinted by what it absorbs of the liquid above it, and brighter near the surface.
-fn liquidColor(type_: u32, base: vec3f, x: u32, y: u32, w: u32, h: u32) -> vec3f {
+// A liquid cell's color in the finished look: tinted by what it absorbs of the liquid above it.
+fn liquidColor(type_: u32, base: vec3f, x: u32, y: u32) -> vec3f {
   let props = displayProps[type_];
   let absorption = vec3f(props.absorbR, props.absorbG, props.absorbB);
-  if (dot(absorption, vec3f(1.0)) <= 0.0) { return base; }
-  var color = base;
-  if (u.depthScale > 0.0) {
-    color = linearToSrgb(srgbToLinear(color) * exp(-absorption * (liquidDepth(x, y) * u.depthScale)));
+  if (u.depthScale <= 0.0 || dot(absorption, vec3f(1.0)) <= 0.0) { return base; }
+  return linearToSrgb(srgbToLinear(base) * exp(-absorption * (liquidDepth(x, y) * u.depthScale)));
+}
+`;
+
+// The finished look's cloud: how much gas is around a point of the grid (in cells), the gas cells within 2 cells of it
+// weighted by a tent of that radius in each direction, over 4 so a cloud's inside is 1. At a cell's center the weights are
+// 1 2 1 over 4 along each axis: a lone cell is a soft dot of 1/4 at its center and a checkerboard of gas an even 1/2, so the
+// dots of thin smoke merge without blurring its shape; between centers the tent interpolates, so a cell drawn over several
+// pixels has no steps.
+const cloudWGSL = /* wgsl */`
+fn gasDensity(pos: vec2f, w: i32, h: i32) -> f32 {
+  let first = vec2i(floor(pos - 0.5)) - vec2i(1);
+  var sum = 0.0;
+  for (var j = 0; j < 4; j++) {
+    for (var i = 0; i < 4; i++) {
+      let c = first + vec2i(i, j);
+      // At a cell's center the outer row and column weigh 0: skipping them before the load saves 7 of 16 reads.
+      let weight = max(vec2f(0.0), 1.0 - abs(pos - (vec2f(c) + 0.5)) / 2.0);
+      if (weight.x * weight.y <= 0.0 || c.x < 0 || c.y < 0 || c.x >= w || c.y >= h) { continue; }
+      let id = loadKind(u32(c.y * w + c.x)) & 0xffu;
+      if (id == EL_EMPTY || elState(id) != ST_GAS) { continue; }
+      sum += weight.x * weight.y;
+    }
   }
-  if (u.surface > 0.0) {
-    color = mix(color, vec3f(1.0), u.surface * surfaceShare(x, y, w, h));
-  }
-  return color;
+  return sum / 4.0;
 }
 `;
 
@@ -272,8 +280,6 @@ struct DisplayUniforms {
   shadow: f32,
   // How much of the wall a full cloud of gas hides: 0 draws gas as cells.
   gas: f32,
-  // How much of white the surface line of a liquid mixes in: 0 draws none.
-  surface: f32,
   // How much deeper than it is a liquid is tinted: 0 draws no tint.
   depthScale: f32,
   // The frame's time in seconds, which animates the air shimmer.
@@ -318,11 +324,12 @@ ${displayPropsWGSL}
 // The gas cells as a cloud (src/glow.ts): the mean linear color of the gas cells of each texel of the cover grid times their
 // share, and that share in alpha, world orientation.
 @group(0) @binding(6) var gasTex: texture_2d<f32>;
-// The cover grid (src/glow.ts): the opacity, the liquid fraction (green) and the gas fraction of each 4x4 cells, world orientation.
+// The cover grid (src/glow.ts): the opacity (red) and the liquid fraction (green) of each 4x4 cells, world orientation.
 @group(0) @binding(7) var coverTex: texture_2d<f32>;
 ${lightWGSL(styled)}
 ${lookWGSL}
 ${liquidWGSL}
+${cloudWGSL}
 ${airDisplayWGSL(air)}
 ${windMarkWGSL}
 // The flyer in each cell, two words: its kind word (0 where none flies) and its temperature's bits (src/shaders/flyers.wgsl.ts,
@@ -381,7 +388,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {
         color = grainColor(cell, color, vec2f(f32(cellX), f32(cellY)));
       }
       if (u.cellsLook < 0.5 && !airView && elState(pType) == ST_LIQUID) {
-        color = liquidColor(pType, color, cellX, cellY, w, h);
+        color = liquidColor(pType, color, cellX, cellY);
       }
       color = litColor(cell, color);
     }
@@ -415,14 +422,22 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {
   // cell, which is part of the cloud and shines through the halo.
   if (u.cellsLook < 0.5 && !heatView && !airView) {
     var light = srgbToLinear(clamp(color, vec3f(0.0), vec3f(1.0)));
-    // The cloud lies over empty space and over the gas cells it stands for; a filled cell hides it.
+    // The cloud lies over empty space and over the gas cells it stands for; a filled cell hides it. Its strength comes from
+    // the cells around the pixel (\`gasDensity\`), raised so thin smoke still shows (a lone cell's center 7/16, a
+    // checkerboard 3/4), its color from the gas texture, which also tells where there is no gas nearby, so most of the field
+    // skips the neighborhood.
     if (u.gas > 0.0 && (pType == EL_EMPTY || softGas)) {
       let gasSize = vec2f(textureDimensions(gasTex));
       let gas = textureSampleLevel(gasTex, glowSampler, simPos / (${COVER_CELLS}.0 * gasSize), 0.0);
-      light = light * (1.0 - gas.a * u.gas) + gas.rgb * u.gas;
+      if (gas.a > 0.0) {
+        let thin = 1.0 - gasDensity(simPos, i32(w), i32(h));
+        let alpha = u.gas * (1.0 - thin * thin);
+        light = light * (1.0 - alpha) + gas.rgb / gas.a * alpha;
+      }
     }
     if (u.glow > 0.0 && (softGas || dot(cellEmission(cell), vec3f(1.0)) <= 0.0)) {
-      light += textureSampleLevel(glowTex, glowSampler, uv, 0.0).rgb * u.glow;
+      let glowSize = vec2f(textureDimensions(glowTex));
+      light += textureSampleLevel(glowTex, glowSampler, simPos / (${EMISSION_CELLS}.0 * glowSize), 0.0).rgb * u.glow;
     }
     color = linearToSrgb(toneMap(light));
   }

@@ -13,7 +13,7 @@ export const EMISSION_CELLS = 2;
 /** Texel format of the gas texture: HDR, filterable and a storage texture. */
 export const GAS_FORMAT = 'rgba16float';
 
-/** Texel format of the cover texture (opacity in the red channel, the liquid fraction in green, the gas fraction in blue). */
+/** Texel format of the cover texture (opacity in the red channel, the liquid fraction in green). */
 export const COVER_FORMAT = 'rgba8unorm';
 
 /** Cells per cover texel, along each axis: one thread of the coverage pass writes one. */
@@ -24,10 +24,10 @@ export const COVER_CELLS = 4;
 // cell rows 2r and 2r + 1, so a texture coordinate is the cell's position over the grid's size. A flyer's cell is the
 // kind and temperature of the overlay (group 3, two words per cell: src/flyers.ts) over an empty cell. It also writes the
 // cover texture, one texel per 4x4 cells holding the mean opacity of their cells (`displayProps[...].opacity`, 0 beyond the
-// grid): what the shadow pass marches through. The liquid fraction (the share of liquid cells) goes in its green channel,
-// which the display sums up a column for a liquid's depth, the gas fraction (the share of gas cells) in its blue channel, and the
-// gas texture, at the same resolution, holds the gas cells' color: the sum of their linear colors over the 16 cells in rgb
-// and their count over 16 in alpha, so a bilinear sample is the mean color of the gas around times its share.
+// grid): what the shadow pass marches through. The liquid fraction (the share of liquid cells among those that are not solid
+// or powder) goes in its green channel, which the display sums up a column for a liquid's depth. The gas texture, at the same
+// resolution, holds the gas cells' color: the sum of their linear colors over the 16 cells in rgb and their count over 16
+// in alpha, so a bilinear sample is the mean color of the gas around times its share.
 export const coverageWGSL = (elements: readonly ElementDef[], graphics: Readonly<Record<string, string>>, width: number, height: number): string => {
   const { styled, source } = graphicsWGSL(elements, graphics);
   return /* wgsl */`
@@ -83,10 +83,13 @@ fn gasAt(x: u32, y: u32) -> vec4f {
   return vec4f(srgbToLinear(clamp(litColor(c, elColor(id)), vec3f(0.0), vec3f(1.0))), 1.0);
 }
 
-// 1 for a liquid cell, 0 for anything else.
-fn liquidAt(x: u32, y: u32) -> f32 {
-  if (x >= WIDTH || y >= HEIGHT) { return 0.0; }
-  return select(0.0, 1.0, elState(loadKind(y * WIDTH + x) & 0xffu) == ST_LIQUID);
+// (1, 1) for a liquid cell, (0, 1) for a cell a liquid could fill (empty space, gas, fire), (0, 0) for a solid or a powder
+// and beyond the grid.
+fn liquidAt(x: u32, y: u32) -> vec2f {
+  if (x >= WIDTH || y >= HEIGHT) { return vec2f(0.0); }
+  let state = elState(loadKind(y * WIDTH + x) & 0xffu);
+  if (state == ST_SOLID || state == ST_POWDER) { return vec2f(0.0); }
+  return vec2f(select(0.0, 1.0, state == ST_LIQUID), 1.0);
 }
 
 @compute @workgroup_size(8, 8)
@@ -110,7 +113,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let coverSize = textureDimensions(cover);
   if (gid.x < coverSize.x && gid.y < coverSize.y) {
     var opacity = 0.0;
-    var liquid = 0.0;
+    var liquid = vec2f(0.0);
     var gas = vec4f(0.0);
     for (var b = 0u; b < ${COVER_CELLS}u; b++) {
       for (var a = 0u; a < ${COVER_CELLS}u; a++) {
@@ -120,7 +123,9 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       }
     }
     gas /= ${COVER_CELLS * COVER_CELLS}.0;
-    textureStore(cover, gid.xy, vec4f(opacity / ${COVER_CELLS * COVER_CELLS}.0, liquid / ${COVER_CELLS * COVER_CELLS}.0, gas.a, 0.0));
+    // The liquid's share of the cells it could fill, so a texel cut by a wall or a sand bed counts as full.
+    let filled = select(0.0, liquid.x / liquid.y, liquid.y > 0.0);
+    textureStore(cover, gid.xy, vec4f(opacity / ${COVER_CELLS * COVER_CELLS}.0, filled, 0.0, 0.0));
     textureStore(gasCloud, gid.xy, gas);
   }
 }
@@ -165,48 +170,35 @@ fn luma(c: vec3f) -> f32 {
   return dot(c, vec3f(0.2126, 0.7152, 0.0722));
 }
 
+// The 13 taps around a texel: a to i the corners, edges and center of a 5x5 square (2 texels apart), j to m the corners of
+// the inner 3x3 one.
+fn taps13(uv: vec2f) -> array<vec3f, 13> {
+  let texel = 1.0 / vec2f(textureDimensions(src));
+  return array<vec3f, 13>(
+    tap(uv, vec2f(-2.0, 2.0), texel), tap(uv, vec2f(0.0, 2.0), texel), tap(uv, vec2f(2.0, 2.0), texel),
+    tap(uv, vec2f(-2.0, 0.0), texel), tap(uv, vec2f(0.0, 0.0), texel), tap(uv, vec2f(2.0, 0.0), texel),
+    tap(uv, vec2f(-2.0, -2.0), texel), tap(uv, vec2f(0.0, -2.0), texel), tap(uv, vec2f(2.0, -2.0), texel),
+    tap(uv, vec2f(-1.0, 1.0), texel), tap(uv, vec2f(1.0, 1.0), texel),
+    tap(uv, vec2f(-1.0, -1.0), texel), tap(uv, vec2f(1.0, -1.0), texel),
+  );
+}
+
 @fragment
 fn fs_down(in: VertexOutput) -> @location(0) vec4f {
-  let texel = 1.0 / vec2f(textureDimensions(src));
-  let a = tap(in.uv, vec2f(-2.0, 2.0), texel);
-  let b = tap(in.uv, vec2f(0.0, 2.0), texel);
-  let c = tap(in.uv, vec2f(2.0, 2.0), texel);
-  let d = tap(in.uv, vec2f(-2.0, 0.0), texel);
-  let e = tap(in.uv, vec2f(0.0, 0.0), texel);
-  let f = tap(in.uv, vec2f(2.0, 0.0), texel);
-  let g = tap(in.uv, vec2f(-2.0, -2.0), texel);
-  let h = tap(in.uv, vec2f(0.0, -2.0), texel);
-  let i = tap(in.uv, vec2f(2.0, -2.0), texel);
-  let j = tap(in.uv, vec2f(-1.0, 1.0), texel);
-  let k = tap(in.uv, vec2f(1.0, 1.0), texel);
-  let l = tap(in.uv, vec2f(-1.0, -1.0), texel);
-  let m = tap(in.uv, vec2f(1.0, -1.0), texel);
-  let sum = e * 0.125 + (a + c + g + i) * 0.03125 + (b + d + f + h) * 0.0625 + (j + k + l + m) * 0.125;
+  let t = taps13(in.uv);
+  let sum = t[4] * 0.125 + (t[0] + t[2] + t[6] + t[8]) * 0.03125 + (t[1] + t[3] + t[5] + t[7]) * 0.0625 + (t[9] + t[10] + t[11] + t[12]) * 0.125;
   return vec4f(sum, 0.0);
 }
 
 @fragment
 fn fs_first(in: VertexOutput) -> @location(0) vec4f {
-  let texel = 1.0 / vec2f(textureDimensions(src));
-  let a = tap(in.uv, vec2f(-2.0, 2.0), texel);
-  let b = tap(in.uv, vec2f(0.0, 2.0), texel);
-  let c = tap(in.uv, vec2f(2.0, 2.0), texel);
-  let d = tap(in.uv, vec2f(-2.0, 0.0), texel);
-  let e = tap(in.uv, vec2f(0.0, 0.0), texel);
-  let f = tap(in.uv, vec2f(2.0, 0.0), texel);
-  let g = tap(in.uv, vec2f(-2.0, -2.0), texel);
-  let h = tap(in.uv, vec2f(0.0, -2.0), texel);
-  let i = tap(in.uv, vec2f(2.0, -2.0), texel);
-  let j = tap(in.uv, vec2f(-1.0, 1.0), texel);
-  let k = tap(in.uv, vec2f(1.0, 1.0), texel);
-  let l = tap(in.uv, vec2f(-1.0, -1.0), texel);
-  let m = tap(in.uv, vec2f(1.0, -1.0), texel);
+  let t = taps13(in.uv);
   // The five groups of the 13 taps: the four corner squares carry 1/8 each, the inner square 1/2.
-  let g0 = (a + b + d + e) * 0.25;
-  let g1 = (b + c + e + f) * 0.25;
-  let g2 = (d + e + g + h) * 0.25;
-  let g3 = (e + f + h + i) * 0.25;
-  let g4 = (j + k + l + m) * 0.25;
+  let g0 = (t[0] + t[1] + t[3] + t[4]) * 0.25;
+  let g1 = (t[1] + t[2] + t[4] + t[5]) * 0.25;
+  let g2 = (t[3] + t[4] + t[6] + t[7]) * 0.25;
+  let g3 = (t[4] + t[5] + t[7] + t[8]) * 0.25;
+  let g4 = (t[9] + t[10] + t[11] + t[12]) * 0.25;
   let w0 = 0.125 / (1.0 + luma(g0));
   let w1 = 0.125 / (1.0 + luma(g1));
   let w2 = 0.125 / (1.0 + luma(g2));

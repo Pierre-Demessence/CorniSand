@@ -29,7 +29,7 @@ Requires a WebGPU-capable browser (Chrome 113+, Edge 113+, Safari 18.2+).
 - An air view (A) with a legend: pressure in colors that get lighter as it rises and arrows for the wind; the element, temperature and air pressure under the pointer in the toolbar
 - Air scenes to watch: `?scene=explosion`, `?scene=plume` and `?scene=mound`; `?air=2` runs the air at 2×2-pixel cells (sharper, slower)
 - Physics lab: `?scene=physics` shows a pot of water on a hot plate, dam breaks of water, oil and lava, hoppers of sand and gunpowder, an oil fire under a ceiling and a pond under a freezing ceiling, side by side
-- A finished look: sand and stone show grains, a wall behind the field takes soft shadows, hot things glow with a halo, smoke and steam are soft clouds, water darkens and turns blue-green with depth under a bright surface line, and hot air and blasts make the view waver. The C key switches to the cells look (each cell as itself); `?wall=0` to `?wall=1` sets the wall from dark to lit; `?scene=showcase` shows most of it
+- A finished look: sand and stone show grains, a wall behind the field takes soft shadows, hot things glow with a halo, smoke and steam are soft clouds, water darkens to navy with depth, and hot air and blasts make the view waver. The C key switches to the cells look (each cell as itself); `?wall=0` to `?wall=1` sets the wall from dark to lit; `?scene=showcase` shows most of it
 - Brush drawing (mouse or touch) with line interpolation, erasing, and Shift to draw over existing particles
 - Simulation speed from 1/4x to 8x, FPS and live particle count
 

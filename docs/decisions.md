@@ -112,6 +112,6 @@ Rejected: one look with every effect on and no way to see the cells; effects swi
 
 ## Visual properties live in a display-only table; glow comes from emission
 
-Grain, opacity, absorption and the emission scale are columns of a table that only the display and its coverage pass bind (`src/display-table.ts`), generated from an optional `look` on each `ELEMENTS` row, not words of the CA's shared row, which already grew from 96 to 144 bytes and is a suspect in the CA's cost (backlog D36). The halo is the blurred light that hot cells radiate (a coverage pass writes it from temperature, a chain blurs it), not a bright-pass over the finished image.
+Grain, opacity and absorption are columns of a table that only the display and its coverage pass bind (`src/display-table.ts`), generated from an optional `look` on each `ELEMENTS` row, not words of the CA's shared row, which already grew from 96 to 144 bytes and is a suspect in the CA's cost (backlog D36). The halo is the blurred light that hot cells radiate (a coverage pass writes it from temperature, a chain blurs it), not a bright-pass over the finished image.
 
 Rejected: more words in the shared row (every CA thread would pay for columns only the drawing reads); a bright-pass bloom over the finished frame (it needs a full-resolution HDR copy of the frame, and white things such as snow, steam and a bright wall would glow).

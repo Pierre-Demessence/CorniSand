@@ -5,8 +5,6 @@ import type { FlyerOverlay } from './flyers';
 import type { ElementTable } from './element-table';
 import type { PassTimer } from './passes';
 
-/** Cells per thread along each axis of the coverage pass (a thread writes `COVERAGE_CELLS / EMISSION_CELLS` texels per axis). */
-const COVERAGE_CELLS = COVER_CELLS;
 const WORKGROUP = 8;
 
 /** The size of each level of the chain: the emission texture (`EMISSION_CELLS` cells per texel), then half the size of the one before, at least 1 texel. */
@@ -25,16 +23,17 @@ export function coverSize(width: number, height: number): { width: number; heigh
 }
 
 /**
- * The coverage pass and the halo of the hot cells (M11.3): the coverage pass writes the light every cell radiates into a
- * half-resolution HDR texture, the cover texture (the opacity of the cells and the share of gas cells, quarter resolution,
- * M11.4) that the shadow pass reads, and the gas texture (the gas cells' color, same resolution, M11.5); a chain of downsamples and tent upsamples blurs it. After `record`, `view` holds the blurred light (linear,
- * world orientation: texture row = the world's row) that the display's composite adds around the cells that radiate. The
- * sizes follow the grid, fixed at load, not the canvas.
+ * The coverage pass and the halo of the hot cells (M11.3). One thread of the coverage pass covers `COVER_CELLS` cells per
+ * axis and writes the light they radiate into a half-resolution HDR texture, the cover texture (quarter resolution: the
+ * opacity the shadow pass reads, the liquid share the depth of liquids is summed from) and the gas texture (the gas cells'
+ * color, same resolution). A chain of downsamples and tent upsamples then blurs the light: after `recordChain`, `view`
+ * holds it (linear, world orientation: texture row = the world's row) for the composite to add around the cells that
+ * radiate. The sizes follow the grid, fixed at load, not the canvas.
  */
 export class Glow {
   /** The finest level, after the chain has run: the halo, before its strength. */
   readonly view: GPUTextureView;
-  /** What the coverage pass writes at a quarter of the cells' resolution: opacity in red, the gas fraction in blue (world orientation). */
+  /** What the coverage pass writes at a quarter of the cells' resolution: opacity in red, the liquid fraction in green (world orientation). */
   readonly cover: GPUTextureView;
   /** The gas cells as a cloud, at the cover's resolution: premultiplied linear color, their share in alpha (world orientation). */
   readonly gas: GPUTextureView;
@@ -101,8 +100,8 @@ export class Glow {
     });
     this.gas = this.gasTexture.createView();
     this.groups = {
-      x: Math.ceil(width / (COVERAGE_CELLS * WORKGROUP)),
-      y: Math.ceil(height / (COVERAGE_CELLS * WORKGROUP)),
+      x: Math.ceil(width / (COVER_CELLS * WORKGROUP)),
+      y: Math.ceil(height / (COVER_CELLS * WORKGROUP)),
     };
 
     // The coverage pass.

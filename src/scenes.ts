@@ -490,9 +490,9 @@ export const SHOWCASE = {
   /** A walled pool of water with oil on top of it. */
   pool: {
     walls: [{ x0: 72, x1: 74 }, { x0: 120, x1: 122 }],
-    wallTop: WALL + 28,
-    water: { x0: 74, x1: 120, y0: WALL, y1: WALL + 14 },
-    oil: { x0: 74, x1: 120, y0: WALL + 14, y1: WALL + 18 },
+    wallTop: WALL + 64,
+    water: { x0: 74, x1: 120, y0: WALL, y1: WALL + 48 },
+    oil: { x0: 74, x1: 120, y0: WALL + 48, y1: WALL + 52 },
   },
   /** Lava in a basin whose right side is a stone block. */
   lava: {

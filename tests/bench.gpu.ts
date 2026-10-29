@@ -30,8 +30,8 @@ const WARMUP_FRAMES = 20;
 const MEASURED_FRAMES = 60;
 // The GPU clocks down when idle: spend this long at full load before each measurement, or it measures the clock ramp.
 const BURN_IN_MS = 1000;
-// The renderer's passes, for the timestamp query count: coverage, a down and an up pass per glow level, the composite, and
-// room for the shadow pass (M11.4).
+// The renderer's passes, for the timestamp query count: coverage, a down and an up pass per glow level, the shadow pass and
+// the composite.
 const RENDER_PASSES = 3 + 2 * LOOK.glowLevels;
 const isRenderLabel = (label: string): boolean => label.startsWith('render:');
 

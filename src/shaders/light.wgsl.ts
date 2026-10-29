@@ -24,7 +24,7 @@ ${DISPLAY_FIELDS.map((f) => `  ${f.name}: f32,`).join('\n')}
 @group(0) @binding(2) var<uniform> displayProps: array<DisplayProps, ${MAX_ELEMENTS}>;
 `;
 
-// Needs the `Cell` type, the element table, `cellTemp`, `glowColor`, `glowWeight`, the graphics functions and `displayProps`.
+// Needs the `Cell` type, the element table, `cellTemp`, `glowColor`, `glowWeight` and the graphics functions.
 //
 // The finished look computes in linear light and encodes at the end (the canvas is not an sRGB format). A table color is a
 // display value, so the round trip leaves it as it was.
@@ -58,16 +58,15 @@ fn blackbodyShare(temp: f32) -> f32 {
 fn cellEmission(c: Cell) -> vec3f {
   let t = cellType(c);
   if (!elHoldsHeat(t)) { return vec3f(0.0); }
-  let scale = displayProps[t].emission;
   switch (t) {
 ${styled.filter((e) => e.life !== undefined).map((e) => `    case EL_${e.key}: {
       let young = clamp(f32(cellLife(c)) / f32(elLifeStart(t)), 0.0, 1.0);
-      return srgbToLinear(graphics_${e.graphics}(c, elColor(t))) * (2.0 * young * scale);
+      return srgbToLinear(graphics_${e.graphics}(c, elColor(t))) * (2.0 * young);
     }`).join('\n')}
     default: {}
   }
   let temp = cellTemp(c);
-  return srgbToLinear(glowColor(temp)) * (blackbodyShare(temp) * scale);
+  return srgbToLinear(glowColor(temp)) * blackbodyShare(temp);
 }
 
 // The color a cell is drawn in as a cell, from its base color (the table color, with its grain): its graphics function, or

@@ -24,15 +24,14 @@ export function elementOpacity(e: ElementDef): number {
 }
 
 // The words of a row in struct order: the WGSL `DisplayProps` and `packDisplay` are both generated from this list. Eight
-// 32-bit words, a multiple of four as a uniform array's stride needs. `emission` scales how brightly a cell that holds
-// heat shines; `pad1` and `pad2` are padding.
+// 32-bit words, a multiple of four as a uniform array's stride needs; `pad0` to `pad2` are padding.
 export const DISPLAY_FIELDS: readonly DisplayField[] = [
   { name: 'grain', value: elementGrain },
   { name: 'opacity', value: elementOpacity },
   { name: 'absorbR', value: (e) => e.look?.absorption?.[0] ?? 0 },
   { name: 'absorbG', value: (e) => e.look?.absorption?.[1] ?? 0 },
   { name: 'absorbB', value: (e) => e.look?.absorption?.[2] ?? 0 },
-  { name: 'emission', value: () => 1 },
+  { name: 'pad0', value: () => 0 },
   { name: 'pad1', value: () => 0 },
   { name: 'pad2', value: () => 0 },
 ];

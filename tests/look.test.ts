@@ -491,7 +491,7 @@ describe.skipIf(!device)('M11.5 soft gases', () => {
   const height = 256;
   // Aligned to the cover texels (4 cells) so the block fills whole texels; lower left corner at (112, 112).
   const smoke: Block = { x: 112, y: 112, w: 32, h: 32, type: T.SMOKE, temp: 150 };
-  // The block's inside, 6 cells from its edges: the cloud's bilinear edge reaches 2 cells in.
+  // The block's inside, 6 cells from its edges: the cloud's edge fades over 2 cells.
   const inside = { x0: smoke.x + 6, x1: smoke.x + smoke.w - 6, y0: smoke.y + 6, y1: smoke.y + smoke.h - 6 };
 
   // The luminance of the pixels of the cells x0..x1, y0..y1 (y from the bottom of the world).
@@ -535,6 +535,22 @@ describe.skipIf(!device)('M11.5 soft gases', () => {
     expect(loneTint, 'against the block center').toBeLessThan(blockTint);
   });
 
+  it('M11 AC11: a lone smoke cell reaches no pixel 2 cells or more away, and tints its neighbors evenly', async () => {
+    const empty = await render(blockSim(width, height, []), width, height);
+    const lone = await render(blockSim(width, height, [{ ...smoke, x: 128, y: 128, w: 1, h: 1 }]), width, height);
+    const tint = (x: number, y: number): number => lumAt(lone, x, y) - lumAt(empty, x, y);
+    for (let y = 122; y <= 134; y++) {
+      for (let x = 122; x <= 134; x++) {
+        if (Math.max(Math.abs(x - 128), Math.abs(y - 128)) >= 2) expect(pixelAt(lone, width, x, height - 1 - y), `(${x}, ${y})`).toEqual(pixelAt(empty, width, x, height - 1 - y));
+      }
+    }
+    // Within 2 steps: the cloud is blended over the wall, whose shade and dither differ a little from pixel to pixel.
+    expect(Math.abs(tint(127, 128) - tint(129, 128)), 'left against right').toBeLessThanOrEqual(2);
+    expect(Math.abs(tint(128, 127) - tint(128, 129)), 'below against above').toBeLessThanOrEqual(2);
+    expect(tint(127, 128), 'a neighbor shows').toBeGreaterThan(0);
+    expect(tint(127, 128), 'a neighbor against the cell').toBeLessThan(tint(128, 128));
+  });
+
   it('M11 AC11: smoke at 1,000 °C is brighter than at 150 °C', async () => {
     const cool = await render(blockSim(width, height, [smoke]), width, height);
     const hot = await render(blockSim(width, height, [{ ...smoke, temp: 1000 }]), width, height);
@@ -561,7 +577,7 @@ describe.skipIf(!device)('M11.5 soft gases', () => {
   });
 });
 
-describe.skipIf(!device)('M11.6 liquid depth and surface', () => {
+describe.skipIf(!device)('M11.6 liquid depth', () => {
   const width = 64;
   const height = 160;
   // A pool 128 cells deep under open air, aligned to the cover texels (4 cells); its top row is y = 135.
@@ -575,36 +591,25 @@ describe.skipIf(!device)('M11.6 liquid depth and surface', () => {
   const redToBlue = (pixels: Uint8Array, below: number): number => at(pixels, below)[0] / at(pixels, below)[2];
   const poolOf = (type: number, temp = ROOM_TEMP): Simulation => blockSim(width, height, [{ ...pool, type, temp }]);
 
-  it('M11 AC12: the surface row is brighter than the row 8 cells below', async () => {
+  it('M11 AC12: the top row of an open pool is drawn in the table color, with no surface line', async () => {
     const pixels = await render(poolOf(T.WATER), width, height);
-    expect(lumAt(pixels, 0), 'the surface row against 8 cells below').toBeGreaterThan(lumAt(pixels, 8) + 10);
-    // The line fades over the top rows.
-    expect(lumAt(pixels, 0)).toBeGreaterThan(lumAt(pixels, 2));
-    expect(lumAt(pixels, 2)).toBeGreaterThan(lumAt(pixels, 4));
+    const table = ROWS.find((e) => e.id === T.WATER)!.color;
+    at(pixels, 0).forEach((channel, c) => expect(Math.abs(channel - table[c] * 255), `channel ${c}`).toBeLessThanOrEqual(2));
   });
 
-  it('M11 AC12: below the top 4 rows the luminance and the red-to-blue ratio do not rise with depth and fall over the pool', async () => {
+  it('M11 AC12: the luminance and the red-to-blue ratio do not rise with depth and fall over the pool', async () => {
     const pixels = await render(poolOf(T.WATER), width, height);
     // Each channel only darkens with depth, so the luminance of the bytes never rises from one row to the next.
-    for (let below = 5; below < pool.h; below++) {
+    for (let below = 1; below < pool.h; below++) {
       expect(lumAt(pixels, below), `row ${below} against ${below - 1}`).toBeLessThanOrEqual(lumAt(pixels, below - 1));
     }
     // A byte of rounding moves the ratio by about 0.02 in a row: sampled every 8 rows it is steady.
     for (let below = 12; below < pool.h; below += 8) {
       expect(redToBlue(pixels, below), `ratio at row ${below}`).toBeLessThanOrEqual(redToBlue(pixels, below - 8) + 0.01);
     }
-    expect(lumAt(pixels, 4) - lumAt(pixels, pool.h - 1), 'luminance lost over the pool').toBeGreaterThanOrEqual(10);
-    expect(redToBlue(pixels, 4) - redToBlue(pixels, pool.h - 1), 'red lost against blue over the pool').toBeGreaterThan(0.1);
-  });
-
-  it('M11 AC12: water under a stone ceiling has no surface line', async () => {
-    const roofed = blockSim(width, height, [pool, { x: pool.x, y: pool.y + pool.h, w: pool.w, h: 8, type: T.STONE, temp: ROOM_TEMP }]);
-    const open = poolOf(T.WATER);
-    const withLine = await render(roofed, width, height);
-    const withoutLine = await render(roofed, width, height, { settings: { liquidSurface: 0 } });
-    for (let below = 0; below < pool.h; below++) expect(at(withLine, below), `row ${below}`).toEqual(at(withoutLine, below));
-    // The open pool does have one.
-    expect(at(await render(open, width, height), 0)).not.toEqual(at(await render(open, width, height, { settings: { liquidSurface: 0 } }), 0));
+    // Deep water is dark navy: more than half its luminance gone at the bottom.
+    expect(lumAt(pixels, pool.h - 1), 'luminance at the bottom').toBeLessThan(lumAt(pixels, 0) / 2);
+    expect(redToBlue(pixels, 0) - redToBlue(pixels, pool.h - 1), 'red lost against blue over the pool').toBeGreaterThan(0.1);
   });
 
   it('M11 AC12: oil is darker than water at the same depth', async () => {
@@ -619,16 +624,16 @@ describe.skipIf(!device)('M11.6 liquid depth and surface', () => {
     for (let below = 1; below < pool.h; below++) expect(at(pixels, below), `row ${below}`).toEqual(at(pixels, 0));
   });
 
-  it('M11 AC12: the cells look draws the pool flat, and with no surface and no depth the finished look does within a step', async () => {
+  it('M11 AC12: the cells look draws the pool flat, and with no depth the finished look does within a step', async () => {
     const sim = poolOf(T.WATER);
     const cells = await render(sim, width, height, { look: 'cells' });
     for (let below = 1; below < pool.h; below++) expect(at(cells, below), `row ${below}`).toEqual(at(cells, 0));
-    const plain = await render(sim, width, height, { settings: { liquidSurface: 0, depthScale: 0 } });
+    const plain = await render(sim, width, height, { settings: { depthScale: 0 } });
     for (let below = 0; below < pool.h; below++) {
       at(plain, below).forEach((channel, c) => expect(Math.abs(channel - at(cells, below)[c]), `row ${below}, channel ${c}`).toBeLessThanOrEqual(1));
     }
     // The settings do not reach the cells look.
-    expect(await render(sim, width, height, { look: 'cells', settings: { liquidSurface: 0, depthScale: 0 } })).toEqual(cells);
+    expect(await render(sim, width, height, { look: 'cells', settings: { depthScale: 0 } })).toEqual(cells);
   });
 });
 
@@ -637,7 +642,7 @@ describe.skipIf(!device)('M11.7 air shimmer', () => {
   const height = 64;
   // Without the effects that spread light over the wall, so a shifted pixel is found in the unshifted picture within the
   // wall's own slow gradient.
-  const PLAIN: Partial<LookSettings> = { shadowDarkness: 0, glowStrength: 0, gasOpacity: 0, depthScale: 0, liquidSurface: 0 };
+  const PLAIN: Partial<LookSettings> = { shadowDarkness: 0, glowStrength: 0, gasOpacity: 0, depthScale: 0 };
   const OFF: Partial<LookSettings> = { ...PLAIN, shimmer: 0, shimmerPressure: 0 };
   const TOLERANCE = 2;
 

@@ -92,8 +92,8 @@ export interface LookDef {
   opacity?: number;
   /**
    * The share of each color channel (red, green, blue) a liquid absorbs per cell of depth; liquids only, default none. A
-   * liquid with some is drawn in the finished look with a bright surface line and a tint that deepens with the depth above
-   * it; one without is drawn flat.
+   * liquid with some is drawn in the finished look with a tint that deepens with the depth above it; one without is drawn
+   * flat.
    */
   absorption?: readonly [number, number, number];
 }
@@ -272,6 +272,8 @@ const WATER_FUSION = 334;
 const WATER_VAPORIZATION = 2257;
 // Iron's heat of fusion: 247 kJ/kg (13.8 kJ/mol) times solid iron's 7,870 kg/m³, in MJ/m³.
 const IRON_FUSION = 1944;
+// What the finished look adds to pure water's absorption on every channel, per metre (see the WATER row).
+const WATER_TURBIDITY = 0.085;
 
 // Conductivity (W/m·K), heat capacity (MJ/m³·K) and latent heat (MJ/m³) are physical data, the source named in each row's
 // comment; the pace they give is in `heatShare` (`src/heat.ts`). A cell is one unit of matter whatever its state, so a gas
@@ -302,9 +304,13 @@ export const ELEMENTS = [
     heatCapacity: 4.18,
     viscosity: 0.001,
     // Its absorption of red, green and blue light (650, 550 and 450 nm) is Pope and Fry's (1997, pure water): 0.340, 0.0565 and
-    // 0.00922 per metre, per cell of CELL_SIZE. Real water tints a pool a metre deep and barely 17 cm (128 cells), so the
-    // finished look exaggerates the depth by `LOOK.depthScale`.
-    look: { absorption: [0.340 * CELL_SIZE, 0.0565 * CELL_SIZE, 0.00922 * CELL_SIZE] },
+    // 0.00922 per metre, per cell of CELL_SIZE, plus `WATER_TURBIDITY` on every channel for the particles of natural water
+    // (estimated and chosen by sight: pure water alone only loses its red and green and stays bright blue however deep, while
+    // this turns deep water dark navy). Real water tints a pool a metre deep and barely 17 cm (128 cells), so the finished
+    // look exaggerates the depth by `LOOK.depthScale`.
+    look: {
+      absorption: [(0.340 + WATER_TURBIDITY) * CELL_SIZE, (0.0565 + WATER_TURBIDITY) * CELL_SIZE, (0.00922 + WATER_TURBIDITY) * CELL_SIZE],
+    },
     below: { temp: 0, becomes: 'ICE', latent: WATER_FUSION },
     // The burst is a flash into steam pushing the air out; tuned in the M6.3c tests (tests/air-burst.test.ts): one cell
     // flashing barely stirs the air, a layer poured onto lava visibly pushes it.
