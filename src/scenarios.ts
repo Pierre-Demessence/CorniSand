@@ -1,5 +1,5 @@
 import { ELEMENT as T } from './elements';
-import { Canvas, packCell, WALL } from './scene-canvas';
+import { Canvas, packCell, tank, WALL } from './scene-canvas';
 import type { Scene } from './scenes';
 
 // The scenario scenes (`?scene=<name>`), each built from `scene-canvas.ts`'s primitives and registered here by
@@ -195,6 +195,98 @@ export function heatedLayer(kind: HeatedLayerKind = 'above', liquid: number = T.
   return { name: 'heatedLayer', width, height, fields: canvas.fields, floorY: 0, chambers: [] };
 }
 
+/**
+ * `hourglass`: a flat-bottomed silo `siloWidth` cells wide, filled `fillWidths` silo widths high with sand, standing on a
+ * plate with an outlet of `outlet` cells in its middle, over a bulb `bulbWidth` wide and `bulbHeight` high that holds the
+ * pile (an 18,432-cell pile at 34 degrees is 330 cells wide and 112 high). The silo and the plate are WALL; the bulb is
+ * closed at its sides and floor, open above. `fill` is the element of the silo, for a test that swaps in another.
+ */
+export const HOURGLASS = {
+  siloWidth: 64,
+  fillWidths: 6,
+  headroom: 8,
+  bulbWidth: 360,
+  bulbHeight: 140,
+  outlet: 8,
+} as const;
+
+/** The rows and columns of an hourglass with this outlet: the plate is the rows [plateY0, plateY1), the outlet the columns [outletX0, outletX1). */
+export function hourglassLayout(outlet: number = HOURGLASS.outlet) {
+  const { siloWidth, fillWidths, headroom, bulbWidth, bulbHeight } = HOURGLASS;
+  const siloX0 = (bulbWidth - siloWidth) >> 1;
+  const outletX0 = (bulbWidth - outlet) >> 1;
+  const plateY0 = WALL + bulbHeight;
+  const plateY1 = plateY0 + WALL;
+  const fillRows = siloWidth * fillWidths;
+  return {
+    width: bulbWidth,
+    height: plateY1 + fillRows + headroom,
+    siloX0,
+    siloX1: siloX0 + siloWidth,
+    outletX0,
+    outletX1: outletX0 + outlet,
+    plateY0,
+    plateY1,
+    fillRows,
+    cells: siloWidth * fillRows,
+  };
+}
+
+export function hourglass(outlet: number = HOURGLASS.outlet, fill: number = T.SAND): Scene {
+  const { bulbWidth } = HOURGLASS;
+  const { width, height, siloX0, siloX1, outletX0, outletX1, plateY0, plateY1, fillRows } = hourglassLayout(outlet);
+  const canvas = new Canvas(width, height);
+  canvas.fill(T.WALL, 0, bulbWidth, 0, WALL);
+  canvas.fill(T.WALL, 0, WALL, 0, plateY1);
+  canvas.fill(T.WALL, bulbWidth - WALL, bulbWidth, 0, plateY1);
+  canvas.fill(T.WALL, siloX0 - WALL, siloX1 + WALL, plateY0, plateY1);
+  canvas.fill(T.WALL, siloX0 - WALL, siloX0, plateY0, height);
+  canvas.fill(T.WALL, siloX1, siloX1 + WALL, plateY0, height);
+  canvas.fill(T.EMPTY, outletX0, outletX1, plateY0, plateY1);
+  canvas.fill(T.SAND, siloX0, siloX1, plateY1, plateY1 + fillRows);
+  // Another element of a test table is not in the default one `fill` reads temperatures from: swap the kind afterwards.
+  for (let y = plateY1; y < plateY1 + fillRows; y++) canvas.fields.kind.fill(packCell(fill), y * width + siloX0, y * width + siloX1);
+  return { name: 'hourglass', width, height, fields: canvas.fields, floorY: WALL, chambers: [] };
+}
+
+/**
+ * `viscousSpread`: a column of lava `columnWidth` cells wide and `columnHeight` high against the left wall of a tank
+ * `tankWidth` wide, released at once on a floor of WALL. The lava keeps its painted temperature (run it with `air: false`
+ * for the floor takes no heat). `liquid` is the element of the column, for a test that swaps in another.
+ */
+export const VISCOUS_SPREAD = {
+  tankWidth: 150,
+  columnWidth: 14,
+  columnHeight: 40,
+  headroom: 8,
+} as const;
+
+export function viscousSpread(liquid: number = T.LAVA): Scene {
+  const { tankWidth, columnWidth, columnHeight, headroom } = VISCOUS_SPREAD;
+  const height = WALL + columnHeight + headroom;
+  const canvas = tank(tankWidth, height);
+  canvas.fill(liquid, WALL, WALL + columnWidth, WALL, WALL + columnHeight);
+  return { name: 'viscousSpread', width: tankWidth, height, fields: canvas.fields, floorY: WALL, chambers: [] };
+}
+
+/**
+ * `freeFall`: one grain dropped from `fallCells` cells (1 m) above the floor in a column `width` cells wide, open above.
+ * The grain is the element `grain`; its cell is the one at the top of the column.
+ */
+export const FREE_FALL = {
+  width: 8,
+  fallCells: 734,
+} as const;
+
+export function freeFall(grain: number = T.SAND): Scene {
+  const { width, fallCells } = FREE_FALL;
+  const height = WALL + fallCells + 1;
+  const canvas = new Canvas(width, height);
+  canvas.fill(T.WALL, 0, width, 0, WALL);
+  canvas.fill(grain, width >> 1, (width >> 1) + 1, height - 1, height);
+  return { name: 'freeFall', width, height, fields: canvas.fields, floorY: WALL, chambers: [] };
+}
+
 export const SCENARIO_SCENES: Record<string, () => Scene> = {
   iceCup: () => iceCup('full'),
   steamBurn: () => steamBurn('steam'),
@@ -202,4 +294,7 @@ export const SCENARIO_SCENES: Record<string, () => Scene> = {
   redHotBar,
   lavaCrust: () => lavaCrust(),
   heatedLayer: () => heatedLayer('above'),
+  hourglass: () => hourglass(),
+  viscousSpread: () => viscousSpread(),
+  freeFall: () => freeFall(),
 };
