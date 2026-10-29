@@ -1,6 +1,6 @@
 import { AIR } from '../src/air';
 import type { AirData } from '../src/air-grid';
-import { ELEMENT as T, elementHeatCapacity, elementHoldsHeat, transitionLatent, type ElementDef } from '../src/elements';
+import { ELEMENT as T, elementHeatCapacity, elementHoldsHeat, meltRow, transitionLatent, type ElementDef } from '../src/elements';
 import type { Chamber } from '../src/scenes';
 
 // Measurements on a packed cell grid (row y = 0 at the bottom). Levels are heights above `floorY`.
@@ -97,6 +97,10 @@ export function columnsWithAbove(cells: Uint32Array, width: number, height: numb
  * The heat each element holds on top of its capacity times its stored temperature, so that a phase change moves no heat:
  * for A above -> B at T with latent heat L, B holds A's offset plus (C_A - C_B)·T + L (below -> B: minus L). One offset
  * per group of elements joined by transitions, 0 for the first of its group; elements that hold no heat have none.
+ *
+ * A molten cell holds the heat of the element it sets into (its ctype), not one of its own (`moltenOffset`): the `above` of
+ * a row into a molten element ties the row to the element it sets into, which is itself unless it has a `setsInto`, and the
+ * molten element is tied to its `below` by the ordinary edge (what a cell with no ctype sets into).
  */
 export function latentOffsets(table: readonly ElementDef[]): Map<number, number> {
   const byKey = new Map(table.map((e) => [e.key, e]));
@@ -107,6 +111,16 @@ export function latentOffsets(table: readonly ElementDef[]): Map<number, number>
       const t = a[side];
       if (!t) continue;
       const b = byKey.get(t.becomes)!;
+      if (side === 'above' && b.molten) {
+        // a melts into b and sets into k: a - k = (C_k - C_b)·T_k + L_k + (C_b - C_a)·T_a - L_a, so that a's cell and the molten
+        // cell it becomes hold the same heat. Nothing to tie when k is a itself.
+        const k = byKey.get(t.setsInto ?? a.key)!;
+        if (k === a) continue;
+        const delta = (elementHeatCapacity(k) - elementHeatCapacity(b)) * k.above!.temp + transitionLatent(k.above!)
+          + (elementHeatCapacity(b) - elementHeatCapacity(a)) * t.temp - transitionLatent(t);
+        edges.push({ from: k.id, to: a.id, delta }, { from: a.id, to: k.id, delta: -delta });
+        continue;
+      }
       const delta = (elementHeatCapacity(a) - elementHeatCapacity(b)) * t.temp + sign * transitionLatent(t);
       edges.push({ from: a.id, to: b.id, delta }, { from: b.id, to: a.id, delta: -delta });
     }
@@ -127,6 +141,14 @@ export function latentOffsets(table: readonly ElementDef[]): Map<number, number>
   return offsets;
 }
 
+/** The latent offset of a cell with this `kind` word: its element's, or for a molten cell with a ctype the one of the element it sets into plus the heat of its melt. */
+export function kindOffset(table: readonly ElementDef[], offsets: ReadonlyMap<number, number>, kind: number): number {
+  const row = table.find((e) => e.id === (kind & 0xff))!;
+  const k = meltRow(table, row, (kind >>> 16) & 0xff);
+  if (!k) return offsets.get(row.id)!;
+  return offsets.get(k.id)! + (elementHeatCapacity(k) - elementHeatCapacity(row)) * k.above!.temp + transitionLatent(k.above!);
+}
+
 /**
  * The heat of the cells that hold heat: the sum of heat capacity times stored temperature plus the latent offset of the
  * element (see `latentOffsets`) over the cells of the grid and the flyers in the air (`kind` and `temp` words), and, when
@@ -144,11 +166,16 @@ export function heatContent(
   const offsets = latentOffsets(table);
   const bits = new Uint32Array(1);
   const asFloat = new Float32Array(bits.buffer);
+  // The offset depends on the element and the ctype only (not the variant).
+  const offsetOf = new Map<number, number>();
   const heat = (kind: number, temp: number): number => {
     const c = capacity.get(kind & 0xff);
     if (c === undefined) return 0;
     bits[0] = temp;
-    return c * asFloat[0] + offsets.get(kind & 0xff)!;
+    const key = kind & 0xffff00ff;
+    let offset = offsetOf.get(key);
+    if (offset === undefined) offsetOf.set(key, offset = kindOffset(table, offsets, kind));
+    return c * asFloat[0] + offset;
   };
   let total = 0;
   for (let i = 0; i < grid.kind.length; i++) total += heat(grid.kind[i], grid.temp[i]);

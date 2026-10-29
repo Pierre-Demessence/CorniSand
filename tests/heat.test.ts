@@ -8,6 +8,7 @@ import type { CellProbe, Simulation } from '../src/simulation';
 import { TOOLS } from '../src/toolbar';
 import { cell, cellType, countTypes, createSim, device, idleInput, mulberry32, readCells, run, runMany } from './gpu';
 import { heatContent } from './metrics';
+import { GLASS, GOLD, MOLTEN_TABLE } from './molten-table';
 
 const FIRE_TEMP = 1000;
 
@@ -69,10 +70,12 @@ describe.skipIf(!device)('M5 heat', () => {
     { name: 'water at 110 °C paints steam at 110 °C', type: T.WATER, temperature: 110, painted: T.STEAM, expected: 110 },
     { name: 'water at -10 °C paints ice at -10 °C', type: T.WATER, temperature: -10, painted: T.ICE, expected: -10 },
     { name: 'water at exactly 100 °C paints water', type: T.WATER, temperature: 100, painted: T.WATER, expected: 100 },
-    { name: 'stone at 1,300 °C paints lava at 1,300 °C', type: T.STONE, temperature: 1300, painted: T.LAVA, expected: 1300 },
+    { name: 'stone at 1,300 °C paints lava at 1,300 °C', type: T.STONE, temperature: 1300, painted: T.LAVA, expected: 1300, ctype: T.STONE },
+    { name: 'steel at 1,600 °C paints molten metal at 1,600 °C', type: T.METAL, temperature: 1600, painted: T.MOLTEN_METAL, expected: 1600, ctype: T.METAL },
+    { name: 'lava at 1,300 °C paints lava with no ctype', type: T.LAVA, temperature: 1300, painted: T.LAVA, expected: 1300, ctype: 0 },
     { name: 'oil at 300 °C paints oil (it ignites by itself)', type: T.OIL, temperature: 300, painted: T.OIL, expected: 300 },
     { name: 'no temperature paints the element at its own', type: T.ICE, temperature: undefined, painted: T.ICE, expected: -20 },
-  ])('M8.1 AC32: the brush writes the element a temperature makes of it: $name', async ({ type, temperature, painted, expected }) => {
+  ])('M8.1 AC32: the brush writes the element a temperature makes of it: $name', async ({ type, temperature, painted, expected, ctype = 0 }) => {
     const width = 16;
     const height = 16;
     const sim = createSim(width, height);
@@ -94,6 +97,7 @@ describe.skipIf(!device)('M5 heat', () => {
       if (cellType(kinds[i]) === T.EMPTY) continue;
       count++;
       expect(cellType(kinds[i]), `painted cell ${i}`).toBe(painted);
+      expect((kinds[i] >>> 16) & 0xff, `ctype of painted cell ${i}`).toBe(ctype);
       expect(temps[i], `painted cell ${i}`).toBe(expected);
     }
     expect(count, 'cells painted').toBeGreaterThan(4);
@@ -823,6 +827,62 @@ describe.skipIf(!device)('M5.4c total heat', () => {
   }, 120_000);
 });
 
+describe.skipIf(!device)('M8.1 AC10: total heat with molten memory', () => {
+  it('a sealed box across every transition, molten cells of several ctypes included, keeps its total heat over 2,000 supersteps', async () => {
+    const width = 48;
+    const height = 40;
+    const sim = createSim(width, height, 10, { elements: MOLTEN_TABLE, ...NO_AIR });
+    const next = mulberry32(10);
+    const rand = (): number => next() / 2 ** 32;
+    // [element, ctype, lowest and highest start temperature]: the temperatures straddle each threshold and the latent ends
+    // beyond it, so cells melt and set both ways: glass's lava sets under 1,463 °C, steel's under 1,197, gold's under 713.
+    const range: [number, number, number, number][] = [
+      [T.ICE, 0, -100, 300], [T.WATER, 0, -100, 300], [T.STEAM, 0, -150, 300], [T.STONE, 0, 800, 1500], [T.SAND, 0, 1500, 2600],
+      [T.LAVA, 0, 700, 1500], [T.LAVA, T.STONE, 700, 1500], [T.LAVA, GLASS, 1200, 2200],
+      [GLASS, 0, 1500, 2400], [T.METAL, 0, 1300, 1900], [GOLD, 0, 800, 2000],
+      [T.MOLTEN_METAL, 0, 1200, 1900], [T.MOLTEN_METAL, T.METAL, 1000, 1900], [T.MOLTEN_METAL, GOLD, 500, 1500], [T.EMPTY, 0, 0, 0],
+    ];
+    const kind = new Uint32Array(width * height);
+    const temp = uniformTemps(width * height, 0);
+    const temps = tempView({ temp });
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const i = y * width + x;
+        if (y < 2 || x < 2 || x >= width - 2) {
+          kind[i] = cell(T.WALL);
+          continue;
+        }
+        const [type, ctype, low, high] = range[Math.floor(rand() * range.length)];
+        kind[i] = cell(type, 0, ctype);
+        if (type !== T.EMPTY) temps[i] = low + rand() * (high - low);
+      }
+    }
+    sim.load({ kind, temp });
+    const measure = async (): Promise<{ heat: number; types: Map<number, number> }> => {
+      const grid = { kind: await readCells(sim), temp: await sim.fields.read('temp') };
+      return { heat: heatContent(MOLTEN_TABLE, grid, await sim.flyers.read()), types: countTypes(grid.kind) };
+    };
+    const before = await measure();
+
+    for (let i = 1; i <= 4; i++) {
+      await runMany(sim, 500);
+      const now = await measure();
+      expect(Math.abs(now.heat - before.heat) / Math.abs(before.heat), `heat after ${i * 500} supersteps, ${before.heat} at the start`).toBeLessThan(1e-4);
+    }
+    // Glass's lava, steel's molten metal and stone's lava set into their solids, which grew (first run: glass 107 to 252, stone
+    // 122 to 205, steel 98 to 312; gold went the other way, 121 to 45, since a conductor that good melts in its hot neighbors).
+    const after = await measure();
+    for (const [type, name] of [[GLASS, 'glass'], [T.STONE, 'stone'], [T.METAL, 'steel']] as const) {
+      expect(after.types.get(type)!, name).toBeGreaterThan(before.types.get(type)!);
+    }
+    // And a cell that sets drops its ctype: a molten cell keeps one only while it is molten.
+    const kinds = await readCells(sim);
+    kinds.forEach((k, i) => {
+      if (((k >>> 16) & 0xff) !== 0) expect(k & 0xff, `cell ${i} holds a ctype`).toBeOneOf([T.LAVA, T.MOLTEN_METAL]);
+    });
+  }, 120_000);
+});
+
 describe.skipIf(!device)('M5.5a Heat and Cool tools', () => {
   const width = 12;
   const height = 4;
@@ -1021,6 +1081,6 @@ describe.skipIf(!device)('M5.5c probe', () => {
     expect(await probeAt(sim, 1, 7)).toMatchObject({ type: T.SAND, temp: 77 });
     await runMany(sim, 40);
     expect(await probeAt(sim, 1, 7), 'the grain left').toMatchObject({ type: T.EMPTY });
-    expect(await probeAt(sim, 1, 0), 'it rests on the floor').toEqual({ type: T.SAND, temp: 77 });
+    expect(await probeAt(sim, 1, 0), 'it rests on the floor').toEqual({ type: T.SAND, ctype: 0, temp: 77 });
   });
 });

@@ -7,7 +7,8 @@ export interface CellField {
 }
 
 export const CELL_FIELDS = [
-  // Bits 0-7 element, 8-15 variant (random, set at paint time), 16-31 reserved.
+  // Bits 0-7 element, 8-15 variant (random, set at paint time), 16-23 ctype (the element a molten cell sets into, 0 for
+  // every other cell; `kindWord`), 24-31 reserved.
   { name: 'kind', wgslType: 'u32' },
   // Fire: the remaining lifetime. Liquids: the sideways direction the cell last moved in (0 none, 1 left, 2 right).
   { name: 'life', wgslType: 'u32' },
@@ -18,6 +19,11 @@ export const CELL_FIELDS = [
   // The stored temperature in °C (`src/heat.ts`). Meaningless for a cell that holds no heat (empty space, walls).
   { name: 'temp', wgslType: 'f32' },
 ] as const satisfies readonly CellField[];
+
+/** A `kind` word: the element, the variant and, for a molten cell, the ctype (the element it sets into). */
+export function kindWord(type: number, variant = 0, ctype = 0): number {
+  return (type | (variant << 8) | (ctype << 16)) >>> 0;
+}
 
 export type CellFieldName = (typeof CELL_FIELDS)[number]['name'];
 

@@ -41,6 +41,8 @@ export interface SimulationInput {
  */
 export interface CellProbe {
   type: number;
+  /** The element a molten cell sets into (0 for any other cell). */
+  ctype?: number;
   temp: number;
   pressure?: number;
   airTemp?: number;
@@ -216,7 +218,8 @@ export class Simulation {
   }
 
   // Replaces the world: each field of `data` (width x height words) goes into its buffer; a missing field is zero,
-  // except `temp`, which then starts every cell at its element's temperature.
+  // except `temp`, which then starts every cell at its element's temperature. A molten cell's ctype (`kind` bits 16-23,
+  // `kindWord`) must name a row whose `above` becomes that molten element; the GPU reads any other ctype as 0.
   load(data: Partial<CellData>): void {
     this.fields.load(data.temp ? data : { ...data, temp: this.startTemps(data.kind) });
     this.flyers.clear();
@@ -304,8 +307,9 @@ export class Simulation {
     f[2] = input.mousePos.x;
     f[3] = input.mousePos.y;
     f[4] = input.brushSize;
-    const target = input.temperature === undefined ? input.particleType : paintTarget(this.elements.elements, input.particleType, input.temperature).id;
-    w[5] = target;
+    const target = input.temperature === undefined ? undefined : paintTarget(this.elements.elements, input.particleType, input.temperature);
+    w[5] = target?.id ?? input.particleType;
+    w[11] = target?.ctype ?? 0;
     w[6] = input.erasing ? 1 : 0;
     const heating = input.heating ?? 0;
     // A heating stroke never replaces: the flyer brush would remove the flyers it passes over.
@@ -383,7 +387,7 @@ export class Simulation {
     try {
       await this.probeStaging.mapAsync(GPUMapMode.READ);
       const words = new Uint32Array(this.probeStaging.getMappedRange().slice(0));
-      const probe: CellProbe = { type: words[0] & 0xff, temp: tempView({ temp: words.subarray(1, 2) })[0] };
+      const probe: CellProbe = { type: words[0] & 0xff, ctype: (words[0] >>> 16) & 0xff, temp: tempView({ temp: words.subarray(1, 2) })[0] };
       if (this.air.enabled) {
         const air = new Float32Array(words.buffer, 2 * FIELD_BYTES, 2);
         probe.pressure = air[0];

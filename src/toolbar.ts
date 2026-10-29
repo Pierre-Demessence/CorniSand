@@ -1,4 +1,4 @@
-import { elementTemperature, type ElementDef, type Transition } from './elements';
+import { cellName, elementTemperature, type ElementDef, type Transition } from './elements';
 import { ABSOLUTE_ZERO, HEAT_TOOL_RATE, MAX_TEMP } from './heat';
 
 /**
@@ -129,9 +129,13 @@ export function searchEntries(tabs: readonly PickerTab[], query: string, table: 
   return [...direct, ...reached];
 }
 
-/** What the brush writes: the element, and whether a flammable row painted past its ignition temperature catches fire by itself. */
+/**
+ * What the brush writes: the element, the ctype of a molten one (the ID of the element it sets into, 0 for every other cell),
+ * and whether a flammable row painted past its ignition temperature catches fire by itself.
+ */
 export interface PaintTarget {
   id: number;
+  ctype: number;
   ignites: boolean;
 }
 
@@ -139,22 +143,29 @@ export interface PaintTarget {
  * The element a brush of `id` painted at `temp` (°C) writes: from the row, follows `above` while `temp` is above its
  * threshold and `below` while it is under (the stored temperature is compared with the threshold itself, latent heat not
  * yet taken in), so water at -10 °C is ice and steel at 1,600 °C is molten metal. At exactly a threshold the row stays.
- * A change into a plasma (fire) is never followed: the row is painted as itself, flagged as igniting.
+ * A change into a plasma (fire) is never followed: the row is painted as itself, flagged as igniting. A change into a molten
+ * element gives it the ctype of the `above` that made it (`setsInto`, by default the row it came from): stone at 1,300 °C is
+ * lava that sets into stone.
  */
 export function paintTarget(table: readonly ElementDef[], id: number, temp: number): PaintTarget {
   const byKey = new Map<string, ElementDef>(table.map((e) => [e.key, e]));
   let row: ElementDef | undefined = table.find((e) => e.id === id);
   if (!row) throw new Error(`paintTarget: no element with id ${id}`);
   const seen = new Set<number>();
+  let ctype = 0;
   while (!seen.has(row.id)) {
     seen.add(row.id);
-    const step: Transition | undefined = row.above && temp > row.above.temp ? row.above : row.below && temp < row.below.temp ? row.below : undefined;
+    // A molten element reached by melting something is molten from that threshold up: the `above` that made it was passed
+    // already, so its own `below` (what a cell with no ctype sets into) does not apply.
+    const molten: boolean = ctype !== 0 && row.molten === true;
+    const step: Transition | undefined = row.above && temp > row.above.temp ? row.above : row.below && temp < row.below.temp && !molten ? row.below : undefined;
     const next: ElementDef | undefined = step && byKey.get(step.becomes);
     if (!next) break;
-    if (next.state === 'plasma') return { id: row.id, ignites: true };
+    if (next.state === 'plasma') return { id: row.id, ctype: 0, ignites: true };
+    ctype = step && step === row.above && next.molten ? (byKey.get(step.setsInto ?? row.key) ?? row).id : 0;
     row = next;
   }
-  return { id: row.id, ignites: false };
+  return { id: row.id, ctype, ignites: false };
 }
 
 /** The paint temperature kept to whole degrees inside `ABSOLUTE_ZERO`..`MAX_TEMP`. */
@@ -167,11 +178,10 @@ export function stepPaintTemp(temp: number, direction: 1 | -1, big: boolean): nu
   return clampPaintTemp(temp + direction * (big ? 100 : 10));
 }
 
-/** The preview beside the temperature field: the name of what a brush of `id` at `temp` paints, and whether it ignites. */
+/** The preview beside the temperature field: the name of what a brush of `id` at `temp` paints (`cellName`), and whether it ignites. */
 export function paintPreview(table: readonly ElementDef[], id: number, temp: number): string {
   const target = paintTarget(table, id, temp);
-  const label = table.find((e) => e.id === target.id)?.label ?? '';
-  return `→ ${label}${target.ignites ? ' (ignites)' : ''}`;
+  return `→ ${cellName(table, target.id, target.ctype)}${target.ignites ? ' (ignites)' : ''}`;
 }
 
 /** The number key that selects the entry at `index` of the entries shown: 1 to 9, none after the ninth. */

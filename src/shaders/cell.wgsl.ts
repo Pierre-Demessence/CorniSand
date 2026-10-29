@@ -44,23 +44,33 @@ fn cellEq(a: Cell, b: Cell) -> bool {
 
 fn cellType(c: Cell) -> u32 { return c.kind & 0xffu; }
 fn cellVariant(c: Cell) -> u32 { return (c.kind >> 8u) & 0xffu; }
+// The element a molten cell sets into (0: none); only a molten element's cells carry one (\`kindMelt\`).
+fn cellCtype(c: Cell) -> u32 { return (c.kind >> 16u) & 0xffu; }
 fn cellLife(c: Cell) -> u32 { return c.life; }
 fn cellVelocity(c: Cell) -> vec2f { return unpack2x16float(c.velocity); }
 fn cellRemainder(c: Cell) -> vec2f { return unpack2x16float(c.remainder); }
 // °C; meaningless for a cell that holds no heat.
 fn cellStoredTemp(c: Cell) -> f32 { return c.temp; }
 
-// A new cell: every field but the element, variant and life starts at zero.
+// A new cell: every field but the element, variant and life starts at zero (the ctype too).
 fn makeCell(t: u32, variant: u32, life: u32) -> Cell {
   return Cell(${CELL_FIELDS.map((f) => MAKE_CELL_ARGS[f.name] ?? `${f.wgslType}(0)`).join(', ')});
 }
 
-// The same cell as another element or another life: every field but the ones named is kept. A rule that changes a
-// cell goes through these, never through \`makeCell\`, which would drop the fields it does not know about.
+// The same cell as another element or another life: every field but the ones named is kept, except that a new element
+// clears the ctype. A rule that changes a cell goes through these, never through \`makeCell\`, which would drop the
+// fields it does not know about.
 fn withType(c: Cell, t: u32, variant: u32, life: u32) -> Cell {
   var r = c;
   r.kind = t | (variant << 8u);
   r.life = life;
+  return r;
+}
+
+// The same cell as a molten cell that sets into the element \`ctype\`.
+fn withCtype(c: Cell, ctype: u32) -> Cell {
+  var r = c;
+  r.kind = (c.kind & 0xff00ffffu) | (ctype << 16u);
   return r;
 }
 

@@ -37,10 +37,12 @@ export const NO_THRESHOLD = 3e38;
 /**
  * The temperature a cell of this element conducts and shows at: its stored temperature clamped to the element's
  * thresholds. They differ only while the cell takes in or gives out the latent heat of a transition. Mirrors `cellTemp`
- * in `src/shaders/heat.wgsl.ts`.
+ * in `src/shaders/heat.wgsl.ts`. A molten cell is clamped at the threshold of the element it sets into, `melts` (`meltRow`),
+ * instead of its own `below`.
  */
-export function effectiveTemp(e: Pick<ElementDef, 'below' | 'above'>, stored: number): number {
-  return Math.min(Math.max(stored, e.below?.temp ?? -NO_THRESHOLD), e.above?.temp ?? NO_THRESHOLD);
+export function effectiveTemp(e: Pick<ElementDef, 'below' | 'above'>, stored: number, melts?: Pick<ElementDef, 'above'>): number {
+  const lower = melts?.above?.temp ?? e.below?.temp ?? -NO_THRESHOLD;
+  return Math.min(Math.max(stored, lower), e.above?.temp ?? NO_THRESHOLD);
 }
 
 /** A color stop of a temperature ramp: display RGB (what the canvas shows), 0 to 1 per channel. */

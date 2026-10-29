@@ -1,4 +1,5 @@
 import type { AirData } from '../src/air-grid';
+import { kindWord } from '../src/cell-fields';
 import { ELEMENT } from '../src/elements';
 import { MAX_SUPERSTEPS, Simulation, type SimulationInput, type SimulationOptions } from '../src/simulation';
 import { mulberry32 } from '../src/random';
@@ -58,9 +59,9 @@ export const idleInput: SimulationInput = {
   particleType: ELEMENT.SAND,
 };
 
-// A `kind` word.
-export function cell(type: number, variant = 0): number {
-  return (type | (variant << 8)) >>> 0;
+// A `kind` word; a molten `type` takes the `ctype` it sets into.
+export function cell(type: number, variant = 0, ctype = 0): number {
+  return kindWord(type, variant, ctype);
 }
 
 export function cellType(c: number): number {

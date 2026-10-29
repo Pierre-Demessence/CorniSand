@@ -116,13 +116,18 @@ describe('M8.1 AC31 paintTarget', () => {
   const target = (key: keyof typeof ELEMENT, temp: number) => paintTarget(ELEMENTS, ELEMENT[key], temp);
 
   it('follows the transitions the temperature passes', () => {
-    expect(target('WATER', -10)).toEqual({ id: ELEMENT.ICE, ignites: false });
-    expect(target('WATER', 20)).toEqual({ id: ELEMENT.WATER, ignites: false });
-    expect(target('WATER', 110)).toEqual({ id: ELEMENT.STEAM, ignites: false });
-    expect(target('STONE', 1300)).toEqual({ id: ELEMENT.LAVA, ignites: false });
-    expect(target('METAL', 1600)).toEqual({ id: ELEMENT.MOLTEN_METAL, ignites: false });
-    expect(target('ICE', 20)).toEqual({ id: ELEMENT.WATER, ignites: false });
-    expect(target('STEAM', 20)).toEqual({ id: ELEMENT.WATER, ignites: false });
+    expect(target('WATER', -10)).toEqual({ id: ELEMENT.ICE, ctype: 0, ignites: false });
+    expect(target('WATER', 20)).toEqual({ id: ELEMENT.WATER, ctype: 0, ignites: false });
+    expect(target('WATER', 110)).toEqual({ id: ELEMENT.STEAM, ctype: 0, ignites: false });
+    expect(target('STONE', 1300)).toEqual({ id: ELEMENT.LAVA, ctype: ELEMENT.STONE, ignites: false });
+    expect(target('METAL', 1600)).toEqual({ id: ELEMENT.MOLTEN_METAL, ctype: ELEMENT.METAL, ignites: false });
+    expect(target('ICE', 20)).toEqual({ id: ELEMENT.WATER, ctype: 0, ignites: false });
+    expect(target('STEAM', 20)).toEqual({ id: ELEMENT.WATER, ctype: 0, ignites: false });
+  });
+
+  it('M8.1 AC32: a molten element painted as itself has no ctype, and one that cools to its solid has none either', () => {
+    expect(target('LAVA', 1300)).toEqual({ id: ELEMENT.LAVA, ctype: 0, ignites: false });
+    expect(target('LAVA', 1000)).toEqual({ id: ELEMENT.STONE, ctype: 0, ignites: false });
   });
 
   it('stays at exactly a threshold', () => {
@@ -132,14 +137,14 @@ describe('M8.1 AC31 paintTarget', () => {
   });
 
   it('never paints fire: a flammable row past its ignition is itself, flagged as igniting', () => {
-    expect(target('OIL', 300)).toEqual({ id: ELEMENT.OIL, ignites: true });
+    expect(target('OIL', 300)).toEqual({ id: ELEMENT.OIL, ctype: 0, ignites: true });
     expect(target('OIL', 250).ignites).toBe(false);
-    expect(target('GUNPOWDER', 500)).toEqual({ id: ELEMENT.GUNPOWDER, ignites: true });
+    expect(target('GUNPOWDER', 500)).toEqual({ id: ELEMENT.GUNPOWDER, ctype: 0, ignites: true });
   });
 
   it('gives a row with nothing to pass back as itself', () => {
-    expect(target('SAND', 9000)).toEqual({ id: ELEMENT.SAND, ignites: false });
-    expect(target('FIRE', 1000)).toEqual({ id: ELEMENT.FIRE, ignites: false });
+    expect(target('SAND', 9000)).toEqual({ id: ELEMENT.SAND, ctype: 0, ignites: false });
+    expect(target('FIRE', 1000)).toEqual({ id: ELEMENT.FIRE, ctype: 0, ignites: false });
   });
 
   it('paints every row except EMPTY: it has a button, or a button row at its own temperature makes it', () => {

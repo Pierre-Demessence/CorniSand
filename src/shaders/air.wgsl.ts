@@ -314,7 +314,7 @@ ${ENTRY} {
       if (!inside && elState(t) != ST_SOLID) { continue; }
       if (airOf(x, y, t) != k) { continue; }
       // The pair's exchange, as \`exchangeHeat\`: the cell's temperature is its stored one clamped to its thresholds.
-      let d = clamp(field_temp[i], elBelowTemp(t), elAboveTemp(t)) - airTemp;
+      let d = kindTemp(loadKind(i), field_temp[i]) - airTemp;
       if (d == 0.0) { continue; }
       let c = elHeatCapacity(t);
       let g = min(1.0, AIR_SURFACE * (1.0 / c + 1.0 / AIR_CAPACITY));

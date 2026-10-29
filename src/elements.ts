@@ -87,6 +87,14 @@ export interface ElementDef {
   description?: string;
   /** How the finished look draws the element, read by the display alone (`src/display-table.ts`); each value defaults by state. */
   look?: LookDef;
+  /**
+   * A molten element (liquid rock, liquid metal): its cells remember the element they set into in their ctype (`kind` bits
+   * 16-23), written by the `above` that made them (`Transition.setsInto`). A cell with ctype k sets into k below k's `above`
+   * temperature, by k's latent heat, and moves by k's density; one with ctype 0 sets into its own `below`. Needs a `below`.
+   */
+  molten?: true;
+  /** What a molten cell that sets into this element is called, where "Molten <label>" is wrong (basalt's lava is "Lava"). CPU only, for `cellName`. */
+  meltLabel?: string;
 }
 
 /** The display-only properties of a row (`ElementDef.look`). Every value is 0 to 1. */
@@ -122,6 +130,13 @@ export interface Transition {
    * it ignites by touching fire. Default 0. Dimensionless, like the air's pressure.
    */
   burst?: number;
+  /**
+   * The key of the element a cell that passes this `above` into a molten element sets back into once it cools: written as
+   * the molten cell's ctype. Default: the row itself. That element needs an `above` into the same molten element, at this
+   * temperature or below it; the molten cell sets by that `above`'s temperature and latent heat. Only on an `above` into a
+   * molten element.
+   */
+  setsInto?: string;
 }
 
 /**
@@ -243,6 +258,30 @@ export function transitionBurst(t: Transition): number {
 /** How far past its threshold a cell of this element runs while it takes in or gives out the latent heat of `t`. */
 export function latentWidth(e: ElementDef, t: Transition): number {
   return transitionLatent(t) / elementHeatCapacity(e);
+}
+
+/**
+ * The row a molten cell of `e` with this ctype sets into: the ctype's row when `e` is molten and that row's `above` becomes
+ * `e`; undefined for any other cell, which is what the GPU makes of an unknown ctype too (`kindMelt`).
+ */
+export function meltRow(table: readonly ElementDef[], e: ElementDef, ctype: number): ElementDef | undefined {
+  if (!e.molten || ctype === 0) return undefined;
+  const row = table.find((r) => r.id === ctype);
+  return row?.above?.becomes === e.key ? row : undefined;
+}
+
+/**
+ * What the pointer readout and the paint preview call a cell: a molten cell by what it sets into, the `meltLabel` of that
+ * row ("Lava" for basalt) or else "Molten " and its label in lower case ("Molten glass"); with ctype 0 by the molten row's
+ * `below`. Every other cell is its row's label.
+ */
+export function cellName(table: readonly ElementDef[], id: number, ctype = 0): string {
+  const e = table.find((r) => r.id === id);
+  if (!e) return '';
+  if (!e.molten) return e.label;
+  const sets = meltRow(table, e, ctype) ?? table.find((r) => r.key === e.below?.becomes);
+  if (!sets) return e.label;
+  return sets.meltLabel ?? `Molten ${sets.label.toLowerCase()}`;
 }
 
 /**
@@ -412,6 +451,8 @@ export const ELEMENTS = [
     heatCapacity: 2.2,
    
     above: { temp: 1200, becomes: 'LAVA', latent: LAVA_LATENT },
+    // Basalt's melt is what LAVA is: any molten cell that sets into stone is called "Lava".
+    meltLabel: 'Lava',
     // Crushed rock: a blast turns stone into sand, its stand-in, above the pressure that granite's fracture toughness (about
     // 1.7 MPa·√m) gives. It anchors the scale (`PRESSURE_PER_TOUGHNESS`), tuned in tests/air-crush.test.ts so that a
     // gunpowder charge of about 50 cells crushes the stone within about 15 cells.
@@ -456,8 +497,8 @@ export const ELEMENTS = [
   },
   // Lava is molten stone: liquid stone at 2,700 kg/m³, painted at 1,300 °C and setting at 1,200. Its latent heat is rock's
   // physical one: about 450 kJ/kg (basalt) at 2,700 kg/m³ is 1,200 MJ/m³. It is what keeps a pile of lava flowing in open
-  // air for a while. Molten basalt conducts about 1 W/m·K and holds 4.0 MJ/m³·K (1.5 kJ/kg·K). One molten element per
-  // meltable material (backlog I15). Molten silicate expands by about 4e-5 per K: 2,700 kg/m³ at 1,200 °C, 2,668 at 1,500.
+  // air for a while. Molten basalt conducts about 1 W/m·K and holds 4.0 MJ/m³·K (1.5 kJ/kg·K). It is the molten element of
+  // the rocks: a cell remembers what it melted from (its ctype) and sets back into that. Molten silicate expands by about 4e-5 per K: 2,700 kg/m³ at 1,200 °C, 2,668 at 1,500.
   // Viscosity 30 Pa·s, the middle of basaltic lava at eruption temperatures (10 to 100 Pa·s). No button: Stone painted above 1,200 °C
   // is lava, at 1,300 °C by default.
   {
@@ -474,6 +515,8 @@ export const ELEMENTS = [
     viscosity: 30,
     // Opaque: it hides the wall and casts a shadow like rock, and it shines on its own, so it takes no depth tint.
     look: { opacity: 1 },
+    molten: true,
+    graphics: 'molten',
     below: { temp: 1200, becomes: 'STONE', latent: LAVA_LATENT },
   },
   // Molten steel: 7,000 kg/m³, painted at 1,600 °C, sets back into METAL at 1,538. Liquid iron conducts about 35 W/m·K and
@@ -492,6 +535,8 @@ export const ELEMENTS = [
     heatCapacity: 5.7,
     viscosity: 0.006,
     look: { opacity: 1 },
+    molten: true,
+    graphics: 'molten',
     below: { temp: 1538, becomes: 'METAL', latent: IRON_FUSION },
   },
   // Black powder: grains of 1.7 to 1.82 g/cm³ (safety data sheets; 1,700 kg/m³ here, so it sinks through sand and water),
@@ -653,9 +698,23 @@ function validateTransitions(elements: readonly ElementDef[]): void {
       }
       const target = byKey.get(t.becomes);
       if (!target) throw new Error(`${name}.becomes "${t.becomes}" is not in the table`);
+      if (t.setsInto !== undefined && !(side === 'above' && target.molten)) throw new Error(`${name}.setsInto is only for an above into a molten element`);
+      if (side === 'above' && target.molten) {
+        // A cell melting into a molten element sets back into `setsInto` (default: this row) by that row's own `above`, which
+        // must lead into the same molten element, and it is molten from this threshold up: that must not lie under the one
+        // it sets by, or the molten cell would be past its own setting point at once.
+        const sets = byKey.get(t.setsInto ?? e.key);
+        if (!sets) throw new Error(`${name}.setsInto "${t.setsInto}" is not in the table`);
+        if (sets.above?.becomes !== t.becomes) throw new Error(`${name}: ${sets.key} (setsInto) needs an above into ${t.becomes}`);
+        if (!(t.temp >= sets.above.temp)) throw new Error(`${name}.temp ${t.temp} is under the ${sets.above.temp} of ${sets.key}, which the molten cell sets by`);
+        if (target.above && !(t.temp <= target.above.temp)) throw new Error(`${name}.temp ${t.temp} is over the ${target.above.temp} of ${target.key}`);
+        continue;
+      }
       const [targetLow, targetHigh] = range(target);
       if (!(t.temp >= targetLow && t.temp <= targetHigh)) throw new Error(`${name}.temp ${t.temp} is outside the range ${targetLow}..${targetHigh} of ${target.key}`);
     }
+    if (e.molten && !e.below) throw new Error(`element ${e.key}: a molten element needs a below: what a cell with no ctype sets into`);
+    if (e.meltLabel !== undefined && e.meltLabel.trim() === '') throw new Error(`element ${e.key}: meltLabel must not be empty`);
     if (e.toughness !== undefined && !e.pressureAbove) throw new Error(`element ${e.key}: toughness is only for an element with a pressureAbove`);
     if (e.pressureAbove) {
       const p = e.pressureAbove;

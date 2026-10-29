@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AirData } from '../src/air-grid';
-import { CELL_FIELDS, emptyCellData, type CellData } from '../src/cell-fields';
+import { CELL_FIELDS, emptyCellData, kindWord, type CellData } from '../src/cell-fields';
 import { ELEMENT as T, ELEMENTS, elementByKey, elementHoldsHeat, type ElementDef } from '../src/elements';
 import { packHalf2 } from '../src/half';
 import { mulberry32 } from '../src/random';
@@ -8,6 +8,7 @@ import { caWGSL } from '../src/shaders/ca.wgsl';
 import { RULES } from '../src/shaders/rules';
 import { Simulation } from '../src/simulation';
 import { device } from './gpu';
+import { MOLTEN_TABLE } from './molten-table';
 
 // The CA updates cells in place, so a rule that reads a cell outside its own 2x2 block still gives a deterministic
 // result and the rerun tests cannot see it. This test runs single CA dispatches on a random scene
@@ -21,7 +22,7 @@ import { device } from './gpu';
 
 type Rand = () => number;
 type CellWords = Record<string, number>;
-type FieldGenerator = (e: ElementDef, variant: number, rand: Rand) => number;
+type FieldGenerator = (e: ElementDef, variant: number, rand: Rand, table: readonly ElementDef[]) => number;
 
 const falls = (e: ElementDef): boolean => e.state === 'powder' || e.state === 'liquid';
 
@@ -35,7 +36,12 @@ const f32Word = (x: number): number => {
 // One generator per cell field, by field name. Only powders and liquids move (the CA's inert skip relies on zero motion
 // for everything else); a liquid's life is its direction.
 const FIELD_GENERATORS: Partial<Record<string, FieldGenerator>> = {
-  kind: (e, variant) => (e.id | (variant << 8)) >>> 0,
+  // A molten cell carries the ctype of a row that melts into it, or none.
+  kind: (e, variant, rand, table) => {
+    const melts = e.molten ? table.filter((row) => row.above?.becomes === e.key) : [];
+    const ctype = melts.length > 0 ? Math.floor(rand() * (melts.length + 1)) : 0;
+    return kindWord(e.id, variant, ctype === 0 ? 0 : melts[ctype - 1].id);
+  },
   life: (e, _variant, rand) => {
     if (e.life) return 1 + Math.floor(rand() * e.life.start);
     return e.state === 'liquid' ? Math.floor(rand() * 3) : 0;
@@ -60,7 +66,7 @@ function drawCell(table: readonly ElementDef[], rand: Rand): CellWords {
   for (const { name } of CELL_FIELDS) {
     const generate = FIELD_GENERATORS[name];
     if (!generate) throw new Error(`no random generator for cell field "${name}": add one to FIELD_GENERATORS`);
-    words[name] = generate(e, variant, rand);
+    words[name] = generate(e, variant, rand, table);
   }
   return words;
 }
@@ -229,6 +235,12 @@ describe.skipIf(!device)('M5 block locality', () => {
       expect(result.violations, result.example).toEqual([0, 0]);
     }, 120_000);
   }
+
+  it('M8.1 AC14: molten cells with ctypes of several elements stay inside their blocks', async () => {
+    // The default table's lava and molten steel carry stone, steel, glass and gold as ctypes in this one.
+    const result = await checkLocality({ width: 128, height: 96, table: MOLTEN_TABLE, rounds, seed: 4000 });
+    expect(result.violations, result.example).toEqual([0, 0]);
+  }, 120_000);
 
   it('AC1 control: a rule that reads a far cell fails the check', async () => {
     const PEEK = 200;

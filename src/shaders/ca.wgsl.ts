@@ -145,10 +145,15 @@ var<private> blockWord: u32;
 
 fn cellState(c: Cell) -> u32 { return elState(cellType(c)); }
 // A liquid's density follows its temperature and a gas's the ideal-gas law (\`elDensityAt\`); everything else has one density.
+// A molten cell with a ctype keeps its row's curve scaled to the density of the element it sets into (the solid's density
+// stands in for its liquid's at the setting point).
 fn cellDensity(c: Cell) -> f32 {
   let t = cellType(c);
   if (elDensityMode(t) == 0u) { return elDensity(t); }
-  return elDensityAt(t, cellTemp(c));
+  let d = elDensityAt(t, cellTemp(c));
+  let k = kindMelt(c.kind);
+  if (k != 0u) { return d * elDensity(k) / elDensity(t); }
+  return d;
 }
 
 fn isEmpty(c: Cell) -> bool { return cellState(c) == ST_EMPTY; }
@@ -163,7 +168,7 @@ fn isFalling(c: Cell) -> bool { return cellState(c) == ST_POWDER || isLiquid(c);
 fn canDisplace(mover: Cell, dest: Cell) -> bool {
   let s = cellState(dest);
   if (s == ST_EMPTY) { return true; }
-  if (s == ST_GAS || s == ST_POWDER || s == ST_LIQUID) { return elDensity(cellType(dest)) < elDensity(cellType(mover)); }
+  if (s == ST_GAS || s == ST_POWDER || s == ST_LIQUID) { return kindDensity(dest.kind) < kindDensity(mover.kind); }
   return false;
 }
 
@@ -172,7 +177,7 @@ fn canRiseThrough(mover: Cell, dest: Cell) -> bool {
   let s = cellState(dest);
   if (s == ST_EMPTY) { return cellDensity(mover) < airDensity; }
   if (s == ST_PLASMA) { return true; }
-  return s == ST_LIQUID && elDensity(cellType(dest)) > elDensity(cellType(mover));
+  return s == ST_LIQUID && kindDensity(dest.kind) > kindDensity(mover.kind);
 }
 
 fn inBounds(x: i32, y: i32) -> bool {
@@ -255,7 +260,7 @@ fn velocityRule(i: u32) {
   if (row == 1 || v.y != 0.0) { v.y -= elGravity(cellType(c)); }
 ${air ? `  // The air: the cell loses \`drag\` of its speed relative to it, and its pressure gradient pushes it, lighter matter harder.
   v += elDrag(cellType(c)) * (around.velocity - v);
-  v -= AIR_PUSH * around.gradient / elDensity(cellType(c));
+  v -= AIR_PUSH * around.gradient / kindDensity(c.kind);
 ` : ''}  if (length(v) > MAX_FLYER_SPEED) { v *= MAX_FLYER_SPEED / length(v); }
   r += clamp(v, vec2f(-MAX_SPEED), vec2f(MAX_SPEED));
   let sx = stepOf(r.x);
@@ -485,15 +490,30 @@ fn transitionCell(c: Cell, i: u32, solid: u32, x: i32, y: i32) -> Cell {
   let t = cellType(c);
   let s = cellStoredTemp(c);
   let upper = elAboveTemp(t) + elAboveWidth(t);
-  let lower = elBelowTemp(t) - elBelowWidth(t);
+  // A molten cell with a ctype sets into that element, by its \`above\` threshold and latent heat (\`kindMelt\`); every other
+  // cell by its own \`below\`.
+  let melt = kindMelt(c.kind);
+  var lowerTemp = elBelowTemp(t);
+  var lowerWidth = elBelowWidth(t);
+  var lowerNext = elBelowBecomes(t);
+  if (melt != 0u) {
+    lowerTemp = elAboveTemp(melt);
+    lowerWidth = elAboveWidth(melt) * elHeatCapacity(melt) / elHeatCapacity(t);
+    lowerNext = melt;
+  }
+  let lower = lowerTemp - lowerWidth;
   if (s > upper) {
     let next = elAboveBecomes(t);
 ${air ? '    releaseBurst(x, y, elAboveBurst(t));\n' : ''}    let start = elAboveTemp(t) + (s - upper) * elHeatCapacity(t) / elHeatCapacity(next);
-    return retype(withTemp(c, start), next, cellVariant(c), elLifeStart(next));
+    // Into a molten element: it remembers what it melted from (\`retype\` clears the ctype).
+    let sets = retype(withTemp(c, start), next, cellVariant(c), elLifeStart(next));
+    let ctype = elAboveCtype(t);
+    if (ctype != 0u) { return withCtype(sets, ctype); }
+    return sets;
   }
   if (s < lower) {
-    let next = elBelowBecomes(t);
-    let start = elBelowTemp(t) - (lower - s) * elHeatCapacity(t) / elHeatCapacity(next);
+    let next = lowerNext;
+    let start = lowerTemp - (lower - s) * elHeatCapacity(t) / elHeatCapacity(next);
     return retype(withTemp(c, start), next, cellVariant(c), elLifeStart(next));
   }
 ${pressures ? `  // Then the pressure against the cell: past the element's limit it becomes its pressure target, keeping its heat (not

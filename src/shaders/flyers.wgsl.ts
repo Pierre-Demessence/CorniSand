@@ -371,7 +371,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       fl.vel.y -= gravity;
 ${air ? `      let around = airAround(fl.pos.x, fl.pos.y);
       fl.vel = fl.vel * (1.0 - drag) + drag * around.velocity;
-      fl.vel -= AIR_PUSH * around.gradient / elDensity(t);
+      fl.vel -= AIR_PUSH * around.gradient / kindDensity(fl.cell.kind);
 ` : `      fl.vel *= 1.0 - drag;
 `}      if (length(fl.vel) > MAX_FLYER_SPEED) { fl.vel *= MAX_FLYER_SPEED / length(fl.vel); }
       let to = fl.pos + fl.vel;

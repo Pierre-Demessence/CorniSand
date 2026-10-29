@@ -7,6 +7,7 @@ import { GLOW_RAMP, HEAT_LEGEND_TEMPS, HEAT_RAMP, heatRampCSS, type RampKnot } f
 import type { Simulation } from '../src/simulation';
 import { toggleView } from '../src/toolbar';
 import { cell, createSim, device, runMany } from './gpu';
+import { GLASS, GOLD, MOLTEN_TABLE } from './molten-table';
 
 // One grid cell per pixel: 64 pixels of 4 bytes are one 256-byte row, the alignment a texture copy needs.
 const WIDTH = 64;
@@ -121,6 +122,30 @@ describe.skipIf(!device)('M5.5b heat on the display', () => {
     const lavaPixels = await renderRow(lava.kind, lava.life, { temps: lava.temps });
     for (let i = 1; i < lava.temps.length; i++) {
       expect(luminance(lavaPixels, i), `lava at ${lava.temps[i]} °C`).toBeGreaterThan(luminance(lavaPixels, i - 1));
+    }
+  });
+
+  it('M8.1 AC12: molten cells of different ctypes are drawn in different colors, and each brightens as it heats', async () => {
+    // Lava that sets into stone, into glass or into nothing, and molten steel that sets into steel or into gold, at the same
+    // temperatures (all over their setting points: a glass lava sets under 1,463 °C).
+    const cases: [number, number, number][] = [
+      [T.LAVA, T.STONE, 1300], [T.LAVA, T.STONE, 1800], [T.LAVA, T.STONE, 2000], [T.LAVA, GLASS, 1800], [T.LAVA, GLASS, 2000], [T.LAVA, 0, 1800],
+      [T.MOLTEN_METAL, T.METAL, 1800], [T.MOLTEN_METAL, T.METAL, 2000], [T.MOLTEN_METAL, GOLD, 1800], [T.MOLTEN_METAL, GOLD, 2000],
+    ];
+    const sim = createSim(WIDTH, 1, 1, { elements: MOLTEN_TABLE });
+    const kind = new Uint32Array(WIDTH);
+    const temp = new Uint32Array(WIDTH);
+    cases.forEach(([type, ctype], i) => { kind[i] = cell(type, 0, ctype); });
+    tempView({ temp }).set(cases.map(([, , t]) => t));
+    sim.load({ kind, temp });
+    const pixels = await renderSim(sim, 1);
+
+    expect(pixel(pixels, 1), 'lava from stone against lava from glass, at 1,800 °C').not.toEqual(pixel(pixels, 3));
+    expect(pixel(pixels, 1), 'lava from stone against lava with no ctype').not.toEqual(pixel(pixels, 5));
+    expect(pixel(pixels, 3), 'lava from glass against lava with no ctype').not.toEqual(pixel(pixels, 5));
+    expect(pixel(pixels, 6), 'molten steel from steel against from gold').not.toEqual(pixel(pixels, 8));
+    for (const [cooler, hotter] of [[0, 1], [1, 2], [3, 4], [6, 7], [8, 9]]) {
+      expect(luminance(pixels, hotter), `cell ${hotter} against cell ${cooler}`).toBeGreaterThan(luminance(pixels, cooler));
     }
   });
 

@@ -33,6 +33,8 @@ ${DISPLAY_FIELDS.map((f) => `  ${f.name}: f32,`).join('\n')}
 // GLOW_START shines in its `glowColor`, as bright as the fourth power of its absolute temperature says (`blackbodyShare`,
 // 1 at EMISSION_REFERENCE; twin of `emissionShare` in src/heat.ts). An element with a lifetime and its own graphics (fire)
 // shines in its graphics color, twice as bright while young and fading with its life. A flyer is a cell like any other.
+// A graphics function replaces the glow of an element with a lifetime (fire); on any other it only sets the base color the
+// glow is added to (a molten cell's tint).
 export const lightWGSL = (styled: readonly ElementDef[]): string => /* wgsl */`
 fn srgbToLinear(c: vec3f) -> vec3f {
   let v = max(c, vec3f(0.0));
@@ -77,7 +79,7 @@ fn litColor(c: Cell, base: vec3f) -> vec3f {
   var color = base;
   var hasGraphics = false;
   switch (t) {
-${styled.map((e) => `    case EL_${e.key}: { color = graphics_${e.graphics}(c, color); hasGraphics = true; }`).join('\n')}
+${styled.map((e) => `    case EL_${e.key}: { color = graphics_${e.graphics}(c, color);${e.life !== undefined ? ' hasGraphics = true;' : ''} }`).join('\n')}
     default: {}
   }
   if (elHoldsHeat(t) && !hasGraphics) {
