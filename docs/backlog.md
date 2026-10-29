@@ -2,7 +2,7 @@
 
 IDs are stable: B = bug, D = tech debt, I = idea.
 
-Next ID: B15, D37, I29.
+Next ID: B16, D37, I29.
 
 ## Bugs
 
@@ -11,6 +11,7 @@ Next ID: B15, D37, I29.
 - **B10** No per-grain color variation: `variant` is generated and stored, but the display shader ignores it (the WebGL version shaded sand, wall and water by variant until commit e6a38a9). `src/shaders/display.wgsl.ts` `fs_main`
 - **B11** Number keys ignore modifiers, so Ctrl+1 (browser tab switch) also selects a tool. `src/main.ts` keydown handler
 - **B14** A tall pour of lava can still leave a few stone cells hanging in mid-air: a cell that spreads sideways in the stream moves too slowly to skip the air exchange (`AIR.stillSpeed`), sets, and a solid never moves (4 stone cells above row 40 in AC28's 380-cell pour; a sparse column of them in a 700-cell pour, `tests/air-heat.test.ts`). A liquid that would set while unsupported could wait until it rests on something. `src/shaders/air.wgsl.ts` `airExchangeWGSL`, `src/shaders/ca.wgsl.ts` `transitionCell`
+- **B15** (M8) A sealed cup of water with a melting ice cube evens out in about an hour, where a real cup mixes in a minute or so: the cold meltwater (0 °C, 999.8 kg/m³) is denser than the 20 °C water (998.2) and should sink, but in `iceCup` (a full 25×40 cup, 100 ice in 900 water) the temperatures still span 8.9 to 11.1 °C 5 min after the last ice melts (mean 10.01 °C, so the heat balance is right). Cause not found: the `convect` chance for a 0.16% density difference may be too small to stir a cup this size, or the full walled cup leaves it no room to circulate. `src/physics.ts` `convectionChance`, `src/shaders/ca.wgsl.ts` `convect`, `tests/scenarios-heat.test.ts` `iceCup`
 
 ## Tech debt
 
