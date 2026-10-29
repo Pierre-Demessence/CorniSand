@@ -1,6 +1,6 @@
 # M11 Rendering quick wins
 
-Status: finished, waiting for the user's review; M11.1 to M11.8 done, the bench run and the AC15 table are the user's (M11.8). Runs before M8.1, beside M8.9 (`docs/plans/m8.9-real-world-scenarios.md`): it touches only the drawing code, never a cell, a rule or a test of the simulation.
+Status: finished, waiting for the user's review; M11.1 to M11.8 done, `npm test` and `npm run bench` run after M11.8 (AC15 table filled, both conditions pass); what is left is the user's visual checks (the `Needs you:` lines marked `at the end`). Runs before M8.1, beside M8.9 (`docs/plans/m8.9-real-world-scenarios.md`): it touches only the drawing code, never a cell, a rule or a test of the simulation.
 
 ## Goal
 
@@ -83,14 +83,16 @@ Budget and docs (M11.8)
 
 - [x] `docs/roadmap.md`: M11 Rendering ("The finished look: grain, the wall and its shadows, glow, soft gases, liquid depth, air shimmer, from the simulation's state, with a cells look on a key. Done when each effect has a deterministic display test and the renderer costs at most 1 ms per frame on the RTX 4080 (`docs/plans/m11-rendering.md`)."), the order line (M11 beside M8.9, before M8.1), `Next ID: M12`. Baseline: lint, typecheck, `npm test` counts, build, into a "Baseline" note under this item. The bench's render timing (AC1, Design "Bench"), and today's render cost recorded here. Verify: lint, typecheck, `npm test`, `npm run bench`.
 
-Baseline (before M11, from the run's start): lint, typecheck and build pass with no warnings. `npm test` and `npm run bench` were not run (the GPU was busy with a game); their counts and today's render cost are left to the user, see Needs you.
+Baseline (before M11, from the run's start): lint, typecheck and build pass with no warnings. `npm test` was not run at the start (the GPU was busy with a game); after M11.8 it passes with 26 files, 506 tests, 0 skipped (the count after M11, not before it).
+
+Pre-M11 render cost, measured after M11.8 on a detached worktree at M11.1's commit `6423cae` (the drawing code unchanged, only the timing added), `nvidia-smi` showing 1 % load, `BENCH_SPLIT_ONLY=1 npm run bench`, one run, ms per 1x frame at 2560x1340, `render:composite`: `tank` 0.064, `mix75` 0.080, `full100` 0.075, `blast` 0.066, `thermal` 0.075, `pot` 0.071. This is the number AC15 compares the cells look against.
 
 Done in the run: `docs/roadmap.md` (M11 section, order line, `Next ID: M12`); `Display.render` takes an optional `PassTimer` and stamps its pass `render:composite`; `tests/bench.gpu.ts` renders every frame into a 2560x1340 `bgra8unorm` texture after `recordOverlay`, prints a `renderMs` column in the speed table and a `render` column (the sum of the `render:` labels) in the 1x breakdown, with `sum` the simulation's alone.
 
 Decided during the run: the bench has a single render look for now. The finished/cells look split of AC1 needs M11.2's `look` option; M11.2 adds a look loop to the bench and the cells-look column. Alternative: a stand-in flag now; to change, edit the bench.
 
 Visible after: nothing: `npm run bench` prints the drawing's cost.
-Needs you: run `npm test` and `npm run bench` (with `nvidia-smi` showing no other load) and write the test counts and today's `render:composite` cost into the Baseline note above (at the end).
+Needs you: nothing: the test counts and today's `render:composite` cost are in the Baseline note above (measured after M11.8).
 
 ### M11.2 Looks, display table, grain, wall
 
@@ -105,8 +107,10 @@ Decided during the run: the wall is `0.04 + 0.5 × wall^1.5` (a display value, t
 Decided during the run: grain overrides METAL `look.grain` 0.02 and GUNPOWDER 0.25 (the state defaults are 0.03 and 0.10). Why: AC4 asks for 3 to 12 steps on metal (a bright color) and at least 20 on gunpowder (a dark one, 62 of 255 in luminance, so 0.10 gives 12). Alternative: an additive grain for dark colors. To change: the two rows in `src/elements.ts`.
 Decided during the run: `look.opacity`, `look.absorption` and the emission scale are packed in the display table with their defaults but nothing reads them yet; WATER's and OIL's absorption values are written in M11.6, with the coverage pass and the depth march that use them. Alternative: write them now with nothing to show or test them. To change: add the rows' `look` in M11.6.
 
+Measured (after M11.8, 1x, ms per frame; the bench was not run after M11.2 itself, so the cost of M11.2 alone is read from the cells look, which is M11.2's drawing and nothing later): cells look `render:composite` (its whole render) `tank` 0.092, `mix75` 0.113, `full100` 0.095, `blast` 0.079, `thermal` 0.094, `pot` 0.084, against the pre-M11 0.064, 0.080, 0.075, 0.066, 0.075, 0.071: grain and the wall add 0.013 to 0.033 ms (`tank` +0.028, `mix75` +0.033, `full100` +0.020, `blast` +0.013, `thermal` +0.019, `pot` +0.013). The finished look's `render:composite` is 0.174, 0.270, 0.277, 0.147, 0.227, 0.176 (all effects together, see M11.8).
+
 Visible after: sand, gunpowder and stone show grains; a medium-dark wall behind the field; C switches looks (they differ only by the wall's effects from M11.3 on); `?scene=showcase`.
-Needs you: run `npm test` (the new `tests/look.test.ts` and the display, elements and scenes tests; none was run, the GPU was busy) and `npm run bench`, and record the finished and cells looks' `render:composite` cost under this item (at the end); look at `?scene=showcase` at the default wall, `&wall=0` and `&wall=1` (at the end).
+Needs you: run `npm test` (the new `tests/look.test.ts` and the display, elements and scenes tests; none was run, the GPU was busy) and `npm run bench`, and record the finished and cells looks' `render:composite` cost under this item (done, see Measured); look at `?scene=showcase` at the default wall, `&wall=0` and `&wall=1` (at the end).
 
 ### M11.3 Glow
 
@@ -120,8 +124,10 @@ Decided during the run: `tests/look.test.ts` AC3 draws the cells that radiate (f
 Decided during the run: `maxCellsForDevice` divides the buffer limit by `OVERLAY_BYTES` (8) instead of `FIELD_BYTES` (4), since the overlay is now the widest per-cell buffer: a device whose limit allowed the grid exactly would have failed to create it. At the default 128 MiB limit the grid is capped at 16.7 million cells (3,000 by 5,500) instead of 33.5 million. Alternative: two overlay buffers of one word, which costs a storage binding in the display (8 of 8 with air). To change: `OVERLAY_BYTES` and `Flyers`' overlay layout.
 Decided during the run: the glow strength is the share of the blurred light added, with the levels summed (a wide uniform pool adds about five times the strength of its own light at its center); 0.08 as in Design, untuned since no run was possible. Alternative: normalize the levels. To change: `LOOK.glowStrength`, or the weights in `fs_up`.
 
+Measured (after M11.8, finished look, 1x, ms per frame): `render:coverage` `tank` 0.043, `mix75` 0.116, `full100` 0.121, `blast` 0.051, `thermal` 0.116, `pot` 0.052; `render:glow` 0.045, 0.044, 0.025, 0.038, 0.038, 0.038. Not separable from the table: the coverage pass also carries the shadow's cover (M11.4), the gas fraction (M11.5) and the liquid fraction (M11.6), written in the same pass, and the bench was not run after M11.3, so M11.3's own coverage cost is at most the figure above; the glow pass is M11.3's alone. The composite's extra texture read for the glow is inside `render:composite` and not separable either.
+
 Visible after: lava, fire, molten metal and anything above 525 °C glow with a halo; flying hot debris glows; C shows the difference.
-Needs you: run `npm test` (the new AC7 to AC9 tests, the reworked AC3 and flyer tests and `tests/glow.test.ts`; none was run, the GPU was busy; a shader that fails to compile shows at the first `Display`) and `npm run bench`, and record the finished look's `render:coverage` and `render:glow` cost under this item (at the end); look at lava and fire in `?scene=showcase` and at a blast (`?scene=blast`), and say whether the halo at 0.08 is too faint or too strong (at the end).
+Needs you: run `npm test` (the new AC7 to AC9 tests, the reworked AC3 and flyer tests and `tests/glow.test.ts`; none was run, the GPU was busy; a shader that fails to compile shows at the first `Display`) and `npm run bench`, and record the finished look's `render:coverage` and `render:glow` cost under this item (done, see Measured); look at lava and fire in `?scene=showcase` and at a blast (`?scene=blast`), and say whether the halo at 0.08 is too faint or too strong (at the end).
 
 ### M11.4 Shadows
 
@@ -134,8 +140,10 @@ Decided during the run: gas cells are shaded like empty space, since the finishe
 Decided during the run: the light's direction, the shadow's length and its darkness are three settings of `LOOK` (`lightDirection`, `shadowLength`, `shadowDarkness`), the direction a vector toward the light rather than an angle. Alternative: an angle in degrees. To change: `LookSettings`.
 Decided during the run: with `shadowDarkness` 0 neither the shadow pass nor (when the glow is off too) the coverage pass is recorded, and the tests for AC10 compare against that picture, as the glow tests do with `glowStrength` 0. Alternative: render a scene without the block. To change: `withAndWithoutShadows` in `tests/look.test.ts`.
 
+Measured (after M11.8, finished look, 1x, ms per frame): `render:shadow` `tank` 0.003, `mix75` 0.003, `full100` 0.016, `blast` 0.008, `thermal` 0.007, `pot` 0.008. The `render:coverage` change is not measurable: without shadows and glow the coverage pass is not recorded, but the bench has no look with the glow and shadows off, and the pass has since grown (M11.5, M11.6), so its whole cost (see M11.3) is the most M11.4 added. The shadow's reads in the composite are inside `render:composite`.
+
 Visible after: matter casts soft shadows on the wall toward the lower right.
-Needs you: run `npm test` (the AC10 tests in `tests/look.test.ts` and `tests/glow.test.ts`; none of the GPU ones was run, the GPU was busy; a shader that fails to compile shows at the first `Display`) and `npm run bench`, and record the finished look's `render:shadow` cost and the `render:coverage` change under this item (at the end); look at `?scene=showcase` and say whether the shadows are too faint or too strong at 0.5 (at the end).
+Needs you: run `npm test` (the AC10 tests in `tests/look.test.ts` and `tests/glow.test.ts`; none of the GPU ones was run, the GPU was busy; a shader that fails to compile shows at the first `Display`) and `npm run bench`, and record the finished look's `render:shadow` cost and the `render:coverage` change under this item (done, see Measured); look at `?scene=showcase` and say whether the shadows are too faint or too strong at 0.5 (at the end).
 
 ### M11.5 Soft gases
 
@@ -149,8 +157,10 @@ Decided during the run: `gasOpacity` is 0.8, untuned since no run was possible; 
 Decided during the run: the gas cells' color in the texture is the color the cells look draws, in-cell glow included, and a hot gas cell takes the halo too (the other cells that radiate do not). Why: "smoke at 1,000 degrees C brighter than at 150" and "plus the gas's emission" from Design, without a second texture. Alternative: a separate emission term in the composite. To change: `gasAt` in `src/shaders/glow.wgsl.ts`, the halo test in `fs_main`.
 Decided during the run: the shadow darkens the wall under the cloud, not the cloud itself (the cloud is blended after the shadow). Alternative: darken the cloud too. To change: move the shadow block after the cloud in `fs_main`.
 
+Measured (after M11.8): the `render:coverage` change from the gas fraction cannot be separated: the bench was not run between M11.4 and M11.5, and the gas fraction is written by the same pass as the cover and the liquid fraction, so `render:coverage` (0.043 to 0.121 ms, see M11.3) is the upper bound for all of them. The cloud layer is drawn in the composite (see M11.8 for its total).
+
 Visible after: smoke and steam are soft clouds (`?scene=plume`).
-Needs you: run `npm test` (the AC11 tests and the reworked AC3 in `tests/look.test.ts`, `tests/glow.test.ts`; no GPU one was run, the GPU was busy; a shader that fails to compile shows at the first `Display`) and `npm run bench`, and record the `render:coverage` change under this item (at the end); look at `?scene=plume` and `?scene=showcase`, and say whether the clouds flicker, and whether smoke at 0.8 is too faint or too strong (at the end).
+Needs you: run `npm test` (the AC11 tests and the reworked AC3 in `tests/look.test.ts`, `tests/glow.test.ts`; no GPU one was run, the GPU was busy; a shader that fails to compile shows at the first `Display`) and `npm run bench`, and record the `render:coverage` change under this item (done, see Measured); look at `?scene=plume` and `?scene=showcase`, and say whether the clouds flicker, and whether smoke at 0.8 is too faint or too strong (at the end).
 
 ### M11.6 Liquid depth and surface
 
@@ -165,8 +175,10 @@ Decided during the run: the surface line is `LOOK.liquidSurface` (0.35) of white
 Decided during the run: the depth is the liquid fraction summed straight up the pixel's cover texel column (a break at the first texel with no liquid), not a march through the shadow's light direction, and `look.opacity` of water (0.35) only feeds the shadows. Alternative: read the opacity into the surface rows. To change: `liquidDepth`.
 Decided during the run: LAVA and MOLTEN_METAL get `look: { opacity: 1 }` (Design lists them as opaque), which makes them cast a stone-like shadow. Alternative: leave the liquid default 0.35. To change: the two rows.
 
+Measured (after M11.8): the `render:coverage` and `render:composite` change of the liquid depth and surface cannot be separated: the bench was not run between M11.5 and M11.6, and the depth is a column sum in the composite, mixed with the cloud, shadow, glow and shimmer reads. Upper bounds are the whole passes (see M11.3 and M11.8); the finished look's composite exceeds the cells look's by 0.068 to 0.182 ms (all effects together).
+
 Visible after: water has a bright surface line and darkens to blue-green with depth; oil is dark.
-Needs you: run `npm test` (the AC12 tests in `tests/look.test.ts`; none was run, the GPU was busy; a shader that fails to compile shows at the first `Display`) and `npm run bench`, and record the `render:coverage` and `render:composite` change under this item (at the end); look at a deep pool of water (`?scene=showcase`, or paint a tall column) and say whether the surface line and the blue-green depth are too faint or too strong at 0.35 and 40 (at the end).
+Needs you: run `npm test` (the AC12 tests in `tests/look.test.ts`; none was run, the GPU was busy; a shader that fails to compile shows at the first `Display`) and `npm run bench`, and record the `render:coverage` and `render:composite` change under this item (done, see Measured); look at a deep pool of water (`?scene=showcase`, or paint a tall column) and say whether the surface line and the blue-green depth are too faint or too strong at 0.35 and 40 (at the end).
 
 ### M11.7 Air shimmer
 
@@ -179,8 +191,10 @@ Decided during the run: air within 1 degree of room temperature (`SHIMMER_DEAD`)
 Decided during the run: the pressure gain is 10 cells per unit of pressure gradient (a pulse of peak 2 and sigma 6 has a gradient of about 0.2 per cell, so about 2 cells), the noise has a lattice of 6 cells and rises at 12 cells per second; none was tuned by sight. Alternative: other values. To change: `LOOK.shimmerPressure`, `SHIMMER_SIZE`, `SHIMMER_RISE`.
 Decided during the run: the shimmer is three settings of `LOOK` (`shimmer`, `shimmerPressure`, `shimmerMax`), passed as uniform words so a test can switch them off. Alternative: constants in the shader. To change: `LookSettings`.
 
+Measured (after M11.8): the `render:composite` change of the shimmer cannot be separated: the bench was not run between M11.6 and M11.7, and the shimmer is an offset of the composite's picture read inside the same pass. The finished composite minus the cells composite (shimmer, cloud, liquid depth, shadow and glow reads together) is `tank` 0.082, `mix75` 0.157, `full100` 0.182, `blast` 0.068, `thermal` 0.133, `pot` 0.092 ms.
+
 Visible after: the air wavers above lava and fire, and a blast sends a ripple ahead of its debris (`?scene=explosion`).
-Needs you: run `npm test` (the AC13 and AC14 tests in `tests/look.test.ts`; none of the GPU ones was run, the GPU was busy; a shader that fails to compile shows at the first `Display`) and `npm run bench`, and record the `render:composite` change under this item (at the end); look at `?scene=showcase` over the lava and the fire, and at `?scene=explosion`, and say whether the waver is too faint or too strong at 1.5 cells and 10 (at the end).
+Needs you: run `npm test` (the AC13 and AC14 tests in `tests/look.test.ts`; none of the GPU ones was run, the GPU was busy; a shader that fails to compile shows at the first `Display`) and `npm run bench`, and record the `render:composite` change under this item (done, see Measured); look at `?scene=showcase` over the lava and the fire, and at `?scene=explosion`, and say whether the waver is too faint or too strong at 1.5 cells and 10 (at the end).
 
 ### M11.8 Budget and docs
 
@@ -188,15 +202,27 @@ Needs you: run `npm test` (the AC13 and AC14 tests in `tests/look.test.ts`; none
 
 Done in the run (not ticked, the bench check is left to the user): `docs/rendering.md` (new: the two looks, the passes and their resolutions, the color path, what each effect reads, the display table, bindings, settings, budget, tests, sources); `AGENTS.md` (layout: `look`, `display-table`, `glow`, `shadow` and the new shaders, the C key and `?wall=`, the bench line and `BENCH_LOOKS`, the tests list, the docs map, the display's bindings, a "Never" line); `docs/decisions.md` (the two looks; visual properties in a display-only table, glow from emission); `docs/simulation.md` (the variant is read by the display, the frame's render passes, a pointer to `docs/rendering.md`); `README.md` (feature, C key, how it works); `docs/research/rendering.md` trimmed to the smooth look, Lighting, what later milestones bring, decorative effects, Not recommended and their sources (its Today, Direction, quick wins, Recommendation and Decided sections are gone, the passes and the user's choices are in `docs/rendering.md` and `docs/decisions.md`); `docs/roadmap.md` (M11 deleted, order line). Lint, typecheck and build pass; `npm test` and `npm run bench` were not run (the GPU was busy with a game).
 
-AC15 budget table (to fill from `npm run bench`, 1x, ms per frame; `render` is the sum of the four passes; the cells look is compared with the pre-M11 render cost from M11.1's Baseline):
+AC15 budget (from `npm run bench` after M11.8, 1x at 2560x1340, ms per frame, `nvidia-smi` showing 8 % load from desktop apps; `render` is the sum of the four passes; the cells look is compared with the pre-M11 `render:composite` from M11.1's Baseline, one run each):
 
-| Scene | Look | `render:coverage` | `render:glow` | `render:shadow` | `render:composite` | `render` |
-| --- | --- | --- | --- | --- | --- | --- |
-| `tank`, `mix75`, `full100`, `blast`, `thermal`, `pot` | finished | to measure | to measure | to measure | to measure | at most 1.00 |
-| the same | cells | n/a | n/a | n/a | to measure | within 0.05 of the pre-M11 render |
+| Scene | Look | `render:coverage` | `render:glow` | `render:shadow` | `render:composite` | `render` | Pre-M11 render | Cells look minus pre-M11 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `tank` | finished | 0.043 | 0.045 | 0.003 | 0.174 | 0.264 | | |
+| `tank` | cells | n/a | n/a | n/a | 0.092 | 0.092 | 0.064 | +0.028 |
+| `mix75` | finished | 0.116 | 0.044 | 0.003 | 0.270 | 0.433 | | |
+| `mix75` | cells | n/a | n/a | n/a | 0.113 | 0.113 | 0.080 | +0.033 |
+| `full100` | finished | 0.121 | 0.025 | 0.016 | 0.277 | 0.440 | | |
+| `full100` | cells | n/a | n/a | n/a | 0.095 | 0.095 | 0.075 | +0.020 |
+| `blast` | finished | 0.051 | 0.038 | 0.008 | 0.147 | 0.245 | | |
+| `blast` | cells | n/a | n/a | n/a | 0.079 | 0.079 | 0.066 | +0.013 |
+| `thermal` | finished | 0.116 | 0.038 | 0.007 | 0.227 | 0.388 | | |
+| `thermal` | cells | n/a | n/a | n/a | 0.094 | 0.094 | 0.075 | +0.019 |
+| `pot` | finished | 0.052 | 0.038 | 0.008 | 0.176 | 0.274 | | |
+| `pot` | cells | n/a | n/a | n/a | 0.084 | 0.084 | 0.071 | +0.013 |
+
+AC15 result: both conditions pass in every scene. The finished look's total is at most 1 ms (the worst, `full100`, is 0.440 ms; the sum of the four passes is the figure). The cells look is within 0.05 ms of the pre-M11 render (the largest difference, `mix75`, is +0.033 ms). Caveats: the pre-M11 figure is one run, and the passes' timestamp resolution is coarse (about 0.065 ms on the speed table's per-frame median, which is why the per-pass table is used), so differences of about 0.01 ms are within noise; the bench renders into a texture the size of the canvas and does not measure presentation. Simulation `sum` in the same run (unrelated to AC15): `tank` 0.832, `mix75` 2.503, `full100` 2.310, `blast` 0.620, `thermal` 2.743, `pot` 0.915.
 
 Decided during the run: the research doc keeps the smooth look, Lighting, "Later, with the roadmap", the decorative effects line and "Not recommended", as the item says; its sources are split, the rendering ones moving to `docs/rendering.md`, the rest staying. The "Measuring and testing" section (the tests per effect) is dropped from the research doc because `tests/look.test.ts` and `docs/rendering.md` ("Tests") hold it now. Alternative: keep it. To change: restore from git.
-Decided during the run: `docs/roadmap.md` M11 is deleted as the item says, although AC15 is not measured yet. If the user's bench run takes a scene past 1 ms, the roadmap line has to come back (git has it) and the costliest effect gets blocked with its measured cost. Alternative: keep the entry until the bench passes. To change: restore the M11 section from git.
+Decided during the run: `docs/roadmap.md` M11 is deleted as the item says, before AC15 was measured; it was measured afterwards and passes, so the entry stays deleted. If a later bench run takes a scene past 1 ms, the roadmap line has to come back (git has it) and the costliest effect gets blocked with its measured cost. Alternative: keep the entry until the bench passes. To change: restore the M11 section from git.
 
 Visible after: nothing new: docs.
 Needs you: run `npm test` and `npm run bench` (with `nvidia-smi` showing no other load), fill the table above, and check that every finished-look `render` is at most 1 ms and that the cells look's `render:composite` is within 0.05 ms of the baseline; if one is over, say so before finishing the plan (stops the run).
