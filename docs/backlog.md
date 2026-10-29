@@ -2,7 +2,7 @@
 
 IDs are stable: B = bug, D = tech debt, I = idea.
 
-Next ID: B17, D37, I31.
+Next ID: B17, D37, I34.
 
 ## Bugs
 
@@ -51,3 +51,6 @@ Next ID: B17, D37, I31.
 - **I12** Choose a license for CorniSand. With no license file nobody may reuse the code; a permissive license (MIT, Apache-2.0) lets others reuse it without requiring them, or this project, to publish source. Decide before accepting outside contributions.
 - **I29** (M8) Convection has no onset: two cells of one liquid swap with a chance for any density difference, so a layer heated gently from below stirs at once, where real water conducts until its Rayleigh number passes about 1,708. A water layer 3 cells deep across 1 °C (Rayleigh 970) carries 2.85 times the heat conduction would, one 8 cells deep across 2 °C (36,780) 7.3 times, where real water carries 1 and about 3.3 times (`heatedLayer`). `src/physics.ts` `convectionChance`, `src/shaders/ca.wgsl.ts` `convect`
 - **I30** (M8) A row's heat capacity is one number: steel's runs from 440 J/kg·K at 20 °C through a peak near 735 °C to 650 above 900 °C (EN 1993-1-2), which moves a red-hot bar cooling in air by more than 100 °C (`redHotBar`, full). `src/elements.ts`, `src/shaders/heat.wgsl.ts`
+- **I31** A Scenes menu: a toolbar button listing every scene by group with a label and a line saying what to watch, each real-world scenario with its target and its variants as their own entries, so nobody guesses `?scene=` names (`docs/plans/scene-menu.md`). `src/scenes.ts` `SCENES`, `src/main.ts`
+- **I32** Save files: export the world to a file and load it back, for sharing creations and capturing a state for a bug report. To decide: which fields go in (the cells only, or also the air and the flyers in flight), compression (a 2560×1340 world is about 69 MB raw, mostly empty), and a save of another size than the screen. A saved file is stored user data, so the format is versioned from the first release. Scenes stay code (`docs/decisions.md`, once I31 lands). `src/cell-field-buffers.ts` `read`, `src/simulation.ts` `load`
+- **I33** A live readout of a real-world scenario's measurement in the game (the cup's mean temperature, the front's distance from the wall) beside its target, so a scenario opened from the Scenes menu shows its number without the tests. The measurements live in the test files today. `tests/scenarios-heat.test.ts`, `tests/scenarios-flow.test.ts`
