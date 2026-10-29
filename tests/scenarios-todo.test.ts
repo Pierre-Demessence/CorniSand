@@ -191,7 +191,8 @@ describe('scenarios to build later', () => {
     // Experiment: a lit match dropped into diesel and into petrol, both at room temperature.
     // Target: it goes out in diesel and lights the petrol. A liquid gives off a flammable vapor only above its flash
     //   point: diesel at least 52 °C, petrol -43 °C (handbook), so at 20 °C only petrol's vapor lights.
-    // Needs: M8.2.
+    // Needs: M8.2 and a flash point apart from the ignition temperature (proposed for M8.2 in
+    //   `docs/research/physical-properties.md`, not in the roadmap's M8.2).
     it.todo('matchInDiesel: a lit match dropped into diesel goes out, and into petrol it lights it (flash points: diesel at least 52 °C, petrol -43 °C)');
   });
 
@@ -221,7 +222,8 @@ describe('scenarios to build later', () => {
   describe('saltOnIce', () => {
     // Experiment: salt on ice.
     // Target: it makes brine that cools to -21.1 °C, the salt-water eutectic (handbook).
-    // Needs: M8.4.
+    // Needs: M8.4 and a freezing point that falls with the salt dissolved (proposed for M8.4 in
+    //   `docs/research/physical-properties.md`; the roadmap's M8.4 dissolves salt but does not lower the freezing point).
     it.todo('saltOnIce: salt on ice makes brine that cools to -21.1 °C');
   });
 
@@ -229,7 +231,8 @@ describe('scenarios to build later', () => {
     // Experiment: a copper-constantan junction heated at one end.
     // Target: it gives about 40 µV per °C (type T thermocouple sensitivity, handbook; the Seebeck coefficient,
     //   `docs/research/physical-properties.md`, M7). The tolerance is fixed from the handbook's range when it is built.
-    // Needs: M7.
+    // Needs: M7 and a Seebeck coefficient per element (proposed in `docs/research/physical-properties.md`; the roadmap's M7
+    //   lists resistivity, transparency and reflection).
     it.todo('thermocouple: a copper-constantan junction gives about 40 µV per °C');
   });
 
@@ -238,7 +241,8 @@ describe('scenarios to build later', () => {
     // Target: it splits into colors, blue bending more than red. Refractive indices (handbook): water 1.33, crown glass
     //   1.52, diamond 2.42; for BK7 crown glass 1.5143 at red (656 nm) and 1.5224 at blue (486 nm). The deviation angle
     //   of the chosen prism is calculated from them when it is built.
-    // Needs: M7.
+    // Needs: M7 and refraction with dispersion (proposed in `docs/research/physical-properties.md`; the roadmap's M7 lists
+    //   transparency and reflection).
     it.todo('prism: a glass prism splits white light, blue bending more than red (crown glass 1.5143 for red, 1.5224 for blue)');
   });
 });
@@ -251,11 +255,11 @@ describe('scenarios to build beside the built ones', () => {
 
     // Pebble: a 5 mm grain settles at about 12 m/s, so drag adds little to the 0.452 s of free fall in a vacuum
     //   (sqrt(2 x 1 / 9.81) = 0.452 s); drag growing with the square of the speed (estimate) gives 0.46 s.
-    // Needs: GRAVEL (M8.1e) and grain size; M8.1e turns it into a waiting test.
+    // Needs: GRAVEL (M8.1e) and grain size (backlog I34); M8.1e turns it into a waiting test.
     it.todo('freeFall (pebble): a pebble lands from 1 m (734 cells) in 0.46 s');
 
     // Flour: 50 µm grains settle at 0.07 to 0.1 m/s, so 1 m takes 1 / 0.1 = 10 s to 1 / 0.07 = 14.3 s.
-    // Needs: FLOUR (M8.2) and grain size.
+    // Needs: FLOUR (M8.2) and grain size (backlog I34).
     it.todo('freeFall (flour): a pinch of flour hangs for 10 to 14 s over a fall of 1 m (734 cells)');
   });
 
@@ -263,14 +267,19 @@ describe('scenarios to build beside the built ones', () => {
     // The held-out check of `AIR.surfaceCoefficient` (40 W/m²·K, fitted on the 50-cell block of `coolingBlock`): the
     //   constant is checked on a second size that it was not fitted on. Real natural convection grows as a body shrinks
     //   (laminar: h grows as (dT / L)^(1/4)), the game's coefficient does not (inferred).
-    // Target: a steel block 16 cells wide (22 mm, the size of `redHotBar`'s bar) at 500 °C in still air cools with an
-    //   effective surface coefficient within a factor of 2 of 13.3 W/m²·K, so 6.6 to 26.6 W/m²·K.
-    // Calculation (estimate): the 50-cell block (68 mm) has 10 W/m²·K, and h scales as L^(-1/4) at the same temperature
-    //   difference: 10 x (50 / 16)^(1/4) = 13.3. The range keeps `coolingBlock`'s factor of 2 on its figure. A size and
-    //   tolerance are the user's to change; this one is chosen here so that the todo states a target.
-    // Source: Incropera et al., Fundamentals of Heat and Mass Transfer (natural convection by size).
-    // Measure: the effective surface coefficient from the cooling of the block's mean temperature, as `coolingBlock` reads it.
-    // Needs: nothing new; the first scenario file that has room builds it.
-    it.todo('coolingBlock (second size): a steel block 16 cells wide at 500 °C cools in still air with an effective surface coefficient of 6.6 to 26.6 W/m²·K (13.3 within a factor of 2)');
+    // Target: a steel block 16 cells wide (22 mm, the size of `redHotBar`'s bar) at 500 °C in still air has an effective
+    //   surface coefficient 1.15 to 1.5 times that of `coolingBlock`'s 50-cell block (68 mm) at 500 °C. A ratio, not a
+    //   window on the coefficient: a factor of 2 on 13.3 W/m²·K (6.6 to 26.6) holds the game's size-blind coefficient,
+    //   about 9 W/m²·K at both sizes (inferred from `coolingBlock` and the 16x16 block of `tests/air-heat.test.ts`), so it
+    //   could not fail.
+    // Calculation (estimate): laminar natural convection scales as L^(-1/4) at one temperature difference, (50 / 16)^(1/4)
+    //   = 1.33; Churchill and Chu's correlation for a horizontal cylinder in air at these Rayleigh numbers (about 3e4 and
+    //   1e6, air at a film temperature of 260 °C) gives 1.25. Tolerance: about 0.15 around both. The game today gives
+    //   1.0 (inferred) and misses.
+    // Source: Incropera et al., Fundamentals of Heat and Mass Transfer (natural convection by size; Churchill and Chu 1975).
+    // Measure: the effective surface coefficient of each block from the cooling of its mean temperature, as `coolingBlock`
+    //   reads it, at emissivity 0 once radiation exists (backlog I26): radiation does not grow as a body shrinks.
+    // Needs: nothing new; the first scenario file that has room builds it, waiting for a size-dependent air exchange.
+    it.todo('coolingBlock (second size): a steel block 16 cells wide at 500 °C loses heat per unit of surface 1.15 to 1.5 times as fast as the 50-cell block in still air (laminar natural convection: 1.25 to 1.33)');
   });
 });

@@ -183,7 +183,8 @@ describe.skipIf(!device)('M6 ambient heat', () => {
     // Target: natural convection in still air is 5 to 25 W/m²·K for objects from a centimetre to a metre (Incropera et al.,
     // Fundamentals of Heat and Mass Transfer, Table 1.1); 10 W/m²·K is taken as typical for a block this size, and the game's
     // coefficient must lie within a factor of 2 of it, 5 to 20. The coefficient is read with the capacity of real steel
-    // (`ELEMENTS`' METAL), whatever table the block is simulated in. Left out: radiation, which the game's air exchange does not model.
+    // (`ELEMENTS`' METAL), whatever table the block is simulated in. Left out: radiation, which the game's air exchange does not model; once it
+    // does (backlog I26), the block is measured at emissivity 0, since the target is the convection coefficient alone.
     async function surfaceCoefficient(elements: readonly ElementDef[]): Promise<number> {
       const [width, height, side, supersteps] = [160, 160, 50, 9000];
       const world = new World(width, height).fill(T.METAL, 55, 55 + side, 55, 55 + side, 500);

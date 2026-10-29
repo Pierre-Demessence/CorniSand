@@ -94,7 +94,9 @@ describe.skipIf(!device)('iceCup', () => {
   //   capacity, so the mean is the cup's heat balance whether or not the water has evened out (a cup without convection takes
   //   an hour to; it is not waited for).
   // Leaves out: the cup's own heat (WALL holds none), and whether the cup evens out (it does so slowly, backlog B15: this
-  //   test checks the heat balance, not the mixing).
+  //   test checks the heat balance, not the mixing). Ice's volume: with a volume change by phase (backlog I22) a full ice
+  //   cell holds 0.917 of a water cell's mass, and this cup would end near 10.8 °C; its scene then takes 109 ice cells and
+  //   1,009 cells in all to keep 1 to 9 by mass and the target (`docs/research/volume-changes.md`).
   const TARGET = [9.8, 10.2] as const;
   // A cap of 12 minutes of game time for the chips and 40 for the cube; a cup that never evens out measures NaN.
   const capMinutes: Record<IceCupVersion, number> = { fast: 12, full: 40 };
@@ -142,7 +144,8 @@ describe.skipIf(!device)('steamBurn', () => {
   //   the heat of boiling water to a surface at 20 °C ((2,257 + 4.18 x 80) / (4.18 x 80)).
   // Measure: the mean displayed temperature of the box's cells once every one is within 0.5 °C of it (when the last steam
   //   condenses the steel is between 84.5 °C, the latent heat alone, and 86.1 °C, by how much the condensate has cooled).
-  // Leaves out: steam's volume (a steam cell holds one water cell's mass, backlog I22) and the air.
+  // Leaves out: steam's volume (a steam cell holds one water cell's mass, backlog I22; with I22's steam that fills k
+  //   cells, the same mass is 10 x k steam cells and the box grows to hold them) and the air.
   const { cavity, boxWidth, boxHeight, fillTemp, boxTemp } = STEAM_BURN;
   const fillCells = (cavity.x1 - cavity.x0) * (cavity.y1 - cavity.y0);
   const metalCells = boxWidth * boxHeight - fillCells;
