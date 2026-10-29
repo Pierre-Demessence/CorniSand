@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 
-// The helper of the real-world scenarios (`docs/plans/m8.9-real-world-scenarios.md`). It imports no GPU code: a
+// The helper of the real-world scenarios (`AGENTS.md`, "Real-world scenarios"). It imports no GPU code: a
 // scenario's `measure` callback is the only place that uses the device, and it runs inside the test, under the
 // calling file's `describe.skipIf(!device)`.
 

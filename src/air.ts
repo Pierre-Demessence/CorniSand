@@ -32,7 +32,7 @@ export const AIR = {
   // second per degree per square meter, the same for every material (`airShare`). It is the near half of the cooling
   // in still air: the other half is how fast the air removes the heat (diffusion across air cells and the rising plume),
   // so the two in series are tuned to the effective 5 to 10 W/m²·K of natural convection from a warm surface
-  // (tests/air-heat.test.ts, M8.8 AC7: a steel block 7 cm wide cools at 9 W/m²·K with 40, 7 with 20, 5 with 10).
+  // (tests/air-heat.test.ts, `coolingBlock`: a steel block 7 cm wide cools at 9 W/m²·K with 40, 7 with 20, 5 with 10).
   surfaceCoefficient: 40,
   // Volumetric heat capacity of air in MJ/m³·K (1.2 kJ/m³·K, 1.005 kJ/kg·K at 1.2 kg/m³): about 1/3,500 of water's. An air
   // cell holds this times `cellSize` squared; a cell's heat per degree in the table's units (a cell is one unit of matter).

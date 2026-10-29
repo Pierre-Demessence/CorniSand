@@ -103,3 +103,9 @@ Rejected: the literal 0.025 W/m·K for STEAM; a conserved amount of matter per c
 TPT is GPLv3. Translating its source or copying its element tables would make CorniSand a derivative work, which must then be distributed under GPLv3 with its source. Elements are reimplemented from observed behavior, documentation and physics. Reading TPT's source to learn what a mechanism does is fine; translating it is not. Property values come from physical data (melting points, densities) or our own tuning, never copied as a table.
 
 Rejected: porting elements from TPT's source.
+
+## Scenario tests run inside `npm test`
+
+The real-world scenarios (`tests/scenarios-*.test.ts`) are ordinary GPU suites: they cost 116 s of `npm test` against 73 s before them, and the slowest takes 25 s. A scenario test slower than 60 s, or scenarios that add more than 3 minutes, move their full versions to `npm run test:full` (a `vitest.full.config.ts` over `tests/*.full.ts`, as the bench) and are listed in `AGENTS.md`; below that, one command running everything is worth more than the saved minutes.
+
+Rejected: a separate command from the start (the full versions would then run only when someone remembers them, and a regression in a waiting scenario's companion would go unseen).
