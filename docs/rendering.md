@@ -64,7 +64,7 @@ Every effect is a field of `LookSettings` (`src/look.ts`, defaults in `LOOK`) th
 | `depthScale` | 100 | The exaggeration of the depth tint |
 | `shimmer`, `shimmerPressure`, `shimmerMax` | 1.5, 10, 3 | Cells shifted by hot air, by the pressure gradient, and the cap |
 
-The constants that are not settings (`DEPTH_TEXELS`, `SHIMMER_SPAN`, `SHIMMER_DEAD`, `SHIMMER_SIZE`, `SHIMMER_RISE`, `WALL_LEVEL`, `WALL_RANGE`) are in the same file. The field resolutions (2 and 4 cells per texel) are `EMISSION_CELLS` and `COVER_CELLS` in `src/shaders/glow.wgsl.ts`. The values are untuned by sight where the plan says so (`docs/plans/m11-rendering.md`).
+The constants that are not settings (`DEPTH_TEXELS`, `SHIMMER_SPAN`, `SHIMMER_DEAD`, `SHIMMER_SIZE`, `SHIMMER_RISE`, `WALL_LEVEL`, `WALL_RANGE`) are in the same file. The field resolutions (2 and 4 cells per texel) are `EMISSION_CELLS` and `COVER_CELLS` in `src/shaders/glow.wgsl.ts`.
 
 ## Budget
 

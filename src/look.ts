@@ -1,4 +1,4 @@
-// How the playing field is drawn (M11, docs/plans/m11-rendering.md). The finished look is the default; the cells look
+// How the playing field is drawn (docs/rendering.md). The finished look is the default; the cells look
 // draws each cell as itself, with its grain and the wall behind it, and nothing that spills over a cell. The heat and air
 // views are precise in both.
 export type Look = 'finished' | 'cells';

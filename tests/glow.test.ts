@@ -8,7 +8,7 @@ import { displayWGSL } from '../src/shaders/display.wgsl';
 import { COVER_CELLS, coverageWGSL } from '../src/shaders/glow.wgsl';
 import { GRAPHICS } from '../src/shaders/graphics.wgsl';
 
-// M11.3 without a GPU: the emission law, the settings and the generated shaders (docs/plans/m11-rendering.md).
+// M11.3 without a GPU: the emission law, the settings and the generated shaders (docs/rendering.md).
 
 describe('M11.3 emission', () => {
   it('radiates nothing up to GLOW_START, the reference amount at EMISSION_REFERENCE and more the hotter', () => {

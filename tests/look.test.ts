@@ -8,7 +8,7 @@ import type { Simulation } from '../src/simulation';
 import { gaussian } from './air-pulse';
 import { cell, createSim, device, runMany } from './gpu';
 
-// M11's tests of the finished look (docs/plans/m11-rendering.md). One grid cell per pixel; the width is a multiple of 64
+// M11's tests of the finished look (docs/rendering.md). One grid cell per pixel; the width is a multiple of 64
 // so a row of pixels is a multiple of 256 bytes, the alignment a texture copy needs.
 
 const LOOKS: Look[] = ['finished', 'cells'];
