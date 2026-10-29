@@ -6,7 +6,8 @@ import { Display } from './display';
 import { parseWall, type Look } from './look';
 import { InputHandler, type Vec2 } from './input';
 import { ELEMENTS, type ElementDef } from './elements';
-import { findScene, type Scene } from './scenes';
+import { findScene, SCENE_INFO, type Scene } from './scenes';
+import { renderSceneMenu, sceneSearch } from './scene-menu';
 import { HEAT_LEGEND_TEMPS, heatRampCSS } from './heat';
 import { formatProbe } from './readout';
 import { TOOLS, renderAirViewToggle, renderHeatViewToggle, renderTools, renderToolbar, toggleView, toolbarEntries, type Tool, type Views } from './toolbar';
@@ -38,7 +39,9 @@ async function main(): Promise<void> {
     pendingScene = findScene(sceneName);
     if (!pendingScene) console.warn(`Unknown scene "${sceneName}", starting with an empty world.`);
   }
-  const sceneLabel = pendingScene?.name;
+  // The key of the scene that opened, or null for the empty world (also when the key is unknown).
+  const currentScene = pendingScene ? sceneName : null;
+  const sceneLabel = currentScene === null ? undefined : SCENE_INFO[currentScene].label;
 
   // `?air=<size>` sets the grid cells per air cell (1, 2, 4 or 8) to compare resolutions; the default is the simulation's.
   const airParam = new URLSearchParams(window.location.search).get('air');
@@ -139,6 +142,14 @@ async function main(): Promise<void> {
   setTimeout(() => { helpHint.style.opacity = '0'; }, 4000);
 
   const entries = toolbarEntries(ELEMENTS);
+  // Picking a scene reloads the page at its URL, so the link stays shareable and Back works.
+  renderSceneMenu(
+    document.getElementById('scenes-btn') as HTMLButtonElement,
+    document.getElementById('scene-menu')!,
+    SCENE_INFO,
+    currentScene,
+    (key) => { window.location.search = sceneSearch(window.location.search, key); },
+  );
   const toolbarEl = document.getElementById('tool-buttons')!;
   const toolButtons = renderToolbar(toolbarEl, entries);
   const heatButtons = renderTools(toolbarEl, TOOLS);

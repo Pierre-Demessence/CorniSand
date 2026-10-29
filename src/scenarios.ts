@@ -1,6 +1,6 @@
 import { ELEMENT as T } from './elements';
 import { Canvas, packCell, tank, WALL } from './scene-canvas';
-import type { Scene } from './scenes';
+import type { Scene, SceneInfo } from './scenes';
 
 // The scenario scenes (`?scene=<name>`), each built from `scene-canvas.ts`'s primitives and registered here by
 // the item that adds the scenario; `SCENES` spreads them in. A type-only import keeps `scenes.ts` free of a cycle.
@@ -297,4 +297,56 @@ export const SCENARIO_SCENES: Record<string, () => Scene> = {
   hourglass: () => hourglass(),
   viscousSpread: () => viscousSpread(),
   freeFall: () => freeFall(),
+};
+
+/**
+ * The menu's entry for each scenario scene, in the same order as `SCENARIO_SCENES`. The entries are short until I31.2
+ * writes each one's target and waiting time from its test.
+ */
+export const SCENARIO_INFO: Record<string, SceneInfo> = {
+  iceCup: {
+    label: 'Ice in water',
+    group: 'scenarios',
+    description: 'A cube of ice in a sealed cup of water, 1 part ice to 9 by mass. Watch it melt and the cup even out slowly; the whole cup should end at 10.0 °C (heat view, H).',
+  },
+  steamBurn: {
+    label: 'Steam on steel',
+    group: 'scenarios',
+    description: 'Steam at 100 °C sealed in a cavity inside a cold steel box. It condenses and gives its heat to the steel, far more than the same mass of boiling water would.',
+  },
+  contactTemp: {
+    label: 'Contact temperature',
+    group: 'scenarios',
+    description: 'A steel block at 80 °C pressed against a granite block at 20 °C. Their contact face jumps at once to a temperature between the two, set by how readily each takes up heat, and holds it (heat view, H).',
+  },
+  redHotBar: {
+    label: 'Red-hot bar',
+    group: 'scenarios',
+    description: 'A steel bar at 1,000 °C hanging in still room air. It cools through its four sides as the air next to it warms and rises.',
+  },
+  lavaCrust: {
+    label: 'Lava crust',
+    group: 'scenarios',
+    description: 'A pool of lava at 1,300 °C open to still air. A crust of stone grows down from the surface as the lava loses heat to the air.',
+  },
+  heatedLayer: {
+    label: 'Heated water layer',
+    group: 'scenarios',
+    description: 'A layer of water between two metal plates, the lower one 2 °C warmer. The layer is deep enough for the warm water to rise and the cold to sink, so it stirs itself (heat view, H).',
+  },
+  hourglass: {
+    label: 'Hourglass',
+    group: 'scenarios',
+    description: 'A silo of sand over a narrow outlet, above a bulb. The sand pours through the outlet and builds a pile at its natural angle.',
+  },
+  viscousSpread: {
+    label: 'Lava spread',
+    group: 'scenarios',
+    description: 'A column of lava released against a wall. Lava is thick: it creeps along the floor far slower than water would.',
+  },
+  freeFall: {
+    label: 'Free fall',
+    group: 'scenarios',
+    description: 'One grain of sand dropped from 1 m above the floor in a narrow column. It falls under gravity and lands after about half a second.',
+  },
 };

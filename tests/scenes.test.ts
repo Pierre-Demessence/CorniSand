@@ -5,7 +5,7 @@ import { unpackHalf2 } from '../src/half';
 import { packCell, WALL } from '../src/scene-canvas';
 import { SCENARIO_SCENES } from '../src/scenarios';
 import {
-  BLAST, BLAST_CENTER, BLAST_MARK, EXPLOSION, explosion, findScene, HEAT_BARS, heatBars, ICE_LAVA, iceLava, MOLTEN_METAL, moltenMetal, PHYSICS, PHYSICS_ROOMS, physicsRooms, PLUME, plume, SCENES, SHOWCASE, STEAM_CEILING, steamCeiling, uTube,
+  BLAST, BLAST_CENTER, BLAST_MARK, EXPLOSION, explosion, findScene, HEAT_BARS, heatBars, ICE_LAVA, iceLava, MOLTEN_METAL, moltenMetal, PHYSICS, PHYSICS_ROOMS, physicsRooms, PLUME, plume, SCENE_GROUPS, SCENE_INFO, SCENES, SHOWCASE, STEAM_CEILING, steamCeiling, uTube,
   type PhysicsRoom,
 } from '../src/scenes';
 import { chamberLevel, liquidVolume } from './metrics';
@@ -23,6 +23,17 @@ describe('scenes', () => {
       expect(SCENES[name], name).toBe(build);
       expect(findScene(name)?.name, name).toBe(name);
     }
+  });
+
+  it('I31 AC1: give every scene a menu entry with a label, a known group and a description, and no entry without a scene', () => {
+    expect(Object.keys(SCENE_INFO)).toEqual(Object.keys(SCENES));
+    const groups: string[] = SCENE_GROUPS.map((g) => g.id);
+    for (const [name, info] of Object.entries(SCENE_INFO)) {
+      expect(info.label.trim(), name).not.toBe('');
+      expect(info.description.trim(), name).not.toBe('');
+      expect(groups, name).toContain(info.group);
+    }
+    for (const name of Object.keys(SCENARIO_SCENES)) expect(SCENE_INFO[name].group, name).toBe('scenarios');
   });
 
   it('build every scene with consistent sizes and only known particle types', () => {

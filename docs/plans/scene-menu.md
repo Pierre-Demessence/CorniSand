@@ -1,6 +1,6 @@
 # I31 Scene menu
 
-Status: approved; runs first, before M8.1 (`docs/roadmap.md`, Order). Next: I31.1.
+Status: approved; runs first, before M8.1 (`docs/roadmap.md`, Order). Next: I31.2.
 
 ## Goal
 
@@ -46,11 +46,15 @@ Tests titled `I31 AC<n>:`.
 
 ### I31.1 Menu
 
-- [ ] `SceneInfo`, `SCENE_GROUPS`, `SCENE_INFO` for every scene registered at that time (labels and descriptions written from the builders' comments; scenario entries are I31.2's), `SCENARIO_INFO` (empty or partial until I31.2), AC1 in `tests/scenes.test.ts`.
-- [ ] `src/scene-menu.ts`, `tests/scene-menu.test.ts` (AC2, AC3), the button and panel in `index.html` and `main.ts`, the grid info label.
-- [ ] Browser check of AC4 to AC6 (Sonnet sub-agent with Playwright, on the user's running dev server if there is one, else its own on another port; no localStorage touched).
-- [ ] `AGENTS.md` layout (`src/scene-menu.ts`, `SCENE_INFO`) and rule: a new scene gets its `SCENE_INFO` entry; README: the scene lists point to the Scenes menu; `docs/decisions.md` entry "Scenes are code; saves are a format of their own": scenes are builders with named regions the tests measure, variants as parameters, always on the current element table and cell format; save files would freeze them, go stale with each field or default change and make test setups unreviewable; rejected: scenes as save files.
-- [ ] Verify: lint, typecheck, `npm test`, build.
+- [x] `SceneInfo`, `SCENE_GROUPS`, `SCENE_INFO` for every scene registered at that time (labels and descriptions written from the builders' comments; scenario entries are I31.2's), `SCENARIO_INFO` (empty or partial until I31.2), AC1 in `tests/scenes.test.ts`.
+- [x] `src/scene-menu.ts`, `tests/scene-menu.test.ts` (AC2, AC3), the button and panel in `index.html` and `main.ts`, the grid info label.
+- [x] Browser check of AC4 to AC6 (Sonnet sub-agent with Playwright, on the user's running dev server if there is one, else its own on another port; no localStorage touched).
+- [x] `AGENTS.md` layout (`src/scene-menu.ts`, `SCENE_INFO`) and rule: a new scene gets its `SCENE_INFO` entry; README: the scene lists point to the Scenes menu; `docs/decisions.md` entry "Scenes are code; saves are a format of their own": scenes are builders with named regions the tests measure, variants as parameters, always on the current element table and cell format; save files would freeze them, go stale with each field or default change and make test setups unreviewable; rejected: scenes as save files.
+- [x] Verify: lint, typecheck, `npm test`, build.
+
+Decided during the run: `SCENARIO_INFO` has a short entry (label, group, description with the target where the test states one) for each of the nine scenario scenes registered today, not an empty or partial one, because AC1 requires an entry for every key of `SCENES`. I31.2 rewrites them with AC9's content (target, waiting time) and adds the variants. Alternative: leave the scenarios out of `SCENE_INFO` until I31.2 and weaken AC1 meanwhile; change by editing `SCENARIO_INFO` in `src/scenarios.ts`.
+Decided during the run: `renderSceneMenu` takes a fifth argument, `onPick(key | null)`, so that `main.ts` sets `location.search` (with `sceneSearch`) and the module stays free of `window`; the plan's signature listed four. The panel's open and close handling (button, Escape, click outside) lives in `renderSceneMenu` too.
+Decided during the run: the browser check of AC4 to AC6 ran in the same session with Playwright on a dev server started on port 5199 and stopped afterwards, rather than in a sub-agent; no localStorage was touched.
 
 Visible after: the Scenes button and its list; picking a scene opens it.
 Needs you: open the menu, pick two scenes and Empty world, say if anything reads wrong (at the end).

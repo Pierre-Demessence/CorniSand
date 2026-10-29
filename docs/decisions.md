@@ -121,3 +121,9 @@ Rejected: more words in the shared row (every CA thread would pay for columns on
 The real-world scenarios (`tests/scenarios-*.test.ts`) are ordinary GPU suites: they cost 116 s of `npm test` against 73 s before them, and the slowest takes 25 s. A scenario test slower than 60 s, or scenarios that add more than 3 minutes, move their full versions to `npm run test:full` (a `vitest.full.config.ts` over `tests/*.full.ts`, as the bench) and are listed in `AGENTS.md`; below that, one command running everything is worth more than the saved minutes.
 
 Rejected: a separate command from the start (the full versions would then run only when someone remembers them, and a regression in a waiting scenario's companion would go unseen).
+
+## Scenes are code; saves are a format of their own
+
+Scenes are builders in `src/scenes.ts` and `src/scenarios.ts` with named regions the tests measure, variants as parameters, always on the current element table and cell format. The Scenes menu lists them from `SCENE_INFO` and opens one by reloading the page at `?scene=<key>`, so the link is shareable and Back works.
+
+Rejected: scenes as save files. A save would freeze a scene at one cell format, go stale with each field or default change, and make test setups unreviewable (a binary blob instead of a builder a reviewer can read).
