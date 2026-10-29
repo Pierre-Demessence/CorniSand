@@ -5,6 +5,7 @@ import { ABSOLUTE_ZERO, CONDUCTION, HEAT_TOOL_RATE, effectiveTemp, heatShare } f
 import { CELL_SIZE, DEFAULT_GRAVITY, DISPATCH_TIME, DISPATCHES_PER_SECOND, G, HEAT_UNIT, PAIR_TIME } from '../src/physics';
 import type { Simulation } from '../src/simulation';
 import { formatProbe } from '../src/readout';
+import { SEALED_BARS, sealedBars, type SealedBarsMaterial } from '../src/scenarios';
 import { TOOLS } from '../src/toolbar';
 import { cell, createSim, device, idleInput, readCells, run, runMany } from './gpu';
 import { control, scenario } from './scenario';
@@ -163,15 +164,14 @@ describe.skipIf(!device)('sealedBars: a sealed bar relaxes at the speed of its m
   // (a bar's lowest conduction mode; Carslaw and Jaeger, Conduction of Heat in Solids). The measure is the time constant the
   // simulation gives over the one the row's own data give, so 1 is real; the table the bar is simulated in may differ from
   // `ELEMENTS` (the control), the expected time constant always comes from the real row.
-  async function timeConstantRatio(key: string, cells: number, hot: number, cold: number, elements: readonly ElementDef[] = ELEMENTS): Promise<number> {
-    const row = elementByKey(ELEMENTS, key);
+  async function timeConstantRatio(material: SealedBarsMaterial, elements: readonly ElementDef[] = ELEMENTS): Promise<number> {
+    const row = elementByKey(ELEMENTS, material);
+    const { cells } = SEALED_BARS[material];
     const alpha = (elementConductivity(row) / (elementHeatCapacity(row) * HEAT_UNIT));
     const expected = (cells * CELL_SIZE) ** 2 / (Math.PI ** 2 * alpha);
-    const sim = createSim(cells, 1, 1, { ...NO_AIR, elements });
-    const temp = uniformTemps(cells, cold);
-    const temps = tempView({ temp });
-    for (let x = 0; x < cells / 2; x++) temps[x] = hot;
-    sim.load({ kind: new Uint32Array(cells).fill(cell(row.id)), temp });
+    const scene = sealedBars(material);
+    const sim = createSim(scene.width, scene.height, 1, { ...NO_AIR, elements });
+    sim.load(scene.fields);
 
     const difference = async (): Promise<number> => {
       const t = await readTemps(sim);
@@ -195,16 +195,11 @@ describe.skipIf(!device)('sealedBars: a sealed bar relaxes at the speed of its m
 
   // Within 15% of the time constant the row's data give.
   const TARGET = [0.85, 1.15] as const;
-  const bars = [
-    ['METAL', 40, 100, 0],
-    ['STONE', 12, 100, 0],
-    ['ICE', 12, -5, -25],
-  ] as const;
-  for (const [key, cells, hot, cold] of bars) {
+  for (const material of Object.keys(SEALED_BARS) as SealedBarsMaterial[]) {
     scenario({
       name: 'sealedBars',
-      version: `${key}, ${cells} cells`,
-      measure: async () => ({ ratio: await timeConstantRatio(key, cells, hot, cold) }),
+      version: `${material}, ${SEALED_BARS[material].cells} cells`,
+      measure: async () => ({ ratio: await timeConstantRatio(material) }),
       checks: [{ value: 'ratio', outcome: 'decays with the time constant L² / (π² α) within 15%', target: TARGET }],
       timeout: 120_000,
     });
@@ -215,7 +210,7 @@ describe.skipIf(!device)('sealedBars: a sealed bar relaxes at the speed of its m
     name: 'sealedBars',
     version: 'METAL, 40 cells',
     wrong: 'steel at half its conductivity',
-    measure: () => timeConstantRatio('METAL', 40, 100, 0, ELEMENTS.map((e) => (e.key === 'METAL' ? { ...e, conductivity: elementConductivity(e) / 2 } : e))),
+    measure: () => timeConstantRatio('METAL', ELEMENTS.map((e) => (e.key === 'METAL' ? { ...e, conductivity: elementConductivity(e) / 2 } : e))),
     target: TARGET,
     timeout: 120_000,
   });

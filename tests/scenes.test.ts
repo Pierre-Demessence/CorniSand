@@ -3,7 +3,7 @@ import { CELL_FIELDS, tempView } from '../src/cell-fields';
 import { ELEMENT as T, ELEMENTS, elementByKey, elementTemperature } from '../src/elements';
 import { unpackHalf2 } from '../src/half';
 import { packCell, WALL } from '../src/scene-canvas';
-import { SCENARIO_SCENES } from '../src/scenarios';
+import { HOURGLASS, SCENARIO_SCENES, heatedLayer, hourglass, iceCup, sealedBars, steamBurn } from '../src/scenarios';
 import {
   BLAST, BLAST_CENTER, BLAST_MARK, EXPLOSION, explosion, findScene, HEAT_BARS, heatBars, ICE_LAVA, iceLava, MOLTEN_METAL, moltenMetal, PHYSICS, PHYSICS_ROOMS, physicsRooms, PLUME, plume, SCENE_GROUPS, SCENE_INFO, SCENES, SHOWCASE, STEAM_CEILING, steamCeiling, uTube,
   type PhysicsRoom,
@@ -34,6 +34,29 @@ describe('scenes', () => {
       expect(groups, name).toContain(info.group);
     }
     for (const name of Object.keys(SCENARIO_SCENES)) expect(SCENE_INFO[name].group, name).toBe('scenarios');
+  });
+
+  it('I31 AC7: register each version a scenario test builds through a builder parameter, the main one under the bare name and the others as <name>-<version>', () => {
+    const versions = {
+      iceCup: iceCup('full'),
+      'iceCup-fast': iceCup('fast'),
+      steamBurn: steamBurn('steam'),
+      'steamBurn-water': steamBurn('water'),
+      heatedLayer: heatedLayer('above'),
+      'heatedLayer-below': heatedLayer('below'),
+      hourglass: hourglass(),
+      'hourglass-wide': hourglass(2 * HOURGLASS.outlet),
+      sealedBars: sealedBars('METAL'),
+      'sealedBars-stone': sealedBars('STONE'),
+      'sealedBars-ice': sealedBars('ICE'),
+    };
+    for (const [key, built] of Object.entries(versions)) {
+      expect(SCENE_INFO[key], key).toBeDefined();
+      const found = findScene(key)!;
+      expect(found.name, key).toBe(key);
+      expect([found.width, found.height, found.floorY], key).toEqual([built.width, built.height, built.floorY]);
+      for (const field of CELL_FIELDS) expect(found.fields[field.name], `${key} ${field.name}`).toEqual(built.fields[field.name]);
+    }
   });
 
   it('build every scene with consistent sizes and only known particle types', () => {

@@ -5,6 +5,7 @@ import { ELEMENT as T, ELEMENTS, elementByKey, elementHeatCapacity, type Element
 import { packHalf2 } from '../src/half';
 import { ROOM_TEMP } from '../src/heat';
 import { CELL_SIZE, HEAT_UNIT, PAIR_TIME } from '../src/physics';
+import { COOLING_BLOCK, coolingBlock } from '../src/scenarios';
 import { PLUME, plume } from '../src/scenes';
 import type { Simulation } from '../src/simulation';
 import { FRAME_SUPERSTEPS, airWords, cell, cellType, createSim, device, idleInput, mulberry32, readCells, run, runMany, countTypes } from './gpu';
@@ -186,10 +187,11 @@ describe.skipIf(!device)('M6 ambient heat', () => {
     // (`ELEMENTS`' METAL), whatever table the block is simulated in. Left out: radiation, which the game's air exchange does not model; once it
     // does (backlog I26), the block is measured at emissivity 0, since the target is the convection coefficient alone.
     async function surfaceCoefficient(elements: readonly ElementDef[]): Promise<number> {
-      const [width, height, side, supersteps] = [160, 160, 50, 9000];
-      const world = new World(width, height).fill(T.METAL, 55, 55 + side, 55, 55 + side, 500);
-      const sim = createSim(width, height, 1, { elements });
-      sim.load(world.data);
+      const { side } = COOLING_BLOCK;
+      const supersteps = 9000;
+      const scene = coolingBlock();
+      const sim = createSim(scene.width, scene.height, 1, { elements });
+      sim.load(scene.fields);
 
       await runMany(sim, supersteps, FRAME_SUPERSTEPS);
 

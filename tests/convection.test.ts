@@ -6,6 +6,7 @@ import {
 } from '../src/elements';
 import { ABSOLUTE_ZERO, ROOM_TEMP } from '../src/heat';
 import { CELL_SIZE, CONVECTION_GAIN, DISPATCH_TIME, G, convectionChance } from '../src/physics';
+import { HEATED_POT, heatedPot } from '../src/scenarios';
 import type { Simulation } from '../src/simulation';
 import { cell, cellType, createSim, device, readCells, runMany } from './gpu';
 import { control, scenario } from './scenario';
@@ -226,22 +227,22 @@ describe.skipIf(!device)('M8.8 AC10: a tank of water heated from below', () => {
   // measured speed). The measure is the speed over that estimate; a block that never gets three quarters of the
   // way up within the run counts as 0, which misses the target.
   async function riseRatio(liquid: number): Promise<number> {
-    const depth = 32;
-    const layout = tank({ depth, liquid, temp: START });
-    // A block of cells at the plate's temperature in the middle of the floor of the tank.
-    const temps = tempView({ temp: layout.temp });
-    for (let y = 0; y < 4; y++) for (let x = 7; x < 11; x++) temps[(layout.y0 + y) * WIDTH + x] = PLATE;
-    const sim = tankSim(layout);
+    const { depth, liquidTemp, blockTemp } = HEATED_POT;
+    const scene = heatedPot(liquid);
+    const sim = createSim(scene.width, scene.height, 3, { ...NO_AIR, elements: TABLE });
+    sim.load(scene.fields);
+    const [y0, y1] = [scene.floorY, scene.floorY + depth];
+    const half = (liquidTemp + blockTemp) / 2;
 
     // The mean height, in rows above the floor of the liquid, of the cells hotter than the middle of the two temperatures.
     const centroid = async (): Promise<number> => {
       const read = tempView({ temp: await sim.fields.read('temp') });
       let sum = 0;
       let n = 0;
-      for (let y = layout.y0; y < layout.y1; y++) {
-        for (let x = 1; x < WIDTH - 1; x++) {
-          if (read[y * WIDTH + x] > HALF) {
-            sum += y - layout.y0;
+      for (let y = y0; y < y1; y++) {
+        for (let x = 1; x < scene.width - 1; x++) {
+          if (read[y * scene.width + x] > half) {
+            sum += y - y0;
             n++;
           }
         }
@@ -263,8 +264,8 @@ describe.skipIf(!device)('M8.8 AC10: a tank of water heated from below', () => {
     const measured = (upper - lower) / ((atUpper - atLower!) * 2);
 
     // sqrt(g beta dT L): beta from the water's own curve between the two temperatures, L the height of the tank.
-    const beta = (densityAt(WATER, START) - densityAt(WATER, PLATE)) / (densityAt(WATER, START) * (PLATE - START));
-    const estimate = (Math.sqrt(G * beta * (PLATE - START) * depth * CELL_SIZE) * DISPATCH_TIME) / CELL_SIZE;
+    const beta = (densityAt(WATER, liquidTemp) - densityAt(WATER, blockTemp)) / (densityAt(WATER, liquidTemp) * (blockTemp - liquidTemp));
+    const estimate = (Math.sqrt(G * beta * (blockTemp - liquidTemp) * depth * CELL_SIZE) * DISPATCH_TIME) / CELL_SIZE;
     return measured / estimate;
   }
   const RISE_TARGET = [1 / 3, 3] as const;

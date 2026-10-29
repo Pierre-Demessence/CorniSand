@@ -1,6 +1,6 @@
 # I31 Scene menu
 
-Status: approved; runs first, before M8.1 (`docs/roadmap.md`, Order). Next: I31.2.
+Status: finished, waiting for the user's review (I31.2 done; Finish step left for the user's "finish"; I31 runs before M8.1, `docs/roadmap.md`, Order).
 
 ## Goal
 
@@ -61,11 +61,18 @@ Needs you: open the menu, pick two scenes and Empty world, say if anything reads
 
 ### I31.2 Scenario entries
 
-- [ ] Info for every scenario scene, with AC9's content; variants registered (AC7).
-- [ ] `sealedBars`, `coolingBlock`, `heatedPot` as scenes (AC8) in `src/scenarios.ts`, their tests in `tests/physics.test.ts`, `tests/air-heat.test.ts` and `tests/convection.test.ts` built from them.
-- [ ] Rule in `AGENTS.md` "Real-world scenarios": a scenario's description states its target and changes with it.
-- [ ] Verify: lint, typecheck, `npm test`, build; the menu shows the scenarios group (browser check).
+- [x] Info for every scenario scene, with AC9's content; variants registered (AC7).
+- [x] `sealedBars`, `coolingBlock`, `heatedPot` as scenes (AC8) in `src/scenarios.ts`, their tests in `tests/physics.test.ts`, `tests/air-heat.test.ts` and `tests/convection.test.ts` built from them.
+- [x] Rule in `AGENTS.md` "Real-world scenarios": a scenario's description states its target and changes with it.
+- [x] Verify: lint, typecheck, `npm test`, build; the menu shows the scenarios group (browser check).
 - [ ] Finish: I31 deleted from the backlog and from the roadmap's Order line, this plan deleted in the commit.
+
+Decided during the run: the versions of a scenario are registered by what its tests build through a builder parameter: `iceCup` (full) and `iceCup-fast`, `steamBurn` (steam) and `steamBurn-water`, `heatedLayer` (above) and `heatedLayer-below`, `hourglass` (outlet 8) and `hourglass-wide` (outlet 16), `sealedBars` (steel), `sealedBars-stone` and `sealedBars-ice`. `redHotBar`'s fast and full versions differ only by target (the same scene), so it has one entry stating both targets, as do the scenarios whose versions swap an element for a control. Alternative: one more key per target. Change by editing `SCENARIO_SCENES` and `SCENARIO_INFO` in `src/scenarios.ts`.
+Decided during the run: in `heatedPot`, the floor and ceiling rows of WALL carry the scene canvas's temperature word (20 °C) where the old test setup held 0; the one-off comparison showed every other field, and every cell that holds heat, bit for bit equal. A WALL cell's temperature is never read (it holds no heat), and the test's bars are unchanged. Alternative: write 0 into those rows to match the old setup. Change by adding a `fillTemp` in `heatedPot`.
+Decided during the run: a scenario's description also says when its test waits for an item (`waitsFor`), and the `AGENTS.md` rule says so, so that a description opened from the menu does not promise a pass the game cannot give; the plan's rule listed the target only. Alternative: leave the waiting state to the test titles. Change by editing the rule in `AGENTS.md` and the descriptions.
+Decided during the run: the Finish step (I31 deleted from the backlog and from the roadmap's Order line, this plan deleted) is not done in this run: a run never deletes its plan until the user says "finish".
+
+Decided during the run: `hourglass-wide`'s description gives the wait of the rate window as measured today (about 23 s, the game's rate is 1.85 times the 8-cell one) and as it would be at the target rate (12 to 15 s), because the test waits for B17 and the live wait changes when it passes. Alternative: state only the target's wait. Change by editing the description.
 
 Visible after: the menu's real-world scenarios group, each saying what to expect and how long to wait, with the fast and full versions as separate entries.
 Needs you: open `iceCup` and one waiting scenario (`redHotBar`) from the menu and say whether the description tells you what to look for (at the end).
