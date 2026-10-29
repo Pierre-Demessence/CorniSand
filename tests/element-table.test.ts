@@ -15,7 +15,6 @@ const MUD_ROW: ElementDef = {
   state: 'powder',
   // Between water (1000) and sand (1600).
   density: 1300,
-  toolbar: 50,
 };
 const withMud: ElementDef[] = [...ELEMENTS, MUD_ROW];
 

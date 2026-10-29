@@ -63,7 +63,7 @@ describe('M8.8 AC15: angle of repose (table)', () => {
     ['a repose of 0', { repose: 0 }, /MUD: repose must be a number in 20\.\.45/],
     ['a repose that is not a number', { repose: NaN }, /MUD: repose must be a number in 20\.\.45/],
   ])('M8.8 AC15: rejects %s', (_name, change, message) => {
-    const mud: ElementDef = { key: 'MUD', id: 202, label: 'Mud', color: [0.4, 0.3, 0.2], state: 'powder', density: 1300, toolbar: 50, ...change };
+    const mud: ElementDef = { key: 'MUD', id: 202, label: 'Mud', color: [0.4, 0.3, 0.2], state: 'powder', density: 1300, ...change };
     expect(() => validateElements([...ELEMENTS, mud])).toThrow(message);
   });
 });

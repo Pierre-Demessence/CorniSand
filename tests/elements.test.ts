@@ -8,11 +8,11 @@ import { DISPLAY_FIELDS, DISPLAY_ROW_BYTES, packDisplay } from '../src/display-t
 import { LOOK, lookSettings, parseWall } from '../src/look';
 import { ABSOLUTE_ZERO, HEAT_TOOL_RATE, MAX_TEMP, NO_THRESHOLD, ROOM_TEMP, effectiveTemp } from '../src/heat';
 import { DEFAULT_GRAVITY } from '../src/physics';
-import { TOOLS, buttonAttributes, toolAttributes, toolbarEntries } from '../src/toolbar';
+import { TOOLS, pickerTabs } from '../src/toolbar';
 import { latentOffsets } from './metrics';
 
 // Test rows sit far from the game's IDs and toolbar positions, which grow with the table.
-const MUD: ElementDef = { key: 'MUD', id: 200, label: 'Mud', color: [0.4, 0.3, 0.2], state: 'powder', density: 1300, toolbar: 50 };
+const MUD: ElementDef = { key: 'MUD', id: 200, label: 'Mud', color: [0.4, 0.3, 0.2], state: 'powder', density: 1300, toolbar: 50, category: 'Powders', description: 'Wet earth.' };
 
 // A chain of phases with the shape of ice, water and steam: SLUSH melts at 0 °C, BROTH boils at 100 °C, VAPOR condenses there.
 const SLUSH: ElementDef = {
@@ -300,7 +300,11 @@ describe('element table', () => {
     ['an ID past 8 bits', [...ELEMENTS, { ...MUD, id: 256 }], /not in 0\.\.255/],
     ['a lifetime that becomes nothing', [...ELEMENTS, { ...MUD, life: { start: 10, decay: 1, becomes: 'GHOST' } }], /"GHOST" is not in the table/],
     ['a liquid with a lifetime', [...ELEMENTS, { ...MUD, state: 'liquid', life: { start: 10, decay: 1, becomes: 'SMOKE' } }], /liquid/],
-    ['a toolbar position used twice', [...ELEMENTS, { ...MUD, toolbar: 1 }], /position 1 is used twice/],
+    ['a toolbar position used twice in a category', [...ELEMENTS, { ...MUD, toolbar: 1 }], /position 1 is used twice in Powders/],
+    ['a paintable row without a category', [...ELEMENTS, { ...MUD, category: undefined }], /needs a category/],
+    ['a paintable row with a category that is not one', [...ELEMENTS, { ...MUD, category: 'Rocks' as never }], /category "Rocks" is not one of/],
+    ['a paintable row without a description', [...ELEMENTS, { ...MUD, description: undefined }], /needs a description/],
+    ['a paintable row with a blank description', [...ELEMENTS, { ...MUD, description: '  ' }], /needs a description/],
     ['a table without a wall', ELEMENTS.filter((e) => e.key !== 'WALL'), /needs an element WALL/],
     ['a wall that moves', ELEMENTS.map((e) => (e.key === 'WALL' ? { ...e, state: 'powder' as const } : e)), /WALL must have state solid/],
     ['an empty that is not empty', ELEMENTS.map((e) => (e.key === 'EMPTY' ? { ...e, state: 'gas' as const } : e)), /EMPTY must have state empty/],
@@ -311,39 +315,19 @@ describe('element table', () => {
   });
 });
 
-describe('toolbar', () => {
-  it('lists the paintable elements with the current order, labels and keys', () => {
-    expect(toolbarEntries(ELEMENTS)).toEqual([
-      { id: ELEMENT.SAND, label: 'Sand', key: '1' },
-      { id: ELEMENT.WATER, label: 'Water', key: '2' },
-      { id: ELEMENT.OIL, label: 'Oil', key: '3' },
-      { id: ELEMENT.FIRE, label: 'Fire', key: '4' },
-      { id: ELEMENT.SMOKE, label: 'Smoke', key: '5' },
-      { id: ELEMENT.WALL, label: 'Wall', key: '6' },
-      { id: ELEMENT.METAL, label: 'Metal', key: '7' },
-      { id: ELEMENT.STONE, label: 'Stone', key: '8' },
-      { id: ELEMENT.ICE, label: 'Ice', key: '9' },
-      { id: ELEMENT.LAVA, label: 'Lava', key: undefined },
-      { id: ELEMENT.STEAM, label: 'Steam', key: undefined },
-      { id: ELEMENT.GUNPOWDER, label: 'Gunpowder', key: undefined },
-    ]);
+describe('M8.1 AC1 toolbar rows', () => {
+  it('accepts the same toolbar position in two categories', () => {
+    expect(() => validateElements([...ELEMENTS, { ...MUD, toolbar: 1, category: 'Special' }])).not.toThrow();
   });
 
-  it('follows a table: an extra row appears at its position, an element without one does not', () => {
-    const table: ElementDef[] = [...ELEMENTS, { ...MUD, toolbar: 3 }].map((e) => (e.key === 'OIL' ? { ...e, toolbar: 70 } : e));
-    expect(toolbarEntries(table).map((e) => e.label)).toEqual(['Sand', 'Water', 'Mud', 'Fire', 'Smoke', 'Wall', 'Metal', 'Stone', 'Ice', 'Lava', 'Steam', 'Gunpowder', 'Oil']);
-    expect(toolbarEntries([...ELEMENTS, { ...MUD, toolbar: undefined }])).toHaveLength(12);
-  });
-
-  it('gives each button the element ID in data-type and the tool-btn class', () => {
-    expect(buttonAttributes({ id: 200, label: 'Mud', key: '7' })).toEqual({ type: 'button', class: 'tool-btn', 'data-type': '200' });
-  });
-
-  it('gives only the first nine buttons a key', () => {
-    const table: ElementDef[] = Array.from({ length: 11 }, (_, i) => ({ ...MUD, key: `E${i + 1}`, id: i + 201, toolbar: i + 1 }));
-    const unpaintable = (ELEMENTS as readonly ElementDef[]).filter((e) => e.toolbar === undefined);
-    expect(toolbarEntries([...unpaintable, ...table]).map((e) => e.key))
-      .toEqual(['1', '2', '3', '4', '5', '6', '7', '8', '9', undefined, undefined]);
+  it('gives every paintable row of the table a category, a description and a position unique in its category', () => {
+    const paintable = (ELEMENTS as readonly ElementDef[]).filter((e) => e.toolbar !== undefined);
+    expect(paintable.length).toBeGreaterThan(0);
+    for (const e of paintable) {
+      expect(e.category, e.key).toBeDefined();
+      expect(e.description?.trim(), e.key).toBeTruthy();
+    }
+    expect(new Set(paintable.map((e) => `${e.category}:${e.toolbar}`)).size).toBe(paintable.length);
   });
 });
 
@@ -354,11 +338,8 @@ describe('M5.5a tools', () => {
       ['cool', 'Cool', -HEAT_TOOL_RATE, undefined],
       ['wind', 'Wind', 0, 'wind'],
     ]);
-    expect(toolbarEntries(ELEMENTS).every((e) => TOOLS.every((t) => t.label !== e.label))).toBe(true);
-  });
-
-  it('gives each tool button data-tool instead of data-type', () => {
-    expect(toolAttributes(TOOLS[0])).toEqual({ type: 'button', class: 'tool-btn', 'data-tool': 'heat' });
+    const elementLabels = pickerTabs(ELEMENTS, []).flatMap((tab) => tab.entries.map((entry) => entry.label));
+    expect(elementLabels.every((label) => TOOLS.every((t) => t.label !== label))).toBe(true);
   });
 });
 
@@ -427,7 +408,7 @@ describe('M11.2 look rows and the display table', () => {
     expect(() => validateElements(row({ look: { opacity: Number.NaN } }))).toThrow(/MUD.*look\.opacity/);
     expect(() => validateElements(row({ look: { absorption: [0.1, 0.1, 0.1] } }))).toThrow(/MUD.*absorption.*liquid/);
     expect(() => validateElements(row({ look: { grain: 0, opacity: 1 } }))).not.toThrow();
-    const ink: ElementDef = { key: 'INK', id: 201, label: 'Ink', color: [0, 0, 0.1], state: 'liquid', density: 1000, toolbar: 51, look: { absorption: [0.5, 0.5, 1.2] } };
+    const ink: ElementDef = { key: 'INK', id: 201, label: 'Ink', color: [0, 0, 0.1], state: 'liquid', density: 1000, look: { absorption: [0.5, 0.5, 1.2] } };
     expect(() => validateElements([...ELEMENTS, ink])).toThrow(/INK.*absorption\[2\]/);
     expect(() => validateElements([...ELEMENTS, { ...ink, look: { absorption: [0.5, 0.5, 0.2] } }])).not.toThrow();
   });

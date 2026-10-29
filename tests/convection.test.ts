@@ -120,10 +120,10 @@ describe('M8.8 AC10: the swap chance of convection', () => {
 // A plate that keeps its temperature: it conducts like steel and holds 240 times the heat of water per cell, so the water
 // beside it does not move it by more than a fraction of a degree in the time a test runs.
 const HOLD_ID = 220;
-const HOLD: ElementDef = { key: 'HOLD', id: HOLD_ID, label: 'Held', color: [0.5, 0.5, 0.5], state: 'solid', density: 3000, conductivity: 50, heatCapacity: 1000, toolbar: 70 };
+const HOLD: ElementDef = { key: 'HOLD', id: HOLD_ID, label: 'Held', color: [0.5, 0.5, 0.5], state: 'solid', density: 3000, conductivity: 50, heatCapacity: 1000 };
 // Water with one density at every temperature: the same tank without convection.
 const FLAT_ID = 221;
-const FLAT_WATER: ElementDef = { ...WATER, key: 'FLAT_WATER', id: FLAT_ID, label: 'Flat water', toolbar: 71, densityKnots: undefined };
+const FLAT_WATER: ElementDef = { ...WATER, key: 'FLAT_WATER', id: FLAT_ID, label: 'Flat water', toolbar: undefined, densityKnots: undefined };
 const TABLE = [...ELEMENTS, HOLD, FLAT_WATER];
 
 const WIDTH = 18;

@@ -1,5 +1,6 @@
 import { ABSOLUTE_ZERO, MAX_TEMP, ROOM_TEMP } from './heat';
 import { CELL_SIZE, DEFAULT_GRAVITY, MAX_REPOSE, MIN_REPOSE, slideSpeed, spreadSpeed } from './physics';
+import { CATEGORIES, type Category } from './toolbar';
 
 // The element table: one row per material, the single source of the IDs, colors, movement class, density, lifetimes
 // and toolbar entries that the shaders, the brush, the display and the toolbar are generated from.
@@ -78,8 +79,12 @@ export interface ElementDef {
   rule?: string;
   /** Optional color function of this element in the display shader: the name of an entry of `src/shaders/graphics.wgsl.ts`. */
   graphics?: string;
-  /** Order in the toolbar (lowest first; the n-th button is selected by number key n); absent: not paintable. */
+  /** Position in its picker tab (lowest first; the n-th entry shown is selected by number key n); absent: not paintable. Unique within the `category`. */
   toolbar?: number;
+  /** The picker tab that holds it. Required with `toolbar`. */
+  category?: Category;
+  /** One sentence for the picker's tooltip, in our own words. Required with `toolbar`. */
+  description?: string;
   /** How the finished look draws the element, read by the display alone (`src/display-table.ts`); each value defaults by state. */
   look?: LookDef;
 }
@@ -285,9 +290,11 @@ export const ELEMENTS = [
   { key: 'EMPTY', id: 0, label: 'Empty', color: [0.06, 0.06, 0.08], state: 'empty', density: 1.2 },
   // Dry sand: 0.27 W/m·K (0.25 to 0.35 for dry quartz sand) and 1.3 MJ/m³·K (1,600 kg/m³ at 0.8 kJ/kg·K).
   // Angle of repose 34° (dry sand 30 to 35°: Wikipedia's table 34°, Dartmouth's engineering notes 35° for dry irregular sand).
-  { key: 'SAND', id: 1, label: 'Sand', color: [0.80, 0.70, 0.48], state: 'powder', density: 1600, conductivity: 0.27, heatCapacity: 1.3, repose: 34, toolbar: 1 },
+  { key: 'SAND', id: 1, label: 'Sand', color: [0.80, 0.70, 0.48], state: 'powder', density: 1600, conductivity: 0.27, heatCapacity: 1.3, repose: 34,
+    toolbar: 1, category: 'Powders', description: 'Dry grains that fall and pile up into a slope.' },
   // The engine's invincible wall and the world's edge, not a real material: it never conducts, so heat never leaves the world.
-  { key: 'WALL', id: 2, label: 'Wall', color: [0.43, 0.45, 0.47], state: 'solid', density: 2500, toolbar: 6 },
+  { key: 'WALL', id: 2, label: 'Wall', color: [0.43, 0.45, 0.47], state: 'solid', density: 2500,
+    toolbar: 1, category: 'Solids', description: 'An indestructible barrier: it never moves and holds no heat.' },
   // Water: 0.6 W/m·K and 4.18 MJ/m³·K (4.18 kJ/kg·K at 1,000 kg/m³). Freezes and boils at the physical 0 and 100 °C, with the
   // latent heats above. Its density by temperature is the handbook's (999.84 kg/m³ at 0 °C, 999.97 at 4, 992.2 at 40, 958.4
   // at 100) at four points: densest at 4 °C, so a pond under a freezing ceiling stirs until it is 4 °C throughout. Viscosity
@@ -315,14 +322,17 @@ export const ELEMENTS = [
     // The burst is a flash into steam pushing the air out; tuned in the M6.3c tests (tests/air-burst.test.ts): one cell
     // flashing barely stirs the air, a layer poured onto lava visibly pushes it.
     above: { temp: 100, becomes: 'STEAM', latent: WATER_VAPORIZATION, burst: WATER_BURST },
-    toolbar: 2,
+    toolbar: 1,
+    category: 'Liquids',
+    description: 'Flows and levels out; freezes at 0 °C and boils at 100 °C.',
   },
   // Combustion gas, the smoke of every fire (backlog I16 keeps what burns and what it leaves). Air-like: the products of a
   // flame (nitrogen, carbon dioxide, steam) weigh about what air does at the same temperature, 1.2 kg/m³ at 20 °C, so it
   // rises only while it is hotter than the air around it (`densityAt`, the ideal-gas law) and spreads out once it has
   // cooled to it. Painted at 150 °C, a warm plume leaving a flame. Heat values are placeholders: 0.04 W/m·K (hot gas) and a
   // capacity of 1.0 MJ/m³·K as a stand-in per cell (1.1 kJ/kg·K times the ~900 kg/m³ of the oil it mostly comes from).
-  { key: 'SMOKE', id: 4, label: 'Smoke', color: [0.72, 0.72, 0.74], state: 'gas', density: 1.2, temperature: 150, conductivity: 0.04, heatCapacity: 1, toolbar: 5 },
+  { key: 'SMOKE', id: 4, label: 'Smoke', color: [0.72, 0.72, 0.74], state: 'gas', density: 1.2, temperature: 150, conductivity: 0.04, heatCapacity: 1,
+    toolbar: 1, category: 'Gases', description: 'Gas from fires: it rises while it is warmer than the air, then spreads out.' },
   // Oil: 0.14 W/m·K (mineral oil 0.13 to 0.15) and 1.7 MJ/m³·K (1.9 kJ/kg·K at 900 kg/m³). It expands by about 7e-4 per K
   // (mineral oil 6.4e-4 to 7.5e-4): 900 kg/m³ at 20 °C, 775 at 250. Viscosity 0.2 Pa·s at 20 °C (motor oil SAE 10
   // to 30: 0.1 to 0.3; vegetable oil about 0.06). Catches fire at 250 °C, which is
@@ -344,7 +354,9 @@ export const ELEMENTS = [
     // behind it at 0.9, against water's 0.35).
     look: { opacity: 0.9, absorption: [0.0001, 0.0002, 0.0004] },
     above: { temp: 250, becomes: 'FIRE' },
-    toolbar: 3,
+    toolbar: 2,
+    category: 'Liquids',
+    description: 'A thick liquid that floats on water and catches fire when hot.',
   },
   {
     key: 'FIRE',
@@ -364,7 +376,9 @@ export const ELEMENTS = [
    
     rule: 'fire',
     graphics: 'fire',
-    toolbar: 4,
+    toolbar: 1,
+    category: 'Explosives',
+    description: 'A flame: it lights what is flammable beside it, then fades into smoke.',
   },
   // Steel-like metal, the best conductor of the table: 50 W/m·K (carbon steel 45 to 60; copper's 400 is eight times it) and
   // 3.5 MJ/m³·K (iron's 0.449 kJ/kg·K at 7,870 kg/m³). Melts at iron's 1,538 °C.
@@ -381,7 +395,9 @@ export const ELEMENTS = [
     above: { temp: 1538, becomes: 'MOLTEN_METAL', latent: IRON_FUSION },
     // A bright, smooth metal: a fainter grain than the solids' default (chosen so its luminance varies by 3 to 12 steps).
     look: { grain: 0.02 },
-    toolbar: 7,
+    toolbar: 1,
+    category: 'Metals',
+    description: 'Steel-like metal: it carries heat well and melts only at very high temperatures.',
   },
   // Granite-like stone: 2.5 W/m·K (granite 2 to 3.5) and 2.2 MJ/m³·K (0.82 kJ/kg·K at 2,700 kg/m³). Melts into lava at
   // 1,200 °C, taking rock's physical latent heat (see LAVA).
@@ -401,7 +417,9 @@ export const ELEMENTS = [
     // gunpowder charge of about 50 cells crushes the stone within about 15 cells.
     toughness: STONE_TOUGHNESS,
     pressureAbove: { becomes: 'SAND' },
-    toolbar: 8,
+    toolbar: 2,
+    category: 'Solids',
+    description: 'Heavy rock that melts into lava when very hot and breaks into sand in a blast.',
   },
   // Ice: 917 kg/m³, 2.2 W/m·K and 1.9 MJ/m³·K (2.05 kJ/kg·K). Painted at -20 °C. It does not float: a solid never moves.
   {
@@ -416,7 +434,9 @@ export const ELEMENTS = [
     heatCapacity: 1.9,
    
     above: { temp: 0, becomes: 'WATER', latent: WATER_FUSION },
-    toolbar: 9,
+    toolbar: 3,
+    category: 'Solids',
+    description: 'Frozen water, painted well below freezing; it melts into water at 0 °C.',
   },
   // Steam: 0.59 kg/m³ at 100 °C (`densityTemp`; the ideal-gas law gives the rest). A cell is one unit of matter: its capacity is steam's 2.0 kJ/kg·K times the 1,000 kg/m³ of
   // the water it came from, 2.0 MJ/m³·K, and its conductivity keeps steam's real thermal diffusivity at that capacity:
@@ -436,7 +456,9 @@ export const ELEMENTS = [
     heatCapacity: 2,
    
     below: { temp: 100, becomes: 'WATER', latent: WATER_VAPORIZATION },
-    toolbar: 11,
+    toolbar: 2,
+    category: 'Gases',
+    description: 'Hot water vapor: it rises, then condenses back into water as it cools.',
   },
   // Lava is molten stone: liquid stone at 2,700 kg/m³, painted at 1,300 °C and setting at 1,200. Its latent heat is rock's
   // physical one: about 450 kJ/kg (basalt) at 2,700 kg/m³ is 1,200 MJ/m³. It is what keeps a pile of lava flowing in open
@@ -458,7 +480,9 @@ export const ELEMENTS = [
     // Opaque: it hides the wall and casts a shadow like rock, and it shines on its own, so it takes no depth tint.
     look: { opacity: 1 },
     below: { temp: 1200, becomes: 'STONE', latent: LAVA_LATENT },
-    toolbar: 10,
+    toolbar: 3,
+    category: 'Liquids',
+    description: 'Molten rock: thick, heavy and glowing; it hardens back into stone as it cools.',
   },
   // Molten steel: 7,000 kg/m³, painted at 1,600 °C, sets back into METAL at 1,538. Liquid iron conducts about 35 W/m·K and
   // holds 5.7 MJ/m³·K (0.82 kJ/kg·K). Its density falls by about 0.83 kg/m³ per K from 7,000 at the melting point. Viscosity
@@ -500,7 +524,9 @@ export const ELEMENTS = [
     above: { temp: 427, becomes: 'FIRE', burst: GUNPOWDER_BURST },
     // A dark powder: the same share of a dark color is too few steps to see, so its grain is stronger than the powders' default.
     look: { grain: 0.25 },
-    toolbar: 12,
+    toolbar: 2,
+    category: 'Explosives',
+    description: 'Black powder: it catches fire when hot and goes off with a blast.',
   },
 ] as const satisfies readonly ElementDef[];
 
@@ -552,7 +578,7 @@ export function validateElements(elements: readonly ElementDef[]): void {
   if (elementByKey(elements, 'EMPTY').state !== 'empty') throw new Error('EMPTY must have state empty');
   if (elementByKey(elements, 'WALL').state !== 'solid') throw new Error('WALL must have state solid');
   if (elements.find((e) => e.key === 'EMPTY')?.id !== 0) throw new Error('EMPTY must have id 0: a zeroed cell is empty');
-  const positions = new Set<number>();
+  const positions = new Set<string>();
   for (const e of elements) {
     if (e.life) {
       if (!keys.has(e.life.becomes)) throw new Error(`element ${e.key}: life.becomes "${e.life.becomes}" is not in the table`);
@@ -561,10 +587,16 @@ export function validateElements(elements: readonly ElementDef[]): void {
         throw new Error(`element ${e.key}: life.start and life.decay must be positive integers, decay at most 255`);
       }
     }
+    if (e.category !== undefined && !CATEGORIES.includes(e.category)) {
+      throw new Error(`element ${e.key}: category "${e.category}" is not one of ${CATEGORIES.join(', ')}`);
+    }
     if (e.toolbar !== undefined) {
       if (!Number.isInteger(e.toolbar) || e.toolbar < 1) throw new Error(`element ${e.key}: toolbar must be a positive integer`);
-      if (positions.has(e.toolbar)) throw new Error(`element ${e.key}: toolbar position ${e.toolbar} is used twice`);
-      positions.add(e.toolbar);
+      if (e.category === undefined) throw new Error(`element ${e.key}: a paintable element needs a category from ${CATEGORIES.join(', ')}`);
+      if (e.description === undefined || e.description.trim() === '') throw new Error(`element ${e.key}: a paintable element needs a description`);
+      const slot = `${e.category}:${e.toolbar}`;
+      if (positions.has(slot)) throw new Error(`element ${e.key}: toolbar position ${e.toolbar} is used twice in ${e.category}`);
+      positions.add(slot);
     }
   }
   if (elements.some((e) => e.flammable) && !keys.has('FIRE')) throw new Error('a flammable element needs a FIRE element to become');

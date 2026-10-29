@@ -62,7 +62,7 @@ describe('M8.8 AC14: viscosity', () => {
     ['a viscosity that is not a number', { state: 'liquid', viscosity: NaN }, /MUD: viscosity must be a finite number above 0/],
     ['an infinite viscosity', { state: 'liquid', viscosity: Infinity }, /MUD: viscosity must be a finite number above 0/],
   ])('M8.8 AC14: rejects %s', (_name, change, message) => {
-    const mud: ElementDef = { key: 'MUD', id: 200, label: 'Mud', color: [0.4, 0.3, 0.2], state: 'liquid', density: 1300, toolbar: 50, ...change };
+    const mud: ElementDef = { key: 'MUD', id: 200, label: 'Mud', color: [0.4, 0.3, 0.2], state: 'liquid', density: 1300, ...change };
     expect(() => validateElements([...ELEMENTS, mud])).toThrow(message);
   });
 });

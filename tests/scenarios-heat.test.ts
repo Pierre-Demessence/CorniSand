@@ -430,7 +430,7 @@ describe.skipIf(!device)('heatedLayer', () => {
   const CONDUCTION = [0.9, 1.1] as const;
   const WATER_CONDUCTIVITY = 0.6;
   const FLAT_ID = 221;
-  const FLAT_WATER: ElementDef = { ...elementByKey(ELEMENTS, 'WATER'), key: 'FLAT_WATER', id: FLAT_ID, label: 'Flat water', toolbar: 71, densityKnots: undefined };
+  const FLAT_WATER: ElementDef = { ...elementByKey(ELEMENTS, 'WATER'), key: 'FLAT_WATER', id: FLAT_ID, label: 'Flat water', toolbar: undefined, densityKnots: undefined };
   const TABLE = [...ELEMENTS, FLAT_WATER];
   const METAL_CAPACITY = elementHeatCapacity(elementByKey(ELEMENTS, 'METAL'));
 

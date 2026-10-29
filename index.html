@@ -12,6 +12,12 @@
             box-sizing: border-box;
         }
 
+        :root {
+            /* Three rows of --row-height (the picker's tabs, its entries, the status bar) and the panel's top border. */
+            --row-height: 32px;
+            --toolbar-height: calc(3 * var(--row-height) + 1px);
+        }
+
         body {
             overflow: hidden;
             background: #0a0a0c;
@@ -23,7 +29,7 @@
         #canvas {
             display: block;
             width: 100vw;
-            height: calc(100vh - 48px);
+            height: calc(100vh - var(--toolbar-height));
             touch-action: none;
         }
 
@@ -32,16 +38,32 @@
             bottom: 0;
             left: 0;
             right: 0;
-            height: 48px;
+            height: var(--toolbar-height);
             background: rgba(16, 16, 20, 0.90);
             backdrop-filter: blur(10px);
             -webkit-backdrop-filter: blur(10px);
             display: flex;
-            align-items: center;
-            padding: 0 16px;
-            gap: 8px;
+            flex-direction: column;
             z-index: 10;
             border-top: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .picker-row {
+            display: flex;
+            align-items: center;
+            flex: none;
+            height: var(--row-height);
+            padding: 0 16px;
+            gap: 8px;
+        }
+
+        .picker-row + .picker-row {
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .picker-row .tool-btn {
+            padding: 2px 10px;
+            white-space: nowrap;
         }
 
         .tool-btn {
@@ -96,24 +118,115 @@
             opacity: 1;
         }
 
-        /* The element and tool buttons scroll sideways when they do not fit; the controls after them keep their places. */
-        #tool-buttons {
+        /* The picker: tabs, the selected entry and the search on the first row, the entries of the tab on the second. */
+        #picker-tabs {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .picker-tab {
+            border-color: transparent;
+            background: transparent;
+        }
+
+        .picker-tab[aria-pressed="true"] {
+            border-color: rgba(255, 255, 255, 0.4);
+            background: rgba(255, 255, 255, 0.12);
+            color: #f3f4f6;
+            font-weight: 700;
+        }
+
+        #picker-selected {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-left: 8px;
+            color: #f3f4f6;
+            font-size: 13px;
+            font-weight: 700;
+            white-space: nowrap;
+        }
+
+        .picker-selected-label {
+            color: #9ca3af;
+            font-weight: 500;
+        }
+
+        .picker-swatch {
+            display: inline-block;
+            flex: none;
+            width: 12px;
+            height: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.5);
+            border-radius: 3px;
+            vertical-align: -1px;
+        }
+
+        .picker-entry {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .picker-entry.active {
+            border-color: rgba(255, 255, 255, 0.6);
+            font-weight: 700;
+        }
+
+        .picker-key {
+            padding: 0 4px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 3px;
+            color: #9ca3af;
+            font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+            font-size: 10px;
+            font-weight: 500;
+        }
+
+        .picker-empty {
+            color: #9ca3af;
+            font-size: 12px;
+        }
+
+        /* An entry's tooltip opens above it from its left edge and wraps, so a long description stays inside the window. */
+        .picker-entry[data-tip]::after {
+            right: auto;
+            left: 0;
+            width: max-content;
+            max-width: 320px;
+            font-weight: 400;
+            white-space: normal;
+        }
+
+        #picker-search {
+            flex: none;
+            width: 170px;
+            margin-left: auto;
+            padding: 3px 8px;
+            border: 1px solid rgba(255, 255, 255, 0.25);
+            border-radius: 6px;
+            background: rgba(255, 255, 255, 0.06);
+            color: #f3f4f6;
+            font: inherit;
+            font-size: 13px;
+            user-select: text;
+            -webkit-user-select: text;
+        }
+
+        #picker-search:focus-visible {
+            outline: 2px solid rgba(255, 255, 255, 0.7);
+            outline-offset: 1px;
+        }
+
+        #view-buttons {
             display: flex;
             align-items: center;
             gap: 8px;
-            flex: 1 1 auto;
-            min-width: 0;
-            overflow-x: auto;
-            scrollbar-width: thin;
-            scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
-        }
-
-        #tool-buttons > * {
-            flex-shrink: 0;
         }
 
         /* The grid size and the particle count give way, so the buttons keep room to scroll in. */
-        @media (max-width: 1200px) {
+        @media (max-width: 1500px) {
             .narrow-hide {
                 display: none;
             }
@@ -140,7 +253,7 @@
         }
 
         #clear-btn {
-            padding: 6px 16px;
+            padding: 2px 10px;
             border: 1px solid rgba(239, 68, 68, 0.25);
             background: rgba(239, 68, 68, 0.08);
             color: #f87171;
@@ -158,7 +271,7 @@
 
         .heat-legend {
             position: fixed;
-            bottom: 56px;
+            bottom: calc(var(--toolbar-height) + 8px);
             right: 16px;
             width: 400px;
             padding: 8px 20px 6px;
@@ -203,7 +316,7 @@
         /* The Scenes menu: a dialog centered over a dimmed backdrop that leaves the toolbar (and its Scenes button) uncovered. */
         .scene-menu {
             position: fixed;
-            inset: 0 0 48px 0;
+            inset: 0 0 var(--toolbar-height) 0;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -523,8 +636,8 @@
 
     <div class="help-hint" id="help-hint">
         Left click: draw · Right click: erase<br>
-        Scroll: brush size · <span id="tool-keys">1-6</span>: select element · [/]: speed<br>
-        Heat / Cool buttons: warm or cool what is under the brush · Wind button: drag to blow the air<br>
+        Scroll: brush size · 1-9: select the n-th entry of the tab · /: search · [/]: speed<br>
+        Tools tab: Heat and Cool warm or cool what is under the brush · Wind: drag to blow the air<br>
         H: heat view · A: air view · C: cells look<br>
         Hold Shift: draw over existing particles (except walls)
     </div>
@@ -544,23 +657,30 @@
     <div class="scene-menu" id="scene-menu" hidden></div>
 
     <div id="toolbar">
-        <div id="tool-buttons"></div>
-        <div class="separator"></div>
-        <button class="tool-btn" type="button" id="scenes-btn" aria-controls="scene-menu" aria-expanded="false" aria-pressed="false">Scenes</button>
-        <span class="info-text probe-text" id="probe-info"></span>
-        <div class="separator"></div>
-        <span class="info-text" id="brush-size">Brush: 10</span>
-        <div class="separator"></div>
-        <span class="info-text" id="fps">-- FPS</span>
-        <div class="separator"></div>
-        <span class="info-text narrow-hide" id="grid-info">--</span>
-        <div class="separator narrow-hide"></div>
-        <span class="info-text narrow-hide" id="particle-count">0 particles</span>
-        <div class="separator narrow-hide"></div>
-        <button class="tool-btn" type="button" id="speed-down" aria-label="Slow down ([)" data-tip="Slow down ([)">&#x2039;</button>
-        <span class="info-text" id="speed-display">Speed: 1x</span>
-        <button class="tool-btn" type="button" id="speed-up" aria-label="Speed up (])" data-tip="Speed up (])">&#x203a;</button>
-        <button id="clear-btn">Clear</button>
+        <div class="picker-row">
+            <div id="picker-tabs"></div>
+            <span id="picker-selected" aria-live="polite"></span>
+            <input type="search" id="picker-search" placeholder="Search (/)" aria-label="Search elements and tools" autocomplete="off" spellcheck="false" />
+        </div>
+        <div class="picker-row" id="picker-entries"></div>
+        <div class="picker-row" id="status-bar">
+            <button class="tool-btn" type="button" id="scenes-btn" aria-controls="scene-menu" aria-expanded="false" aria-pressed="false">Scenes</button>
+            <span class="info-text probe-text" id="probe-info"></span>
+            <div class="separator"></div>
+            <span class="info-text" id="brush-size">Brush: 10</span>
+            <div class="separator"></div>
+            <span class="info-text" id="fps">-- FPS</span>
+            <div class="separator"></div>
+            <span class="info-text narrow-hide" id="grid-info">--</span>
+            <div class="separator narrow-hide"></div>
+            <span class="info-text narrow-hide" id="particle-count">0 particles</span>
+            <div class="separator narrow-hide"></div>
+            <button class="tool-btn" type="button" id="speed-down" aria-label="Slow down ([)" data-tip="Slow down ([)">&#x2039;</button>
+            <span class="info-text" id="speed-display">Speed: 1x</span>
+            <button class="tool-btn" type="button" id="speed-up" aria-label="Speed up (])" data-tip="Speed up (])">&#x203a;</button>
+            <div id="view-buttons"></div>
+            <button id="clear-btn">Clear</button>
+        </div>
     </div>
 
     <script type="module" src="/src/main.ts"></script>

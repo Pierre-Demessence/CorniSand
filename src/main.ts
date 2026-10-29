@@ -10,7 +10,7 @@ import { findScene, SCENE_INFO, type Scene } from './scenes';
 import { renderSceneMenu, sceneSearch } from './scene-menu';
 import { HEAT_LEGEND_TEMPS, heatRampCSS } from './heat';
 import { formatProbe } from './readout';
-import { TOOLS, renderAirViewToggle, renderHeatViewToggle, renderTools, renderToolbar, toggleView, toolbarEntries, type Tool, type Views } from './toolbar';
+import { entryForKey, pickerTabs, renderAirViewToggle, renderHeatViewToggle, renderPicker, toggleView, type PickerEntry, type Tool, type Views } from './toolbar';
 
 interface GpuState {
   gpu: GPUContext;
@@ -18,9 +18,13 @@ interface GpuState {
   display: Display;
 }
 
-const TOOLBAR_HEIGHT = 48;
 // A device that keeps getting lost is not coming back; stop retrying.
 const MAX_RECOVERIES = 3;
+/** The height of the picker and status bar at the bottom, set by the stylesheet. */
+function toolbarHeight(): number {
+  return document.getElementById('toolbar')!.offsetHeight;
+}
+
 const TOUCH_TIP_MS = 1500;
 const PROBE_INTERVAL_MS = 100;
 
@@ -28,7 +32,7 @@ async function main(): Promise<void> {
   const canvas = document.getElementById('canvas') as HTMLCanvasElement;
 
   const cssWidth = window.innerWidth;
-  const cssHeight = window.innerHeight - TOOLBAR_HEIGHT;
+  const cssHeight = window.innerHeight - toolbarHeight();
   canvas.width = cssWidth;
   canvas.height = cssHeight;
 
@@ -141,7 +145,6 @@ async function main(): Promise<void> {
 
   setTimeout(() => { helpHint.style.opacity = '0'; }, 4000);
 
-  const entries = toolbarEntries(ELEMENTS);
   // Picking a scene reloads the page at its URL, so the link stays shareable and Back works.
   const sceneMenuEl = document.getElementById('scene-menu')!;
   renderSceneMenu(
@@ -151,37 +154,40 @@ async function main(): Promise<void> {
     currentScene,
     (key) => { window.location.search = sceneSearch(window.location.search, key); },
   );
-  const toolbarEl = document.getElementById('tool-buttons')!;
-  const toolButtons = renderToolbar(toolbarEl, entries);
-  const heatButtons = renderTools(toolbarEl, TOOLS);
-  document.getElementById('tool-keys')!.textContent = `1-${Math.min(entries.length, 9)}`;
+  // The picker: a tab per category, the selected entry's name and the search; the entries of the shown tab below them.
   // Degrees per frame the held Heat or Cool tool applies; 0 while an element is selected.
   let heating = 0;
   // Whether the Wind tool is selected.
   let wind = false;
-  function selectButton(button: HTMLButtonElement): void {
-    [...toolButtons, ...heatButtons].forEach((b) => b.classList.toggle('active', b === button));
+  function select(entry: PickerEntry): void {
+    if (entry.kind === 'element') {
+      heating = 0;
+      wind = false;
+      input.particleType = entry.id;
+    } else {
+      const tool: Tool = entry.tool;
+      heating = tool.heating;
+      wind = tool.air === 'wind';
+    }
   }
-  function selectElement(button: HTMLButtonElement): void {
-    selectButton(button);
-    heating = 0;
-    wind = false;
-    input.particleType = Number(button.dataset.type);
-  }
-  function selectHeatTool(button: HTMLButtonElement, tool: Tool): void {
-    selectButton(button);
-    heating = tool.heating;
-    wind = tool.air === 'wind';
-  }
-  toolButtons.forEach((btn) => {
-    btn.addEventListener('click', () => selectElement(btn));
-  });
-  heatButtons.forEach((btn, i) => {
-    btn.addEventListener('click', () => selectHeatTool(btn, TOOLS[i]));
-  });
+  const tabs = pickerTabs(ELEMENTS);
+  const initial = tabs[0].entries[0];
+  const picker = renderPicker(
+    {
+      tabs: document.getElementById('picker-tabs')!,
+      entries: document.getElementById('picker-entries')!,
+      selected: document.getElementById('picker-selected')!,
+      search: document.getElementById('picker-search') as HTMLInputElement,
+    },
+    tabs,
+    initial,
+    select,
+  );
+  select(initial);
+  const viewButtonsEl = document.getElementById('view-buttons')!;
 
   // The heat view draws each cell that holds heat in its temperature's color; the legend explains the colors.
-  const heatViewButton = renderHeatViewToggle(toolbarEl);
+  const heatViewButton = renderHeatViewToggle(viewButtonsEl);
   const legend = document.getElementById('heat-legend')!;
   document.getElementById('heat-legend-bar')!.style.background = heatRampCSS();
   const legendLabels = document.getElementById('heat-legend-labels')!;
@@ -194,7 +200,7 @@ async function main(): Promise<void> {
     legendLabels.appendChild(label);
   }
   // The air view draws the air's pressure and wind; it and the heat view each replace the materials' colors, so one is on at a time.
-  const airViewButton = renderAirViewToggle(toolbarEl);
+  const airViewButton = renderAirViewToggle(viewButtonsEl);
   const airLegend = document.getElementById('air-legend')!;
   document.getElementById('air-legend-bar')!.style.background = heatRampCSS(PRESSURE_RAMP);
   const airLegendLabels = document.getElementById('air-legend-labels')!;
@@ -220,34 +226,36 @@ async function main(): Promise<void> {
   airViewButton.addEventListener('click', () => toggle('air'));
 
   document.addEventListener('keydown', (e) => {
-    // Typing in the Scenes search, or any key while the menu is open, is not a game hotkey (C, H, A, digits, brackets).
+    // Typing in a search field, or any key while the Scenes menu is open, is not a game hotkey (C, H, A, /, digits, brackets).
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || !sceneMenuEl.hidden) return;
     if (!e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey) {
       if (e.key.toLowerCase() === 'h') toggle('heat');
       if (e.key.toLowerCase() === 'a') toggle('air');
       if (e.key.toLowerCase() === 'c') look = look === 'finished' ? 'cells' : 'finished';
+      if (e.key === '/') {
+        e.preventDefault();
+        picker.focusSearch();
+      }
     }
-    // Keys 1-9 pick the n-th element button.
-    const button = toolButtons[Number(e.key) - 1] as HTMLButtonElement | undefined;
-    if (button) selectElement(button);
+    // Keys 1-9 pick the n-th entry shown; with Ctrl, Alt or Meta they belong to the browser.
+    const entry = entryForKey(picker.shown(), e);
+    if (entry) picker.choose(entry);
     if (e.key === '[') changeSpeed(-1);
     if (e.key === ']') changeSpeed(1);
   });
 
-  if (toolButtons.length > 0) selectElement(toolButtons[0]);
-
   document.getElementById('speed-down')!.addEventListener('click', () => changeSpeed(-1));
   document.getElementById('speed-up')!.addEventListener('click', () => changeSpeed(1));
 
-  // Touch has no hover or focus ring, so a tap shows the tooltip for a moment.
-  document.querySelectorAll<HTMLElement>('[data-tip]').forEach((el) => {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    el.addEventListener('pointerdown', (e) => {
-      if (e.pointerType !== 'touch') return;
-      el.classList.add('tip-visible');
-      clearTimeout(timer);
-      timer = setTimeout(() => el.classList.remove('tip-visible'), TOUCH_TIP_MS);
-    });
+  // Touch has no hover or focus ring, so a tap shows the tooltip for a moment. One listener covers the picker's entries too, which are re-created.
+  const tipTimers = new WeakMap<Element, ReturnType<typeof setTimeout>>();
+  document.addEventListener('pointerdown', (e) => {
+    if (e.pointerType !== 'touch' || !(e.target instanceof Element)) return;
+    const el = e.target.closest('[data-tip]');
+    if (!el) return;
+    el.classList.add('tip-visible');
+    clearTimeout(tipTimers.get(el));
+    tipTimers.set(el, setTimeout(() => el.classList.remove('tip-visible'), TOUCH_TIP_MS));
   });
 
   document.getElementById('clear-btn')!.addEventListener('click', () => {
@@ -263,7 +271,7 @@ async function main(): Promise<void> {
   // --- Resize handling (keeps sim resolution fixed, reconfigures swap chain) ---
   window.addEventListener('resize', () => {
     canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight - TOOLBAR_HEIGHT;
+    canvas.height = window.innerHeight - toolbarHeight();
     if (state) {
       const { device, context, format } = state.gpu;
       context.configure({ device, format, alphaMode: 'opaque' });

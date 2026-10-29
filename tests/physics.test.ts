@@ -107,8 +107,8 @@ describe('M8.8 AC5: latent heats', () => {
 });
 
 // Two rows that conduct 2,000 W/m·K, so that a pair is capped: the share is 1.
-const FAST_A: ElementDef = { key: 'FAST_A', id: 210, label: 'Fast A', color: [1, 0, 0], state: 'solid', density: 3000, conductivity: 2000, heatCapacity: 3.5, toolbar: 60 };
-const FAST_B: ElementDef = { ...FAST_A, key: 'FAST_B', id: 211, label: 'Fast B', heatCapacity: 1, toolbar: 61 };
+const FAST_A: ElementDef = { key: 'FAST_A', id: 210, label: 'Fast A', color: [1, 0, 0], state: 'solid', density: 3000, conductivity: 2000, heatCapacity: 3.5 };
+const FAST_B: ElementDef = { ...FAST_A, key: 'FAST_B', id: 211, label: 'Fast B', heatCapacity: 1 };
 const WITH_FAST = [...ELEMENTS, FAST_A, FAST_B];
 
 function uniformTemps(count: number, temp: number): Uint32Array<ArrayBuffer> {

@@ -11,7 +11,7 @@ const EMPTY = elementByKey(ELEMENTS, 'EMPTY');
 
 // Test gases that hold no heat of their own to speak of: a cell stays at the temperature it is loaded at.
 const GAS = (id: number, key: string, density: number): ElementDef => ({
-  key, id, label: key, color: [0.5, 0.5, 0.5], state: 'gas', density, conductivity: 0.04, heatCapacity: 1, toolbar: id,
+  key, id, label: key, color: [0.5, 0.5, 0.5], state: 'gas', density, conductivity: 0.04, heatCapacity: 1,
 });
 const HEAVY_ID = 220;
 const HEAVY = GAS(HEAVY_ID, 'HEAVY_GAS', 2);
