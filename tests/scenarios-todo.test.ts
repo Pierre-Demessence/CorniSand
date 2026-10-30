@@ -14,53 +14,6 @@ import { describe, it } from 'vitest';
 // game time is 14,400 supersteps.
 
 describe('scenarios to build with M8.1 materials', () => {
-  describe('thermometer', () => {
-    // Experiment: a mercury thermometer, a bulb under a one-cell glass tube, with marks.
-    // Target: the mercury's top sits on the mark of its temperature, within one mark.
-    // Calculation: mercury's volumetric expansion is 1.81e-4 per °C at 20 °C (docs/research/volume-changes.md), so the
-    //   column rises 1.81e-4 cells per °C for each cell of bulb. One mark per °C takes 1 / 1.81e-4 = 5,525 bulb cells
-    //   (74x74), whose mercury takes about six minutes to heat through (estimate). One mark per 5 °C takes a bulb of
-    //   33x33 = 1,089 cells: 1,089 x 1.81e-4 = 0.197 cells per °C, so one cell per 5.07 °C, heating through in about a
-    //   minute (estimate), and 5 °C still puts 4 to 8 marks between 0, 20, 60 and 100 °C (20/5 = 4, 40/5 = 8).
-    // Leaves out: a real thermometer's glass expands too (linear 3.3e-6 per °C for borosilicate, 9e-6 for soda-lime),
-    //   so its mercury rises 5 to 15% less than mercury alone; the game's glass does not and the marks use mercury alone.
-    // Fast: the whole thermometer loaded at 0, 20, 60 and 100 °C. Full: at 20 °C, dipped into a water bath at 60 °C.
-    // Control: a test liquid that expands twice as much reads twice as far above the 0 °C mark.
-    // Measure: the highest mercury cell in the tube, against the marks.
-    // For I22's design: the volume research's 8-bit amount per cell (a full cell about 200 units) changes mercury's
-    //   capacity by one unit per 27.6 °C, and a bulb at one temperature crosses each unit in all its cells at once, so the
-    //   column would rise in jumps of 27.6 °C; reading to the degree takes about 13 bits, or rounding spread across the cells.
-    // Needs: MERCURY (M8.1g) and GLASS (M8.1e), then waits for I22 (M12.5). M8.1g builds it as waiting.
-    it.todo('thermometer: the mercury in a 33x33-cell bulb stands on the mark of its temperature (one mark per 5 °C) within one mark, loaded at 0, 20, 60 and 100 °C (fast) and dipped from 20 °C into a 60 °C bath (full)');
-  });
-
-  describe('densityColumn', () => {
-    // Experiment: mercury, water, oil and sawdust poured into one tank, in any order.
-    // Target: they settle from the bottom in the order of their densities: mercury, water, oil, sawdust. Handbook
-    //   densities at 20 °C: mercury 13,546 kg/m³, water about 1,000, oil about 900 (the OIL row; vegetable oils 910 to
-    //   920), wood 500 to 700 (sawdust is lighter than water and oil, so it floats on both). M8.1's AC18 adds that at
-    //   least 95% of the sawdust cells end above the water's surface, while sand poured the same way sinks (control).
-    // Measure: the layer order of `tests/metrics.ts`, as the game's player sees it (which element lies above which).
-    // Needs: MERCURY and SAWDUST (M8.1g; M8.1 AC18 and AC19).
-    it.todo('densityColumn: mercury, water, oil and sawdust poured into one tank in any order settle in that order from the bottom, and at least 95% of the sawdust ends above the water');
-  });
-
-  describe('nitrogenOnWater', () => {
-    // Experiment: liquid nitrogen poured onto water.
-    // Target: it floats (807 kg/m³ at -196 °C against water's 1,000), boils off until no liquid nitrogen is left and
-    //   freezes a skin of ice on the water. Its drops skitter on their own vapor (Leidenfrost, below -160 °C on any
-    //   room-temperature surface, `docs/research/physical-properties.md`); the skitter waits for film boiling (M12.4).
-    // Calculation (estimate, handbook: latent heat of vaporisation 199 kJ/kg, gas capacity 1.04 kJ/kg·K): a cell is one
-    //   unit of matter in every state, so a nitrogen cell takes 199 x 807 = 160.6 MJ/m³ to boil and 1.04 x 196 x 807 =
-    //   164.5 MJ/m³ more to warm its gas to 0 °C: at most 325.1 MJ/m³ from the water. A water cell at 20 °C gives up
-    //   4.18 x 20 = 83.6 MJ/m³ to reach 0 °C and 334 kJ/kg x 1,000 kg/m³ = 334 MJ/m³ to freeze: 417.6. So one nitrogen cell
-    //   freezes at most 325.1 / 417.6 = 0.78 water cells.
-    // Measure: ICE cells, LIQUID_NITROGEN cells left, and the height of the gas above the water after a measured number
-    //   of supersteps.
-    // Needs: LIQUID_NITROGEN (M8.1g; M8.1 AC20); the skitter waits for film boiling (M12.4).
-    it.todo('nitrogenOnWater: liquid nitrogen floats on water and boils off to nothing, freezing at most 0.78 ice cells per nitrogen cell, and its gas rises above the water');
-  });
-
   describe('quench', () => {
     // Experiment: a glass pane at 300 °C with cold water dripped on it, and the same pane cooling in still air.
     // Target: the glass cracks where the water touches it, and the pane cooling in still air does not; ice dropped into

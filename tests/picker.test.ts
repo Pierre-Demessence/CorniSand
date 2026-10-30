@@ -36,10 +36,10 @@ describe('M8.1 AC2 picker tabs', () => {
   it('lists the current elements by category in toolbar order', () => {
     const byTab = Object.fromEntries(tabs.map((t) => [t.name, labels(t.entries)]));
     expect(byTab).toEqual({
-      Powders: ['Sand', 'Gravel', 'Snow', 'Broken glass'],
-      Liquids: ['Water', 'Oil'],
-      Gases: ['Smoke'],
-      Solids: ['Wall', 'Basalt', 'Glass', 'Brick', 'Ceramic', 'Diamond', 'Aerogel'],
+      Powders: ['Sand', 'Gravel', 'Snow', 'Broken glass', 'Sawdust'],
+      Liquids: ['Water', 'Oil', 'Mercury'],
+      Gases: ['Smoke', 'Nitrogen'],
+      Solids: ['Wall', 'Basalt', 'Glass', 'Brick', 'Ceramic', 'Diamond', 'Aerogel', 'Wax'],
       Metals: ['Steel', 'Aluminium', 'Copper', 'Gold', 'Titanium', 'Tungsten'],
       Explosives: ['Fire', 'Gunpowder'],
       Tools: ['Heat', 'Cool', 'Wind'],
@@ -49,8 +49,8 @@ describe('M8.1 AC2 picker tabs', () => {
   it('follows a table: an extra row appears at its position, a row without a position or a category does not', () => {
     const before = ELEMENTS.map((e: ElementDef) => (e.key === 'SAND' ? { ...e, toolbar: 70 } : e));
     const powders = (table: readonly ElementDef[]) => labels(pickerTabs(table).find((t) => t.name === 'Powders')!.entries);
-    expect(powders([...before, { ...MUD, toolbar: 1 }])).toEqual(['Mud', 'Gravel', 'Snow', 'Broken glass', 'Sand']);
-    expect(powders([...ELEMENTS, { ...MUD, toolbar: undefined }])).toEqual(['Sand', 'Gravel', 'Snow', 'Broken glass']);
+    expect(powders([...before, { ...MUD, toolbar: 1 }])).toEqual(['Mud', 'Gravel', 'Snow', 'Broken glass', 'Sawdust', 'Sand']);
+    expect(powders([...ELEMENTS, { ...MUD, toolbar: undefined }])).toEqual(['Sand', 'Gravel', 'Snow', 'Broken glass', 'Sawdust']);
     expect(pickerTabs([...ELEMENTS, { ...MUD, category: 'Life' }]).map((t) => t.name)).toContain('Life');
   });
 
@@ -211,7 +211,7 @@ describe('M8.1 AC33 paint temperature', () => {
     const lava = searchEntries(tabs, 'lava', ELEMENTS);
     expect(lava[0]).toMatchObject({ id: ELEMENT.STONE, label: 'Lava', temperature: 1300 });
     expect(labels(searchEntries(tabs, 'ice', ELEMENTS))).toEqual(['Ice']);
-    expect(labels(searchEntries(tabs, 'molten', ELEMENTS))).toEqual(['Molten metal']);
+    expect(labels(searchEntries(tabs, 'molten', ELEMENTS))).toEqual(['Molten metal', 'Molten wax']);
     expect(searchEntries(tabs, 'empty', ELEMENTS)).toEqual([]);
     for (const hit of [...steam, ...lava]) expect(hit.description.trim()).not.toBe('');
   });

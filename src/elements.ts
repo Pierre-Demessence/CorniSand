@@ -329,6 +329,16 @@ const GOLD_FUSION = 1229;
 const TITANIUM_FUSION = 1329;
 const TUNGSTEN_FUSION = 5500;
 const ALUMINA_FUSION = 4298;
+// Paraffin wax's heat of fusion, 200 kJ/kg (200 to 220 J/g, Wikipedia "Paraffin wax"), times the solid's 900 kg/m³, in MJ/m³.
+const WAX_FUSION = 180;
+// Nitrogen's heats: 199 kJ/kg to boil (200 kJ/kg, Wikipedia "Liquid nitrogen") times the liquid's 807 kg/m³, and 25.7 kJ/kg to melt
+// (0.720 kJ/mol) times the solid's 1,026 kg/m³, in MJ/m³.
+const NITROGEN_VAPORIZATION = 160.6;
+const NITROGEN_FUSION = 26.4;
+// Mercury's heats (Wikipedia "Mercury (element)"): 2.29 kJ/mol to melt is 11.4 kJ/kg, times the solid's 14,184 kg/m³; 59.11 kJ/mol to
+// boil is 294.7 kJ/kg, times the liquid's 13,546 kg/m³, in MJ/m³.
+const MERCURY_FUSION = 162;
+const MERCURY_VAPORIZATION = 3992;
 // What the finished look adds to pure water's absorption on every channel, per metre (see the WATER row).
 const WATER_TURBIDITY = 0.085;
 
@@ -821,6 +831,167 @@ export const ELEMENTS = [
     toolbar: 7,
     category: 'Solids',
     description: 'Aerogel, a silica foam: heat passes through it far worse than through stone, and it melts only above the temperature of lava.',
+  },
+  // Sawdust: loose wood dust, 210 kg/m³ (bulk 130 to 250, an estimate; the wood itself is 500 to 700), so it floats on water and oil. A powder of
+  // its own takes the bulk value of its own density, as sand and gunpowder do: wood's 1.7 kJ/kg·K at 210 kg/m³ is 0.36 MJ/m³·K. A loose bed
+  // conducts like an insulator, 0.06 W/m·K (0.05 to 0.07, estimated). Angle of repose 40°: estimated, fibrous dust piles steeply (35 to 45°).
+  // Flammable by fire; its ignition by heat belongs to M8.2.
+  {
+    key: 'SAWDUST',
+    id: 27,
+    label: 'Sawdust',
+    color: [0.78, 0.62, 0.38],
+    state: 'powder',
+    density: 210,
+    flammable: true,
+    conductivity: 0.06,
+    heatCapacity: 0.36,
+    repose: 40,
+    toolbar: 5,
+    category: 'Powders',
+    description: 'Light wood dust: it floats on water and oil, and catches fire.',
+  },
+  // Paraffin wax: 900 kg/m³ (Wikipedia "Paraffin wax"), 0.25 W/m·K (estimated, solid paraffin 0.2 to 0.3) and 2.25 MJ/m³·K (2.5 kJ/kg·K,
+  // inside the 2.14 to 2.9 listed). It melts over 46 to 68 °C depending on the wax; the table melts it at 60 °C with the listed 200 kJ/kg.
+  // Flammable by fire; its ignition by heat belongs to M8.2.
+  {
+    key: 'WAX',
+    id: 28,
+    label: 'Wax',
+    color: [0.93, 0.90, 0.78],
+    state: 'solid',
+    density: 900,
+    flammable: true,
+    conductivity: 0.25,
+    heatCapacity: 2.25,
+    above: { temp: 60, becomes: 'MOLTEN_WAX', latent: WAX_FUSION },
+    toolbar: 8,
+    category: 'Solids',
+    description: 'Paraffin wax: it melts into a runny liquid at 60 °C, sets again when it cools, and burns.',
+  },
+  // Molten paraffin: about 770 kg/m³ (it floats on water; estimated, liquid paraffin is 0.75 to 0.78 g/cm³), 0.16 W/m·K and 1.9 MJ/m³·K
+  // (2.5 kJ/kg·K at 770 kg/m³), viscosity 4 mPa·s (3 to 5 near 80 °C, estimated), which spreads at the cap, like water. It expands by about 7e-4
+  // per K, as mineral oil does (estimated): 785 kg/m³ at 60 °C, 763 at 100. No button: Wax painted above 60 °C is molten wax, at 80 °C by default.
+  {
+    key: 'MOLTEN_WAX',
+    id: 29,
+    label: 'Molten wax',
+    color: [0.95, 0.88, 0.62],
+    state: 'liquid',
+    density: 770,
+    densityKnots: [[60, 785], [100, 763]],
+    temperature: 80,
+    flammable: true,
+    conductivity: 0.16,
+    heatCapacity: 1.93,
+    viscosity: 0.004,
+    below: { temp: 60, becomes: 'WAX', latent: WAX_FUSION },
+  },
+  // Nitrogen gas: 1.165 kg/m³ at 20 °C (the ideal-gas law, 28.01 g/mol), a little lighter than air. A cell is one unit of matter: its capacity is
+  // 1.04 kJ/kg·K (Wikipedia "Liquid nitrogen") times the 807 kg/m³ of the liquid it came from, 0.84 MJ/m³·K, and its conductivity keeps the real
+  // thermal diffusivity of the gas at that capacity: 0.026 W/m·K / (1.165 kg/m³ × 1.04 kJ/kg·K) = 2.1e-5 m²/s, times 0.84 MJ/m³·K is 18 W/m·K.
+  // It condenses at 77.36 K (-195.8 °C), taking the latent heat above. Cold, it is far denser than air (4.6 kg/m³ at -196 °C) and sinks.
+  {
+    key: 'NITROGEN',
+    id: 30,
+    label: 'Nitrogen',
+    color: [0.70, 0.80, 0.92],
+    state: 'gas',
+    density: 1.165,
+    conductivity: 18,
+    heatCapacity: 0.84,
+    below: { temp: -195.8, becomes: 'LIQUID_NITROGEN', latent: NITROGEN_VAPORIZATION },
+    toolbar: 2,
+    category: 'Gases',
+    description: "The air's main gas: cooled to -196 °C it becomes liquid nitrogen, which boils away and freezes what it touches.",
+  },
+  // Liquid nitrogen: 807 kg/m³ at its boiling point and about 868 at its melting point (NIST, from memory), 0.14 W/m·K (at 77 K, from memory),
+  // 1.65 MJ/m³·K (2.04 kJ/kg·K at 807 kg/m³) and a viscosity of 0.16 mPa·s (a sixth of water's, Wikipedia "Liquid nitrogen"). Boils at -195.8 °C
+  // and freezes at -210 °C. No button: Nitrogen painted below -195.8 °C is liquid nitrogen, at -196 °C by default.
+  {
+    key: 'LIQUID_NITROGEN',
+    id: 31,
+    label: 'Liquid nitrogen',
+    color: [0.62, 0.78, 0.92],
+    state: 'liquid',
+    density: 807,
+    densityKnots: [[-210, 868], [-195.8, 807]],
+    temperature: -196,
+    conductivity: 0.14,
+    heatCapacity: 1.65,
+    viscosity: 0.00016,
+    below: { temp: -210, becomes: 'SOLID_NITROGEN', latent: NITROGEN_FUSION },
+    above: { temp: -195.8, becomes: 'NITROGEN', latent: NITROGEN_VAPORIZATION },
+  },
+  // Solid nitrogen: about 1,026 kg/m³, 0.3 W/m·K and 1.7 MJ/m³·K (1.64 kJ/kg·K), all three estimated from memory of cryogenic data. Melts at -210 °C
+  // (63 K, Wikipedia "Liquid nitrogen"). No button: Nitrogen painted below -210 °C is solid nitrogen, at -220 °C by default.
+  {
+    key: 'SOLID_NITROGEN',
+    id: 32,
+    label: 'Solid nitrogen',
+    color: [0.84, 0.90, 0.97],
+    state: 'solid',
+    density: 1026,
+    temperature: -220,
+    conductivity: 0.3,
+    heatCapacity: 1.68,
+    above: { temp: -210, becomes: 'LIQUID_NITROGEN', latent: NITROGEN_FUSION },
+  },
+  // Mercury: 13,546 kg/m³ at 20 °C, the densest liquid there is, 8.30 W/m·K and 1.89 MJ/m³·K (27.983 J/mol·K is 139.5 J/kg·K), melting at -38.83 °C
+  // and boiling at 356.73 °C (Wikipedia "Mercury (element)"). Its density follows the expansion coefficient listed there (1.82e-4 per K): 13,690 at
+  // the melting point (listed), 13,351 at 100 °C and about 12,750 at the boiling point (the coefficient grows a little; estimated). Viscosity
+  // 1.53 mPa·s at 20 °C (handbook, from memory). Its swelling with heat is not modeled (one unit of matter per cell, backlog I22). An opaque,
+  // shiny liquid: it hides the wall behind it.
+  {
+    key: 'MERCURY',
+    id: 33,
+    label: 'Mercury',
+    color: [0.78, 0.80, 0.84],
+    state: 'liquid',
+    density: 13546,
+    densityKnots: [[-38.83, 13690], [20, 13546], [100, 13351], [356.73, 12750]],
+    conductivity: 8.3,
+    heatCapacity: 1.89,
+    viscosity: 0.00153,
+    look: { opacity: 1 },
+    below: { temp: -38.83, becomes: 'SOLID_MERCURY', latent: MERCURY_FUSION },
+    above: { temp: 356.73, becomes: 'MERCURY_VAPOR', latent: MERCURY_VAPORIZATION },
+    toolbar: 3,
+    category: 'Liquids',
+    description: 'The heaviest liquid: it sinks under water and oil, freezes at -39 °C and boils at 357 °C.',
+  },
+  // Solid mercury: 14,184 kg/m³ (Wikipedia "Mercury (element)"), 30 W/m·K (estimated: it conducts about four times as well as the liquid, whose
+  // resistivity it divides by about four) and 1.98 MJ/m³·K (the liquid's 139.5 J/kg·K, assumed, at the solid's density). No button: Mercury painted
+  // below -38.83 °C is solid mercury, at -50 °C by default.
+  {
+    key: 'SOLID_MERCURY',
+    id: 34,
+    label: 'Solid mercury',
+    color: [0.70, 0.72, 0.76],
+    state: 'solid',
+    density: 14184,
+    temperature: -50,
+    conductivity: 30,
+    heatCapacity: 1.98,
+    look: { grain: 0.02 },
+    above: { temp: -38.83, becomes: 'MERCURY', latent: MERCURY_FUSION },
+  },
+  // Mercury vapor: 3.88 kg/m³ at its boiling point (the ideal-gas law, 200.59 g/mol). A cell is one unit of matter: its capacity is the monatomic gas's
+  // 20.79 J/mol·K (103.6 J/kg·K) times the liquid's 13,546 kg/m³, 1.4 MJ/m³·K, and its conductivity keeps the diffusivity of the vapor at that capacity:
+  // about 0.009 W/m·K (kinetic theory, estimated) / (3.88 kg/m³ × 103.6 J/kg·K) = 2.2e-5 m²/s, times 1.4 MJ/m³·K is 31 W/m·K. No button: Mercury
+  // painted above 356.73 °C is vapor, at 400 °C by default.
+  {
+    key: 'MERCURY_VAPOR',
+    id: 35,
+    label: 'Mercury vapor',
+    color: [0.80, 0.82, 0.86],
+    state: 'gas',
+    density: 3.88,
+    densityTemp: 356.73,
+    temperature: 400,
+    conductivity: 31,
+    heatCapacity: 1.4,
+    below: { temp: 356.73, becomes: 'MERCURY', latent: MERCURY_VAPORIZATION },
   },
 ] as const satisfies readonly ElementDef[];
 

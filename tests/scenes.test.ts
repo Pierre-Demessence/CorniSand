@@ -3,7 +3,9 @@ import { CELL_FIELDS, tempView } from '../src/cell-fields';
 import { ELEMENT as T, ELEMENTS, elementByKey, elementTemperature } from '../src/elements';
 import { unpackHalf2 } from '../src/half';
 import { packCell, WALL } from '../src/scene-canvas';
-import { HOURGLASS, SCENARIO_SCENES, crucible, freeFall, heatedLayer, hourglass, iceCup, insulationWall, metalBars, sealedBars, steamBurn } from '../src/scenarios';
+import {
+  HOURGLASS, SCENARIO_SCENES, THERMOMETER, crucible, densityColumn, freeFall, heatedLayer, hourglass, iceCup, insulationWall, metalBars, nitrogenOnWater, sealedBars, steamBurn, thermometer,
+} from '../src/scenarios';
 import {
   BLAST, BLAST_CENTER, BLAST_MARK, EXPLOSION, explosion, findScene, HEAT_BARS, heatBars, ICE_LAVA, iceLava, MOLTEN_METAL, moltenMetal, PHYSICS, PHYSICS_ROOMS, physicsRooms, PLUME, plume, DESCRIPTION_MAX, SCENE_GROUPS, SCENE_INFO, SCENES, SHOWCASE, STEAM_CEILING, steamCeiling, uTube,
   type PhysicsRoom,
@@ -82,6 +84,10 @@ describe('scenes', () => {
       crucible: crucible(T.CERAMIC),
       'crucible-tungsten': crucible(T.TUNGSTEN, 20),
       'crucible-cold': crucible(T.CERAMIC, 20),
+      densityColumn: densityColumn(),
+      nitrogenOnWater: nitrogenOnWater(),
+      thermometer: thermometer(THERMOMETER.startTemp, true),
+      'thermometer-hot': thermometer(THERMOMETER.hotTemp),
     };
     for (const [key, built] of Object.entries(versions)) {
       expect(SCENE_INFO[key], key).toBeDefined();
@@ -103,7 +109,7 @@ describe('scenes', () => {
       expect(name.startsWith(`${info.family}-`), name).toBe(true);
     }
     // The variants AC7 registers.
-    expect(Object.values(SCENE_INFO).filter((info) => info.family !== undefined)).toHaveLength(15);
+    expect(Object.values(SCENE_INFO).filter((info) => info.family !== undefined)).toHaveLength(16);
   });
 
   it('build every scene with consistent sizes and only known particle types', () => {

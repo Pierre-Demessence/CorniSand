@@ -665,6 +665,13 @@ describe.skipIf(!device)('M8.1 AC30: what the wall behind shows through', () => 
     expect(solid, 'a solid glass casts the shadow of stone').toBe(await shade(T.STONE));
   });
 
+  it('M8.1 AC30: mercury hides the wall behind it: it darkens it more than the same mercury with the default look of a liquid', async () => {
+    const mercury = await shade(T.MERCURY);
+    const liquid = await shade(T.MERCURY, { key: 'MERCURY', look: undefined });
+    expect(liquid, 'a liquid with the default look still casts some shadow').toBeGreaterThan(0);
+    expect(mercury, 'mercury against the same row as a default liquid').toBeGreaterThan(liquid);
+  });
+
   // The luminance of the middle of the block (world y 152 to 167, x 24 to 55), in the finished look or the cells look.
   async function pane(type: number, look: Look, override?: ElementDef['look']): Promise<number> {
     const elements = override ? ELEMENTS.map((e: ElementDef) => (e.key === 'GLASS' ? { ...e, look: override } : e)) : ELEMENTS;

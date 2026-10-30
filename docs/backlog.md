@@ -2,7 +2,7 @@
 
 IDs are stable: B = bug, D = tech debt, I = idea.
 
-Next ID: B20, D41, I41.
+Next ID: B20, D42, I41.
 
 ## Bugs
 
@@ -34,6 +34,7 @@ Next ID: B20, D41, I41.
 - **D38** The Scenes menu renderer has no automated test (keyboard handling, the Escape stages, the current marking, the hotkey guard in `main.ts`): the project has no DOM test environment, and jsdom or happy-dom would be a new dev dependency, or a small Playwright script kept in the repo. `src/scene-menu.ts` `renderSceneMenu`
 - **D39** The Scenes menu's accessibility: the listbox holds rows with chip buttons beside the option (a listbox should hold options only), and the dialog says `aria-modal` while the toolbar behind it stays clickable so the Scenes button can toggle. `src/scene-menu.ts` `buildRow`, `index.html` `.scene-menu`
 - **D40** (M12) Heat crosses a good conductor faster than its data say: a block's pairs exchange in two sweeps one after the other, which makes the effective diffusivity alpha (1 + r) for r = `PAIR_TIME` alpha / `CELL_SIZE`² (the share of its difference a pair closes per superstep, 0.03 for steel, 0.22 to 0.29 for aluminium, copper and gold). The `metalBars` bars of aluminium, copper and gold relax 24, 31 and 36% faster than the ratio of their diffusivities to steel's (target within 15%; a CPU model of the sweeps gives the same numbers, `tests/materials.test.ts`), and any other conductor with r over 0.15 is off the same way; diamond's pair also hits the cap of `heatShare`, so its bar relaxes at the grid's fastest pace (about 30 times steel, the data say 85). A candidate fix is to scale the share by 1 / (1 + r) in `heatShare` and `exchangeHeat` (`src/heat.ts`, `src/shaders/heat.wgsl.ts`) and re-measure the heat tests; the scenarios `metalBars-aluminium`, `-copper` and `-gold` then pass and lose their `waitsFor`.
+- **D41** Some M8.1g figures come from memory of handbook values, not from a source read during the work: liquid nitrogen's density at its melting point (868 kg/m³), and conductivity (0.14 W/m·K), solid nitrogen's density, conductivity and capacity, mercury's viscosity (1.53 mPa·s), solid mercury's conductivity (30 W/m·K, from the resistivity), mercury vapor's conductivity, and molten wax's expansion (7e-4 per K, like mineral oil). Each is marked in its row's comment; read the sources and replace the wording. `src/elements.ts` NITROGEN, LIQUID_NITROGEN, SOLID_NITROGEN, MERCURY, SOLID_MERCURY, MERCURY_VAPOR, MOLTEN_WAX
 
 ## Ideas
 

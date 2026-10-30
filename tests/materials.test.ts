@@ -3,11 +3,15 @@ import { tempView } from '../src/cell-fields';
 import { ELEMENT as T, ELEMENTS, cellName, elementByKey, elementConductivity, elementHeatCapacity, elementTemperature, validateElements, type ElementDef } from '../src/elements';
 import { effectiveTemp } from '../src/heat';
 import { CELL_SIZE, HEAT_UNIT, PAIR_TIME } from '../src/physics';
-import { CRUCIBLE, INSULATION_WALL, METAL_BARS, crucible, crucibleCup, insulationWall, metalBars, type MetalBarsMaterial } from '../src/scenarios';
+import {
+  CRUCIBLE, DENSITY_COLUMN, INSULATION_WALL, METAL_BARS, NITROGEN_ON_WATER, THERMOMETER, crucible, crucibleCup, densityColumn, densityColumnLayers, insulationWall, metalBars, nitrogenOnWater, thermometer,
+  thermometerLayout, thermometerLevel, type MetalBarsMaterial,
+} from '../src/scenarios';
 import type { Scene } from '../src/scenes';
 import { pickerTabs } from '../src/toolbar';
 import { cell, createSim, device, mulberry32, readCells, runMany } from './gpu';
-import { heatContent } from './metrics';
+import { Canvas, WALL, tank } from '../src/scene-canvas';
+import { columnsWithAbove, countType, heatContent } from './metrics';
 import { control, scenario, waitsFor } from './scenario';
 
 // The materials of M8.1 and what they do: the rows (this file), then each one's main behavior as a scene test.
@@ -419,4 +423,343 @@ describe.skipIf(!device)('crucible', () => {
     target: [0, 0],
     timeout: 60_000,
   });
+});
+
+// M8.1g: light and cold (sawdust, wax, nitrogen, mercury).
+
+describe('M8.1 AC17 and AC31: the M8.1g rows', () => {
+  it('lists sawdust, mercury, nitrogen and wax in their tabs, and the rest only through a paint temperature', () => {
+    const tab = (name: string): string[] => pickerTabs(ELEMENTS).find((t) => t.name === name)!.entries.map((e) => e.label);
+    expect(tab('Powders')).toContain('Sawdust');
+    expect(tab('Liquids')).toContain('Mercury');
+    expect(tab('Gases')).toContain('Nitrogen');
+    expect(tab('Solids')).toContain('Wax');
+    for (const key of ['MOLTEN_WAX', 'LIQUID_NITROGEN', 'SOLID_NITROGEN', 'SOLID_MERCURY', 'MERCURY_VAPOR']) expect(row$(key).toolbar, key).toBeUndefined();
+    expect(() => validateElements(ELEMENTS)).not.toThrow();
+  });
+
+  it('orders the densities as the plan says: mercury is the densest liquid, sawdust floats on oil, water and molten wax', () => {
+    const density = (key: string): number => row$(key).density;
+    const liquids = ELEMENTS.filter((e: ElementDef) => e.state === 'liquid' && !e.molten);
+    expect(Math.max(...liquids.map((e: ElementDef) => e.density))).toBe(density('MERCURY'));
+    expect(density('SAWDUST')).toBeLessThan(density('MOLTEN_WAX'));
+    expect(density('MOLTEN_WAX')).toBeLessThan(density('OIL'));
+    expect(density('OIL')).toBeLessThan(density('WATER'));
+    expect(density('WATER')).toBeLessThan(density('MERCURY'));
+    expect(density('LIQUID_NITROGEN'), 'liquid nitrogen floats on water').toBeLessThan(density('WATER'));
+  });
+
+  it('puts the transitions at the handbook temperatures, each pair sharing its heat', () => {
+    expect([row$('WAX').above!.temp, row$('NITROGEN').below!.temp, row$('LIQUID_NITROGEN').below!.temp, row$('MERCURY').below!.temp, row$('MERCURY').above!.temp])
+      .toEqual([60, -195.8, -210, -38.83, 356.73]);
+    expect(row$('MOLTEN_WAX').below).toEqual({ ...row$('WAX').above, becomes: 'WAX' });
+    expect(elementTemperature(row$('LIQUID_NITROGEN'))).toBeLessThan(row$('LIQUID_NITROGEN').above!.temp);
+  });
+
+  it('gives a gas row the specific heat of its gas times the density of its liquid, as a cell is one unit of matter', () => {
+    expect(elementHeatCapacity(row$('NITROGEN'))).toBeCloseTo((1.04 * row$('LIQUID_NITROGEN').density) / 1000, 2);
+    expect(elementHeatCapacity(row$('MERCURY_VAPOR'))).toBeCloseTo(((20.79 / 0.20059) * row$('MERCURY').density) / 1e6, 1);
+  });
+});
+
+describe.skipIf(!device)('M8.1 AC17 and AC10: the M8.1g transitions', () => {
+  it('takes wax, nitrogen and mercury through their states, up and down', async () => {
+    const up: [string, string][] = [['WAX', 'MOLTEN_WAX'], ['LIQUID_NITROGEN', 'NITROGEN'], ['SOLID_NITROGEN', 'LIQUID_NITROGEN'], ['MERCURY', 'MERCURY_VAPOR'], ['SOLID_MERCURY', 'MERCURY']];
+    for (const [from, to] of up) {
+      const e = row$(from);
+      const short = await row([{ kind: cell(e.id), temp: meltsAbove(e) - 1 }]);
+      expect(typeOf(short.kinds[0]), `${from} just short`).toBe(e.id);
+      const past = await row([{ kind: cell(e.id), temp: meltsAbove(e) + 1 }]);
+      expect(typeOf(past.kinds[0]), `${from} past its threshold`).toBe(T[to as keyof typeof T]);
+    }
+    const down: [string, string][] = [['MOLTEN_WAX', 'WAX'], ['NITROGEN', 'LIQUID_NITROGEN'], ['LIQUID_NITROGEN', 'SOLID_NITROGEN'], ['MERCURY', 'SOLID_MERCURY'], ['MERCURY_VAPOR', 'MERCURY']];
+    for (const [from, to] of down) {
+      const e = row$(from);
+      const below = e.below!;
+      const stored = below.temp - (below.latent ?? 0) / elementHeatCapacity(e);
+      const short = await row([{ kind: cell(e.id), temp: stored + 1 }]);
+      expect(typeOf(short.kinds[0]), `${from} just short`).toBe(e.id);
+      const past = await row([{ kind: cell(e.id), temp: stored - 1 }]);
+      expect(typeOf(past.kinds[0]), `${from} past its threshold`).toBe(T[to as keyof typeof T]);
+    }
+  });
+
+  it('keeps the total heat of a sealed box of the M8.1g rows over 2,000 supersteps', async () => {
+    const width = 48;
+    const height = 40;
+    const sim = createSim(width, height, 11, { elements: ELEMENTS, air: false });
+    const next = mulberry32(11);
+    const rand = (): number => next() / 2 ** 32;
+    const range: [number, number, number][] = [
+      [T.WAX, 20, 200], [T.MOLTEN_WAX, 0, 150], [T.SAWDUST, 0, 100], [T.LIQUID_NITROGEN, -240, -60], [T.NITROGEN, -240, 0], [T.SOLID_NITROGEN, -260, -150],
+      [T.MERCURY, -80, 800], [T.SOLID_MERCURY, -100, 100], [T.MERCURY_VAPOR, 0, 1500], [T.WATER, 0, 90],
+    ];
+    const kind = new Uint32Array(width * height);
+    const temp = new Uint32Array(width * height);
+    const temps = tempView({ temp });
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const i = y * width + x;
+        if (y < 2 || x < 2 || x >= width - 2) {
+          kind[i] = cell(T.WALL);
+          continue;
+        }
+        const [type, low, high] = range[Math.floor(rand() * range.length)];
+        kind[i] = cell(type);
+        temps[i] = low + rand() * (high - low);
+      }
+    }
+    sim.load({ kind, temp });
+    const measure = async (): Promise<number> => heatContent(ELEMENTS, { kind: await readCells(sim), temp: await sim.fields.read('temp') }, await sim.flyers.read());
+    const before = await measure();
+    for (let i = 1; i <= 4; i++) {
+      await runMany(sim, 500);
+      expect(Math.abs((await measure()) - before) / Math.abs(before), `heat after ${i * 500} supersteps, ${before} at the start`).toBeLessThan(1e-4);
+    }
+  }, 120_000);
+});
+
+describe.skipIf(!device)('densityColumn', () => {
+  // Experiment: sawdust, oil, water and mercury in a tank, in each of the 24 orders there are (the default, with the lightest at the
+  //   bottom, is the one where every layer has to cross the others).
+  // Target: they settle from the bottom in the order of their densities: mercury, water, oil, sawdust (M8.1 AC19), and at least 95%
+  //   of the sawdust cells end above the water's surface (M8.1 AC18). Handbook densities at 20 °C: mercury 13,546 kg/m³, water about
+  //   1,000, oil about 900 (the OIL row; vegetable oils 910 to 920), sawdust 130 to 250 as a loose bed (wood itself 500 to 700),
+  //   lighter than water and oil, so it floats on both.
+  // Measure: after 2,000 supersteps (the default order settles within 500), the number of columns where a lighter material lies
+  //   under a heavier one, summed over the pairs and the 24 orders, and the share of sawdust cells over the highest water cell, the
+  //   lowest of the 24 orders.
+  const SUPERSTEPS = 2000;
+  const ORDER = [T.MERCURY, T.WATER, T.OIL, T.SAWDUST];
+  const permutations = <X>(items: readonly X[]): X[][] =>
+    (items.length <= 1 ? [[...items]] : items.flatMap((item, i) => permutations([...items.slice(0, i), ...items.slice(i + 1)]).map((rest) => [item, ...rest])));
+
+  async function settled(order: readonly number[], elements: readonly ElementDef[]): Promise<{ inversions: number; above: number }> {
+    const scene = densityColumn(order);
+    const sim = createSim(scene.width, scene.height, 1, { ...NO_AIR, elements });
+    sim.load(scene.fields);
+    await runMany(sim, SUPERSTEPS);
+    const cells = await readCells(sim);
+    let inversions = 0;
+    for (let a = 0; a < ORDER.length; a++) for (let b = a + 1; b < ORDER.length; b++) inversions += columnsWithAbove(cells, scene.width, scene.height, ORDER[a], ORDER[b]);
+    let waterTop = -1;
+    cells.forEach((c, i) => { if (typeOf(c) === T.WATER) waterTop = Math.max(waterTop, Math.floor(i / scene.width)); });
+    const sawdust = countType(cells, T.SAWDUST);
+    let above = 0;
+    cells.forEach((c, i) => { if (typeOf(c) === T.SAWDUST && Math.floor(i / scene.width) > waterTop) above++; });
+    return { inversions, above: sawdust === 0 ? 0 : above / sawdust };
+  }
+  async function everyOrder(): Promise<{ inversions: number; above: number }> {
+    const results = [];
+    for (const order of permutations(densityColumnLayers())) results.push(await settled(order, ELEMENTS));
+    return { inversions: results.reduce((n, r) => n + r.inversions, 0), above: Math.min(...results.map((r) => r.above)) };
+  }
+
+  scenario({
+    name: 'densityColumn',
+    measure: everyOrder,
+    checks: [
+      { value: 'inversions', outcome: 'mercury, water, oil and sawdust settle in that order from the bottom, whatever order they start in', target: [0, 0] },
+      { value: 'above', outcome: 'at least 95% of the sawdust ends above the water, whatever order they start in', target: [0.95, 1] },
+    ],
+    timeout: 120_000,
+  });
+
+  // Sawdust as dense as sand sinks under the water: it ends between the mercury and the water.
+  control({
+    name: 'densityColumn',
+    wrong: 'sawdust as dense as sand',
+    measure: async () => (await settled(densityColumnLayers(), ELEMENTS.map((e: ElementDef) => (e.key === 'SAWDUST' ? { ...e, density: row$('SAND').density } : e)))).above,
+    target: [0.95, 1],
+    timeout: 60_000,
+  });
+
+  it('M8.1 AC18: starts the default scene with the lightest layer at the bottom and every layer the same size', () => {
+    const scene = densityColumn();
+    const layer = (DENSITY_COLUMN.width - 2 * WALL) * DENSITY_COLUMN.layer;
+    expect(typeOf(scene.fields.kind[WALL * scene.width + WALL])).toBe(T.SAWDUST);
+    for (const type of ORDER) expect(countType(scene.fields.kind, type), String(type)).toBe(layer);
+  });
+});
+
+describe.skipIf(!device)('nitrogenOnWater', () => {
+  // Experiment: liquid nitrogen poured onto water in a tank, the top closed.
+  // Target: it floats (807 kg/m³ at -196 °C against water's 1,000), boils off until no liquid nitrogen is left and freezes a skin
+  //   of ice on the water; its gas ends above the water (M8.1 AC20). Its drops skitter on their own vapor (Leidenfrost, below
+  //   -160 °C on any room-temperature surface, `docs/research/physical-properties.md`); the skitter waits for film boiling (M12.4).
+  // Calculation (estimate, handbook: latent heat of vaporisation 199 kJ/kg, gas capacity 1.04 kJ/kg·K): a cell is one unit of
+  //   matter in every state, so a nitrogen cell takes 199 x 807 = 160.6 MJ/m³ to boil and 1.04 x 196 x 807 = 164.5 MJ/m³ more to
+  //   warm its gas to 0 °C: at most 325.1 MJ/m³ from the water. A water cell at 20 °C gives up 4.18 x 20 = 83.6 MJ/m³ to reach
+  //   0 °C and 334 kJ/kg x 1,000 kg/m³ = 334 MJ/m³ to freeze: 417.6. So one nitrogen cell freezes at most 325.1 / 417.6 = 0.78
+  //   water cells. With 16 x 8 = 128 nitrogen cells that is at most 99 ice cells.
+  // Measure: after 18,000 supersteps (75 s; the liquid is gone by 14,400): the liquid nitrogen cells left, the ice cells, and the
+  //   share of the gas cells over the water's surface (the top row of the water).
+  const SUPERSTEPS = 18_000;
+  const N = (NITROGEN_ON_WATER.width - 2 * WALL) * NITROGEN_ON_WATER.nitrogen;
+  const SURFACE = WALL + NITROGEN_ON_WATER.water;
+  const MAX_ICE = Math.floor(0.78 * N);
+  async function pour(elements: readonly ElementDef[] = ELEMENTS): Promise<{ liquid: number; ice: number; gasAbove: number }> {
+    const scene = nitrogenOnWater();
+    const sim = createSim(scene.width, scene.height, 1, { ...NO_AIR, elements });
+    sim.load(scene.fields);
+    await runMany(sim, SUPERSTEPS);
+    const cells = await readCells(sim);
+    let gas = 0;
+    let gasAbove = 0;
+    cells.forEach((c, i) => {
+      if (typeOf(c) !== T.NITROGEN) return;
+      gas++;
+      if (Math.floor(i / scene.width) >= SURFACE) gasAbove++;
+    });
+    return { liquid: countType(cells, T.LIQUID_NITROGEN), ice: countType(cells, T.ICE), gasAbove: gas === 0 ? 0 : gasAbove / gas };
+  }
+
+  scenario({
+    name: 'nitrogenOnWater',
+    measure: () => pour(),
+    checks: [
+      { value: 'liquid', outcome: 'no liquid nitrogen is left after 75 s', target: [0, 0] },
+      { value: 'ice', outcome: `the water freezes some ice, at most 0.78 cells per nitrogen cell (${MAX_ICE} of ${N})`, target: [1, MAX_ICE] },
+      { value: 'gasAbove', outcome: 'all the nitrogen gas lies over the water', target: [1, 1] },
+    ],
+    timeout: 120_000,
+  });
+
+  // Liquid nitrogen that conducts a tenth as well heats too slowly to boil off or to freeze any ice in the time.
+  control({
+    name: 'nitrogenOnWater',
+    wrong: 'liquid nitrogen with a tenth of its conductivity',
+    measure: async () => (await pour(ELEMENTS.map((e: ElementDef) => (e.key === 'LIQUID_NITROGEN' ? { ...e, conductivity: e.conductivity! / 10 } : e)))).liquid,
+    target: [0, 0],
+    timeout: 120_000,
+  });
+  // Water that freezes for a tenth of the heat lets the same nitrogen make far more than 0.78 ice cells per cell.
+  control({
+    name: 'nitrogenOnWater',
+    wrong: 'water freezing with a tenth of its latent heat',
+    measure: async () => (await pour(ELEMENTS.map((e: ElementDef) => {
+      if (e.key === 'WATER') return { ...e, below: { ...e.below!, latent: e.below!.latent! / 10 } };
+      if (e.key === 'ICE') return { ...e, above: { ...e.above!, latent: e.above!.latent! / 10 } };
+      return e;
+    }))).ice,
+    target: [1, MAX_ICE],
+    timeout: 120_000,
+  });
+});
+
+describe.skipIf(!device)('thermometer', () => {
+  // Experiment: a mercury thermometer, a bulb under a one-cell glass tube, with marks.
+  // Target: the mercury's top sits on the mark of its temperature, within one mark.
+  // Calculation: mercury's volumetric expansion is 1.8171e-4 per °C at 20 °C (Wikipedia "Mercury (element)": 181.71e-6; 1.81e-4 in
+  //   docs/research/volume-changes.md), so the column rises 1.8171e-4 cells per °C for each cell of bulb. One mark per °C takes
+  //   1 / 1.8171e-4 = 5,500 bulb cells (74x74), whose mercury takes about six minutes to heat through (estimate). One mark per 5 °C
+  //   takes a bulb of 33x33 = 1,089 cells: 1,089 x 1.8171e-4 = 0.198 cells per °C, so one cell per 5.06 °C, heating through in
+  //   about a minute (estimate), and 5 °C still puts 4 to 8 marks between 0, 20, 60 and 100 °C (20/5 = 4, 40/5 = 8).
+  // Leaves out: a real thermometer's glass expands too (linear 3.3e-6 per °C for borosilicate, 9e-6 for soda-lime), so its mercury
+  //   rises 5 to 15% less than mercury alone; the game's glass does not and the marks use mercury alone.
+  // Loaded: the whole thermometer loaded at 0, 20, 60 and 100 °C (`thermometer-hot` is the 100 °C one). Bath: at 20 °C, dipped into
+  //   a water bath at 60 °C, read after two minutes against the mercury's mean temperature then (the bath cools a few degrees).
+  // Control: a test liquid that expands twice as much reads twice as far above the 0 °C mark (not built: the game's mercury does not
+  //   expand at all until I22, so no row can take a wrong coefficient).
+  // Measure: the highest mercury cell in the tube, against the level the data give for the mercury's temperature, in marks.
+  // Waits (I22): a cell is one unit of matter in every state, so the mercury does not swell and its top stays where it started, at
+  //   the mark of 20 °C. The companion measures the same error and expects it between 0 and the tube's height.
+  const MARK_CELLS = THERMOMETER.bulb ** 2 * THERMOMETER.expansion * THERMOMETER.mark;
+  async function marksOff(scene: Scene, bath: boolean, supersteps: number): Promise<number> {
+    const layout = thermometerLayout(bath);
+    const sim = createSim(scene.width, scene.height, 1, NO_AIR);
+    sim.load(scene.fields);
+    await runMany(sim, supersteps);
+    const cells = await readCells(sim);
+    const temps = tempView({ temp: await sim.fields.read('temp') });
+    let level = 0;
+    while (typeOf(cells[(layout.top + level) * scene.width + layout.tubeX]) === T.MERCURY) level++;
+    let sum = 0;
+    let n = 0;
+    for (let y = layout.interior.y0; y < layout.interior.y1; y++) {
+      for (let x = layout.interior.x0; x < layout.interior.x1; x++) {
+        sum += effectiveTemp(row$('MERCURY'), temps[y * scene.width + x]);
+        n++;
+      }
+    }
+    return Math.abs(level - thermometerLevel(sum / n)) / MARK_CELLS;
+  }
+  const loaded = async (): Promise<number> => Math.max(...(await Promise.all([0, 20, 60, 100].map((t) => marksOff(thermometer(t), false, 200)))));
+
+  scenario({
+    name: 'thermometer',
+    version: 'hot',
+    measure: async () => ({ marks: await loaded() }),
+    checks: [{
+      value: 'marks',
+      outcome: 'the mercury stands within one mark of its temperature, loaded at 0, 20, 60 and 100 °C',
+      target: [0, 1],
+      waitsFor: waitsFor('thermometer-hot'),
+      companion: [0, THERMOMETER.tubeHeight],
+    }],
+    timeout: 60_000,
+  });
+  scenario({
+    name: 'thermometer',
+    version: 'bath',
+    measure: async () => ({ marks: await marksOff(thermometer(THERMOMETER.startTemp, true), true, 28_800) }),
+    checks: [{
+      value: 'marks',
+      outcome: 'the mercury dipped from 20 °C into a 60 °C bath stands within one mark of its temperature after two minutes',
+      target: [0, 1],
+      waitsFor: waitsFor('thermometer'),
+      companion: [0, THERMOMETER.tubeHeight],
+    }],
+    timeout: 120_000,
+  });
+
+  it('M8.1 AC29: puts the mercury at the mark of 20 °C and a mark of wall cells beside the tube for each temperature above the bulb', () => {
+    const scene = thermometer();
+    const layout = thermometerLayout(false);
+    const column = (y: number): number => typeOf(scene.fields.kind[y * scene.width + layout.tubeX]);
+    expect(column(layout.top + THERMOMETER.base - 1)).toBe(T.MERCURY);
+    expect(column(layout.top + THERMOMETER.base)).toBe(T.EMPTY);
+    const marks = Array.from({ length: scene.height }, (_, y) => y).filter((y) => typeOf(scene.fields.kind[y * scene.width + layout.tubeX - 2]) === T.WALL && y >= layout.top);
+    expect(marks.map((y) => y - layout.top + 1)).toEqual([4, 12, 20]);
+  });
+});
+
+describe.skipIf(!device)('M8.1 AC21: wax', () => {
+  // Experiment (not a scenario: its bars are not computed from data): a block of wax 6 cells wide and 2 high on a copper plate
+  //   held at 100 °C (480 cells of copper hold the heat the wax takes in), and molten wax poured onto a slab of ice.
+  // Target: the wax melts and the molten wax spreads wider than the block it started as; molten wax on ice sets into wax.
+  async function waxRun(canvas: Canvas, supersteps: number): Promise<Uint32Array> {
+    const sim = createSim(canvas.width, canvas.height, 1, NO_AIR);
+    sim.load(canvas.fields);
+    await runMany(sim, supersteps);
+    return readCells(sim);
+  }
+
+  it('melts wax on a plate at 100 °C into molten wax that spreads wider than the block', async () => {
+    const width = 60;
+    const plate = 12;
+    const block = { x0: 27, x1: 33 };
+    const canvas = tank(width, WALL + plate + 12);
+    canvas.fill(T.COPPER, WALL, width - WALL, WALL, WALL + plate);
+    canvas.fillTemp(100, WALL, width - WALL, WALL, WALL + plate);
+    canvas.fill(T.WAX, block.x0, block.x1, WALL + plate, WALL + plate + 2);
+    const before = countType(canvas.fields.kind, T.WAX);
+    const cells = await waxRun(canvas, 12_000);
+    expect(countType(cells, T.MOLTEN_WAX), 'the wax on the plate melts').toBeGreaterThan(0);
+    expect(countType(cells, T.WAX) + countType(cells, T.MOLTEN_WAX), 'no wax is lost').toBe(before);
+    const xs = Array.from(cells).flatMap((c, i) => (typeOf(c) === T.MOLTEN_WAX ? [i % width] : []));
+    const span = Math.max(...xs) - Math.min(...xs) + 1;
+    expect(span, 'the molten wax is wider than the block it came from').toBeGreaterThan(2 * (block.x1 - block.x0));
+  }, 60_000);
+
+  it('sets molten wax poured onto ice into wax', async () => {
+    const width = 36;
+    const canvas = tank(width, 20);
+    canvas.fill(T.ICE, WALL, width - WALL, WALL, WALL + 4);
+    canvas.fill(T.MOLTEN_WAX, WALL, width - WALL, WALL + 4, WALL + 6);
+    const poured = countType(canvas.fields.kind, T.MOLTEN_WAX);
+    const cells = await waxRun(canvas, 20_000);
+    expect(countType(cells, T.MOLTEN_WAX), 'no molten wax is left').toBe(0);
+    expect(countType(cells, T.WAX), 'it all set into wax').toBe(poured);
+  }, 60_000);
 });

@@ -438,6 +438,131 @@ export function heatedPot(liquid: number = T.WATER): Scene {
   return { name: 'heatedPot', width, height, fields: canvas.fields, floorY: plateRows, chambers: [] };
 }
 
+/**
+ * `densityColumn`: four layers `layer` cells thick in a tank `width` wide (a wall of `WALL` cells each side) that a test pours
+ * in any order: `order` lists their elements from the floor up. The default is the order that is wrong for every pair, the
+ * lightest at the bottom, so every layer has to cross the others.
+ */
+export const DENSITY_COLUMN = { width: 24, layer: 6, headroom: 4 } as const;
+
+/** The four materials of the column, lightest first. */
+export function densityColumnLayers(powder: number = T.SAWDUST): number[] {
+  return [powder, T.OIL, T.WATER, T.MERCURY];
+}
+
+export function densityColumn(order: readonly number[] = densityColumnLayers()): Scene {
+  const { width, layer, headroom } = DENSITY_COLUMN;
+  const height = WALL + order.length * layer + headroom;
+  const canvas = tank(width, height);
+  order.forEach((type, i) => canvas.fill(type, WALL, width - WALL, WALL + i * layer, WALL + (i + 1) * layer));
+  return { name: 'densityColumn', width, height, fields: canvas.fields, floorY: WALL, chambers: [] };
+}
+
+/**
+ * `nitrogenOnWater`: `nitrogen` rows of liquid nitrogen at its painted -196 °C over `water` rows of water at 20 °C in a tank
+ * `width` wide (a wall of `WALL` cells each side and under), with `headroom` rows of empty space above for the gas. The grid's
+ * edge closes the top.
+ */
+export const NITROGEN_ON_WATER = { width: 20, water: 12, nitrogen: 8, headroom: 16 } as const;
+
+export function nitrogenOnWater(): Scene {
+  const { width, water, nitrogen, headroom } = NITROGEN_ON_WATER;
+  const height = WALL + water + nitrogen + headroom;
+  const canvas = tank(width, height);
+  canvas.fill(T.WATER, WALL, width - WALL, WALL, WALL + water);
+  canvas.fill(T.LIQUID_NITROGEN, WALL, width - WALL, WALL + water, WALL + water + nitrogen);
+  return { name: 'nitrogenOnWater', width, height, fields: canvas.fields, floorY: WALL, chambers: [] };
+}
+
+/**
+ * `thermometer`: a glass bulb `bulb` cells square full of mercury, with a glass tube one cell wide and `tubeHeight` tall rising
+ * from the middle of its top, sealed at the end. The mercury stands `base` cells up the tube at 20 °C; marks of wall cells beside
+ * the tube sit at the level the mercury should reach at 0, 20, 60 and 100 °C (those above the bulb). Every cell of the
+ * thermometer is at `temp`. With `bath`, the bulb stands in a tank of water at `BATH_TEMP`, up to a few rows above its top,
+ * so the tube rises out of it. One unit of matter per cell, the mercury does not swell (backlog I22).
+ */
+export const THERMOMETER = {
+  bulb: 33,
+  glass: 1,
+  tubeHeight: 40,
+  base: 4,
+  /** Mercury's volumetric expansion at 20 °C, per °C (Wikipedia "Mercury (element)": 181.71e-6). */
+  expansion: 1.8171e-4,
+  /** The °C of one mark. */
+  mark: 5,
+  /** The temperature of the bath, and of the thermometer outside it. */
+  bathTemp: 60,
+  startTemp: 20,
+  /** The temperature of the loaded version, `thermometer-hot`. */
+  hotTemp: 100,
+  /** The bath: cells of water either side of the bulb, under it, and over its top. */
+  bathMargin: 16,
+  bathBelow: 8,
+  bathAbove: 3,
+  /** Empty cells at the left of the thermometer, which hold its marks. */
+  margin: 4,
+} as const;
+
+/** Where the thermometer's parts are: `top` is the row of the first cell of the tube, `tubeX` its column, `interior` the mercury of the bulb. */
+export function thermometerLayout(bath: boolean) {
+  const { bulb, glass, tubeHeight, bathMargin, bathBelow, margin } = THERMOMETER;
+  const ox = bath ? WALL + bathMargin : margin;
+  const oy = bath ? WALL + bathBelow : WALL;
+  const outer = bulb + 2 * glass;
+  const top = oy + outer - glass;
+  const tubeX = ox + glass + (bulb >> 1);
+  const width = bath ? outer + 2 * (WALL + bathMargin) : ox + outer + margin;
+  const height = top + tubeHeight + glass + WALL;
+  return {
+    width,
+    height,
+    ox,
+    oy,
+    outer,
+    top,
+    tubeX,
+    interior: { x0: ox + glass, x1: ox + glass + bulb, y0: oy + glass, y1: oy + glass + bulb },
+  };
+}
+
+/** The level in cells above the bulb that a column of mercury calibrated at `base` stands at when it is `temp`, if it expanded as the data say. */
+export function thermometerLevel(temp: number): number {
+  const { bulb, base, expansion, startTemp } = THERMOMETER;
+  return base + bulb * bulb * expansion * (temp - startTemp);
+}
+
+export function thermometer(temp: number = THERMOMETER.startTemp, bath = false): Scene {
+  const { glass, tubeHeight, base, bathTemp, bathAbove } = THERMOMETER;
+  const { width, height, ox, oy, outer, top, tubeX, interior } = thermometerLayout(bath);
+  const canvas = new Canvas(width, height);
+  if (bath) {
+    const waterTop = top + bathAbove;
+    canvas.fill(T.WALL, 0, width, 0, WALL);
+    canvas.fill(T.WALL, 0, WALL, 0, waterTop);
+    canvas.fill(T.WALL, width - WALL, width, 0, waterTop);
+    canvas.fill(T.WATER, WALL, width - WALL, WALL, waterTop);
+    canvas.fillTemp(bathTemp, WALL, width - WALL, WALL, waterTop);
+  }
+  const thermo = (type: number, x0: number, x1: number, y0: number, y1: number): void => {
+    canvas.fill(type, x0, x1, y0, y1);
+    canvas.fillTemp(temp, x0, x1, y0, y1);
+  };
+  thermo(T.GLASS, ox, ox + outer, oy, oy + outer);
+  thermo(T.MERCURY, interior.x0, interior.x1, interior.y0, interior.y1);
+  // The tube: two walls and a cap, over a hole in the top of the bulb, mercury `base` cells up.
+  thermo(T.GLASS, tubeX - glass, tubeX, top, top + tubeHeight);
+  thermo(T.GLASS, tubeX + 1, tubeX + 1 + glass, top, top + tubeHeight);
+  thermo(T.GLASS, tubeX, tubeX + 1, top + tubeHeight, top + tubeHeight + glass);
+  thermo(T.MERCURY, tubeX, tubeX + 1, top, top + base);
+  // Marks beside the tube, above the bulb and the bath, for the temperatures a calibrated thermometer reads.
+  const waterTop = bath ? top + bathAbove : 0;
+  for (const t of [0, 20, 60, 100]) {
+    const y = top + Math.round(thermometerLevel(t)) - 1;
+    if (y >= top && y >= waterTop) canvas.fill(T.WALL, tubeX - glass - 1, tubeX - glass, y, y + 1);
+  }
+  return { name: 'thermometer', width, height, fields: canvas.fields, floorY: WALL, chambers: [] };
+}
+
 /** One entry of `SCENARIO_SCENES` for a version other than the main one, under `<name>-<version>`; the scene carries that name too. */
 function version(name: string, versionName: string, build: () => Scene): Record<string, () => Scene> {
   const key = `${name}-${versionName}`;
@@ -477,6 +602,10 @@ export const SCENARIO_SCENES: Record<string, () => Scene> = {
   crucible: () => crucible(T.CERAMIC),
   ...version('crucible', 'tungsten', () => crucible(T.TUNGSTEN, ROOM_TEMP)),
   ...version('crucible', 'cold', () => crucible(T.CERAMIC, ROOM_TEMP)),
+  densityColumn: () => densityColumn(),
+  nitrogenOnWater,
+  thermometer: () => thermometer(THERMOMETER.startTemp, true),
+  ...version('thermometer', 'hot', () => thermometer(THERMOMETER.hotTemp)),
   coolingBlock,
   heatedPot: () => heatedPot(),
 };
@@ -679,6 +808,31 @@ export const SCENARIO_INFO: Record<string, SceneInfo> = {
     version: 'cold',
     description: 'The same steel in a cold ceramic cup: the shock of the heat should crack it.',
     waitsFor: ['M8.1k'],
+  },
+  densityColumn: {
+    label: 'Density column',
+    group: 'scenarios',
+    description: 'Sawdust, oil, water and mercury poured in the worst order: they settle with the heaviest at the bottom.',
+  },
+  nitrogenOnWater: {
+    label: 'Nitrogen on water',
+    group: 'scenarios',
+    description: 'Liquid nitrogen poured on water boils away into gas that rises, and freezes at most 0.78 ice cells per cell.',
+  },
+  thermometer: {
+    label: 'Mercury thermometer',
+    group: 'scenarios',
+    version: 'bath',
+    description: 'A mercury thermometer dipped from 20 °C into a 60 °C bath: the mercury should rise 0.2 cells per degree.',
+    waitsFor: ['I22'],
+  },
+  'thermometer-hot': {
+    label: 'Mercury thermometer (hot)',
+    group: 'scenarios',
+    family: 'thermometer',
+    version: 'hot',
+    description: 'The same thermometer at 100 °C: its mercury should stand 16 cells higher than at 20 °C.',
+    waitsFor: ['I22'],
   },
   coolingBlock: {
     label: 'Cooling steel block',
