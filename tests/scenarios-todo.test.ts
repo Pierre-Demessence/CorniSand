@@ -75,19 +75,6 @@ describe('scenarios to build with M8.1 materials', () => {
     it.todo('quench: a glass pane at 300 °C cracks where water at 20 °C drips onto it, while the same pane cooling in still air does not');
   });
 
-  describe('crucible', () => {
-    // Experiment: molten steel at 1,600 °C poured into a ceramic crucible preheated to within its shock limit of the steel,
-    //   into a cold tungsten crucible, and into a cold ceramic one.
-    // Target: no cell of the preheated ceramic cup or the tungsten cup changes over 2,000 supersteps; the cold ceramic
-    //   cup cracks (M8.1 AC22).
-    // Calculation: tungsten melts at 3,422 °C (handbook), far above the steel's 1,600, and metals never crack; a ceramic
-    //   cup cracks when a neighbor differs by more than its shock limit (sigma (1 - nu) / (E alpha), M8.1k), so the
-    //   preheated cup starts at the steel's temperature minus a little under that limit.
-    // Measure: the number of cup cells whose element changed over 2,000 supersteps.
-    // Needs: CERAMIC and TUNGSTEN (M8.1f); the cold ceramic cup that cracks waits for thermal shock (M8.1k; M8.1 AC22, AC27).
-    it.todo('crucible: molten steel at 1,600 °C changes no cell of a preheated ceramic cup or a cold tungsten cup over 2,000 supersteps, and cracks a cold ceramic cup');
-  });
-
   describe('iceOnMetal', () => {
     // Experiment: ice cubes at 0 °C on an aluminium and an acrylic block, both at room temperature.
     // Target: the cube on aluminium melts many times sooner. A melting face stays at 0 °C, so the first heat flows of the
@@ -98,37 +85,8 @@ describe('scenarios to build with M8.1 materials', () => {
     // Sources: Wikipedia, List of thermal conductivities (aluminium); MakeItFrom, PMMA, and a Xometry datasheet (acrylic;
     //   they disagree on the specific heat, 1.26 and 1.47 kJ/kg·K, which makes the range).
     // Measure: supersteps until no ICE cell is left on each block.
-    // Needs: ALUMINIUM (M8.1f) and ACRYLIC (M8.2); COPPER and INSULATION (M8.1f) could stand in.
+    // Needs: ACRYLIC (M8.2); ALUMINIUM (M8.1f) exists, and COPPER and INSULATION could stand in.
     it.todo('iceOnMetal: an ice cube at 0 °C on an aluminium block melts many times sooner than on an acrylic block, their first heat flows differing by 41 to 45');
-  });
-
-  describe('insulationWall', () => {
-    // Experiment: lava against a one-cell insulation wall, water on its far side, and the same against a stone wall.
-    // Target: the water behind the insulation warms at least 20 times less than behind the stone wall over the same
-    //   measured time (M8.1 AC23).
-    // Calculation (estimate): while the far side stays near its starting temperature the heat through a wall of one
-    //   thickness is proportional to its conductivity, so the ratio is k_stone / k_insulation = 2.5 / k_insulation (the
-    //   STONE row), at least 20 for k_insulation at most 0.125 W/m·K; mineral wool is about 0.04 and aerogel 0.015
-    //   (handbook, typical), which gives 60 and 170. The estimate leaves out the wall's own capacity.
-    // Measure: the mean temperature rise of the water cells behind each wall over the same number of supersteps.
-    // Needs: INSULATION (M8.1f; M8.1 AC23).
-    it.todo('insulationWall: water behind a one-cell insulation wall warms at least 20 times less than behind a stone wall of the same size, with lava on the other side');
-  });
-
-  describe('metalBars', () => {
-    // Experiment: heat crossing sealed bars of steel, copper, gold, aluminium and diamond of one size, measured as
-    //   `sealedBars` does (the time constant L² / (pi² alpha) of a bar whose halves even out).
-    // Target: heat crosses copper, gold and aluminium bars faster than the steel bar by the ratio of their diffusivities
-    //   alpha = k / (rho c) to steel's, within 15%, and a diamond bar fastest of all (M8.1 AC24); a diamond cell at 9,000 °C
-    //   stays diamond.
-    // Calculation (handbook): steel (the METAL row) 50 W/m·K and 3.5 MJ/m³·K, alpha = 14.3e-6 m²/s; copper 401 W/m·K,
-    //   8,960 kg/m³, 385 J/kg·K, 3.45 MJ/m³·K, 116e-6, ratio 8.1; gold 318, 19,300, 129, 2.49, 128e-6, ratio 8.9;
-    //   aluminium 237, 2,700, 897, 2.42, 98e-6, ratio 6.9. Diamond (1,000 to 2,200 W/m·K, 3,510 kg/m³, 509 J/kg·K,
-    //   1.79 MJ/m³·K) has alpha 560e-6 to 1,230e-6, ratios 39 to 86. The test recomputes the ratios from the rows' own
-    //   data, which these figures only approximate.
-    // Measure: the time constant of each bar, steel's over the bar's.
-    // Needs: ALUMINIUM, COPPER, GOLD, DIAMOND (M8.1f; M8.1 AC24).
-    it.todo('metalBars: heat crosses copper, gold and aluminium bars faster than a steel bar by the ratio of their diffusivities (about 8.1, 8.9 and 6.9) within 15%, and a diamond bar fastest of all');
   });
 });
 

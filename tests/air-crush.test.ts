@@ -231,7 +231,7 @@ describe.skipIf(!device)('M6 pressure transitions', () => {
   });
 
   // M8.1 AC15: the same charge among the materials that break, each as the row of single cells of the stone test (same cells,
-  // same seed): the less tough a material, the farther out it breaks. Ceramic and diamond, which never break, join with M8.1f.
+  // same seed): the less tough a material, the farther out it breaks. Ceramic and diamond never break.
   describe('M8.1 AC15: what a blast breaks', () => {
     const farthest = async (type: number): Promise<number> => {
       const { crushed, standing } = await crushedAt({ wall: false, type });
@@ -249,6 +249,30 @@ describe.skipIf(!device)('M6 pressure transitions', () => {
       expect(radius.glass, 'glass, in the open').toBeLessThanOrEqual(55);
       expect(radius.ice, 'ice, the most brittle, farthest').toBeGreaterThan(radius.glass);
     }, 120_000);
+
+    it('M8.1 AC15: ceramic and diamond do not change anywhere in the row, nor under five times the pressure that crushes ice', async () => {
+      for (const type of [T.CERAMIC, T.DIAMOND]) {
+        const { crushed, standing } = await crushedAt({ wall: false, type });
+        expect(crushed, `${type === T.CERAMIC ? 'ceramic' : 'diamond'} cells changed by the blast`).toEqual([]);
+        expect(standing.length, 'cells standing').toBeGreaterThanOrEqual(15);
+      }
+      const width = 64;
+      const sim = createSim(width, 64, 3);
+      const kind = new Uint32Array(width * 64);
+      const at = (airX: number): number => (9 * 4 + 1) * width + airX * 4 + 1;
+      kind[at(3)] = cell(T.CERAMIC);
+      kind[at(8)] = cell(T.DIAMOND);
+      sim.load({ kind });
+      const { columns, rows } = sim.air;
+      const pressure = new Float32Array(columns * rows);
+      const hard = Math.fround(crushPressure(elementByKey(ELEMENTS, 'ICE'))! * 5);
+      pressure[9 * columns + 3] = hard;
+      pressure[9 * columns + 8] = hard;
+      sim.air.load({ pressure });
+      await run(sim, 1);
+      const cells = await readCells(sim);
+      expect([cellType(cells[at(3)]), cellType(cells[at(8)])], 'ceramic and diamond at five times the limit of ice').toEqual([T.CERAMIC, T.DIAMOND]);
+    });
 
     it('M8.1 AC15: each breaks into its broken form, keeping its heat', async () => {
       const forms: [string, string][] = [['STONE', 'GRAVEL'], ['BRICK', 'GRAVEL'], ['GLASS', 'BROKEN_GLASS'], ['ICE', 'SNOW']];

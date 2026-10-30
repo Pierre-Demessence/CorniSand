@@ -2,7 +2,7 @@
 
 IDs are stable: B = bug, D = tech debt, I = idea.
 
-Next ID: B20, D40, I41.
+Next ID: B20, D41, I41.
 
 ## Bugs
 
@@ -33,6 +33,7 @@ Next ID: B20, D40, I41.
 - **D37** (M10) Renderer costs left from M11's review, inside the 1 ms budget: `shimmerShift` computes the pressure gradient (four air samples) at every pixel, even over still air; the coverage pass reads each cell's `kind` up to four times and walks its 16 cells twice; `liquidDepth` loops up to 32 texels per liquid pixel, which a running sum per column written by the coverage pass would replace. `tests/look.test.ts` builds a new `Display` (every renderer pipeline) per render, which slows the suite. `src/shaders/display.wgsl.ts`, `src/shaders/glow.wgsl.ts`, `tests/look.test.ts`
 - **D38** The Scenes menu renderer has no automated test (keyboard handling, the Escape stages, the current marking, the hotkey guard in `main.ts`): the project has no DOM test environment, and jsdom or happy-dom would be a new dev dependency, or a small Playwright script kept in the repo. `src/scene-menu.ts` `renderSceneMenu`
 - **D39** The Scenes menu's accessibility: the listbox holds rows with chip buttons beside the option (a listbox should hold options only), and the dialog says `aria-modal` while the toolbar behind it stays clickable so the Scenes button can toggle. `src/scene-menu.ts` `buildRow`, `index.html` `.scene-menu`
+- **D40** (M12) Heat crosses a good conductor faster than its data say: a block's pairs exchange in two sweeps one after the other, which makes the effective diffusivity alpha (1 + r) for r = `PAIR_TIME` alpha / `CELL_SIZE`² (the share of its difference a pair closes per superstep, 0.03 for steel, 0.22 to 0.29 for aluminium, copper and gold). The `metalBars` bars of aluminium, copper and gold relax 24, 31 and 36% faster than the ratio of their diffusivities to steel's (target within 15%; a CPU model of the sweeps gives the same numbers, `tests/materials.test.ts`), and any other conductor with r over 0.15 is off the same way; diamond's pair also hits the cap of `heatShare`, so its bar relaxes at the grid's fastest pace (about 30 times steel, the data say 85). A candidate fix is to scale the share by 1 / (1 + r) in `heatShare` and `exchangeHeat` (`src/heat.ts`, `src/shaders/heat.wgsl.ts`) and re-measure the heat tests; the scenarios `metalBars-aluminium`, `-copper` and `-gold` then pass and lose their `waitsFor`.
 
 ## Ideas
 

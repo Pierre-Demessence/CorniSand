@@ -1,4 +1,5 @@
 import { ELEMENT as T } from './elements';
+import { ROOM_TEMP } from './heat';
 import { Canvas, packCell, tank, WALL } from './scene-canvas';
 import type { Scene, SceneInfo } from './scenes';
 
@@ -303,11 +304,89 @@ export type SealedBarsMaterial = keyof typeof SEALED_BARS;
 
 export function sealedBars(material: SealedBarsMaterial = 'METAL'): Scene {
   const { cells, hot, cold } = SEALED_BARS[material];
+  return bar('sealedBars', T[material], cells, hot, cold);
+}
+
+/** A bar one cell high of `cells` cells of one material, the left half at `hot` and the right half at `cold`, and nothing around it that holds heat. */
+function bar(name: string, type: number, cells: number, hot: number, cold: number): Scene {
   const canvas = new Canvas(cells, 1);
-  canvas.fill(T[material], 0, cells, 0, 1);
+  canvas.fill(type, 0, cells, 0, 1);
   canvas.fillTemp(cold, 0, cells, 0, 1);
   canvas.fillTemp(hot, 0, cells / 2, 0, 1);
-  return { name: 'sealedBars', width: cells, height: 1, fields: canvas.fields, floorY: 0, chambers: [] };
+  return { name, width: cells, height: 1, fields: canvas.fields, floorY: 0, chambers: [] };
+}
+
+/**
+ * `metalBars`: `sealedBars` for the metals and diamond, every bar of the same 40 cells (5.5 cm) so that their time constants
+ * compare: the left half at 100 °C, the right at 0, nothing around it that holds heat. Steel is the reference; each other
+ * bar relaxes faster or slower by the ratio of its diffusivity (conductivity over heat capacity) to steel's.
+ */
+export const METAL_BARS = { cells: 40, hot: 100, cold: 0 } as const;
+
+export type MetalBarsMaterial = 'METAL' | 'ALUMINIUM' | 'COPPER' | 'GOLD' | 'TITANIUM' | 'DIAMOND';
+
+export function metalBars(material: MetalBarsMaterial = 'METAL'): Scene {
+  const { cells, hot, cold } = METAL_BARS;
+  return bar('metalBars', T[material], cells, hot, cold);
+}
+
+/**
+ * `insulationWall`: lava against a wall one cell thick, water on its far side, in a sealed box (the grid's edge holds no heat)
+ * with no empty cell. `lavaWidth` and `waterWidth` are the cells either side; the rows are identical, so heat runs along x
+ * only. `wall` is the element of the wall: aerogel, or basalt for the control of the scenario.
+ */
+export const INSULATION_WALL = { lavaWidth: 12, waterWidth: 12, height: 8 } as const;
+
+export function insulationWall(wall: number = T.INSULATION): Scene {
+  const { lavaWidth, waterWidth, height } = INSULATION_WALL;
+  const width = lavaWidth + 1 + waterWidth;
+  const canvas = new Canvas(width, height);
+  canvas.fill(T.LAVA, 0, lavaWidth, 0, height);
+  canvas.fill(wall, lavaWidth, lavaWidth + 1, 0, height);
+  canvas.fill(T.WATER, lavaWidth + 1, width, 0, height);
+  return { name: 'insulationWall', width, height, fields: canvas.fields, floorY: 0, chambers: [] };
+}
+
+/**
+ * `crucible`: a cup of `cupWall`-thick walls and floor, `inner` cells wide and `depth` deep inside, standing on a floor of WALL
+ * (which holds no heat) and full of molten steel at its painted 1,600 °C. `cup` is the element of the cup and `cupTemp` its
+ * temperature: a cold cup is at room temperature; a preheated ceramic cup is at `PREHEAT`, a little under the steel's, so that
+ * the steel does not meet a cup far colder than itself.
+ */
+export const CRUCIBLE = {
+  inner: 14,
+  depth: 10,
+  cupWall: 2,
+  margin: 3,
+  headroom: 6,
+  /** The temperature of the preheated ceramic cup, 100 K under the steel's 1,600 °C. */
+  preheat: 1500,
+} as const;
+
+/** The cup's own cells: the floor rows, then the two side walls. */
+export function crucibleCup(): { x0: number; x1: number; y0: number; y1: number }[] {
+  const { inner, depth, cupWall, margin } = CRUCIBLE;
+  const x0 = margin;
+  const x1 = margin + inner + 2 * cupWall;
+  return [
+    { x0, x1, y0: WALL, y1: WALL + cupWall },
+    { x0, x1: x0 + cupWall, y0: WALL + cupWall, y1: WALL + cupWall + depth },
+    { x0: x1 - cupWall, x1, y0: WALL + cupWall, y1: WALL + cupWall + depth },
+  ];
+}
+
+export function crucible(cup: number = T.CERAMIC, cupTemp: number = CRUCIBLE.preheat): Scene {
+  const { inner, depth, cupWall, margin, headroom } = CRUCIBLE;
+  const width = inner + 2 * cupWall + 2 * margin;
+  const height = WALL + cupWall + depth + headroom;
+  const canvas = new Canvas(width, height);
+  canvas.fill(T.WALL, 0, width, 0, WALL);
+  canvas.fill(T.MOLTEN_METAL, margin + cupWall, margin + cupWall + inner, WALL + cupWall, WALL + cupWall + depth);
+  for (const { x0, x1, y0, y1 } of crucibleCup()) {
+    canvas.fill(cup, x0, x1, y0, y1);
+    canvas.fillTemp(cupTemp, x0, x1, y0, y1);
+  }
+  return { name: 'crucible', width, height, fields: canvas.fields, floorY: WALL, chambers: [] };
 }
 
 /**
@@ -387,6 +466,17 @@ export const SCENARIO_SCENES: Record<string, () => Scene> = {
   sealedBars: () => sealedBars('METAL'),
   ...version('sealedBars', 'stone', () => sealedBars('STONE')),
   ...version('sealedBars', 'ice', () => sealedBars('ICE')),
+  metalBars: () => metalBars('METAL'),
+  ...version('metalBars', 'aluminium', () => metalBars('ALUMINIUM')),
+  ...version('metalBars', 'copper', () => metalBars('COPPER')),
+  ...version('metalBars', 'gold', () => metalBars('GOLD')),
+  ...version('metalBars', 'titanium', () => metalBars('TITANIUM')),
+  ...version('metalBars', 'diamond', () => metalBars('DIAMOND')),
+  insulationWall: () => insulationWall(T.INSULATION),
+  ...version('insulationWall', 'basalt', () => insulationWall(T.STONE)),
+  crucible: () => crucible(T.CERAMIC),
+  ...version('crucible', 'tungsten', () => crucible(T.TUNGSTEN, ROOM_TEMP)),
+  ...version('crucible', 'cold', () => crucible(T.CERAMIC, ROOM_TEMP)),
   coolingBlock,
   heatedPot: () => heatedPot(),
 };
@@ -511,6 +601,84 @@ export const SCENARIO_INFO: Record<string, SceneInfo> = {
     family: 'sealedBars',
     version: 'ice',
     description: 'An ice bar 12 cells long, halves at -5 and -25 °C: the difference decays with a 23 s time constant.',
+  },
+  metalBars: {
+    label: 'Metal bars',
+    group: 'scenarios',
+    version: 'steel',
+    description: 'A steel bar 40 cells long, halves at 100 and 0 °C: the reference the other metals are timed against.',
+  },
+  'metalBars-aluminium': {
+    label: 'Metal bars (aluminium)',
+    group: 'scenarios',
+    family: 'metalBars',
+    version: 'aluminium',
+    description: 'The same bar in aluminium: heat should cross it 6.9 times as fast as steel (the ratio of the diffusivities).',
+    waitsFor: ['D40'],
+  },
+  'metalBars-copper': {
+    label: 'Metal bars (copper)',
+    group: 'scenarios',
+    family: 'metalBars',
+    version: 'copper',
+    description: 'The same bar in copper: heat should cross it 8.1 times as fast as steel (the ratio of the diffusivities).',
+    waitsFor: ['D40'],
+  },
+  'metalBars-gold': {
+    label: 'Metal bars (gold)',
+    group: 'scenarios',
+    family: 'metalBars',
+    version: 'gold',
+    description: 'The same bar in gold: heat should cross it 8.9 times as fast as steel (the ratio of the diffusivities).',
+    waitsFor: ['D40'],
+  },
+  'metalBars-titanium': {
+    label: 'Metal bars (titanium)',
+    group: 'scenarios',
+    family: 'metalBars',
+    version: 'titanium',
+    description: 'The same bar in titanium, a poorer conductor: heat crosses it 0.65 times as fast as steel.',
+  },
+  'metalBars-diamond': {
+    label: 'Metal bars (diamond)',
+    group: 'scenarios',
+    family: 'metalBars',
+    version: 'diamond',
+    description: 'The same bar in diamond: heat crosses it fastest of all, faster than in any metal.',
+  },
+  insulationWall: {
+    label: 'Aerogel wall',
+    group: 'scenarios',
+    version: 'aerogel',
+    description: 'Lava against a one-cell aerogel wall: the water behind it warms at least 20 times less than behind basalt.',
+  },
+  'insulationWall-basalt': {
+    label: 'Aerogel wall (basalt)',
+    group: 'scenarios',
+    family: 'insulationWall',
+    version: 'basalt',
+    description: 'The same wall in basalt: the water behind it warms many times faster than behind aerogel.',
+  },
+  crucible: {
+    label: 'Crucible',
+    group: 'scenarios',
+    version: 'ceramic',
+    description: 'Molten steel at 1,600 °C in a ceramic cup preheated to 1,500 °C: no cup cell changes in 8 seconds.',
+  },
+  'crucible-tungsten': {
+    label: 'Crucible (tungsten)',
+    group: 'scenarios',
+    family: 'crucible',
+    version: 'tungsten',
+    description: 'The same steel in a cold tungsten cup, which melts only at 3,422 °C: no cup cell changes.',
+  },
+  'crucible-cold': {
+    label: 'Crucible (cold ceramic)',
+    group: 'scenarios',
+    family: 'crucible',
+    version: 'cold',
+    description: 'The same steel in a cold ceramic cup: the shock of the heat should crack it.',
+    waitsFor: ['M8.1k'],
   },
   coolingBlock: {
     label: 'Cooling steel block',

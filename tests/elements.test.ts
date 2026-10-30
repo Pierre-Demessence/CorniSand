@@ -36,6 +36,7 @@ describe('element table', () => {
   it('AC11: describes every current material, the IDs the cells already store', () => {
     expect(ELEMENT).toEqual({ EMPTY: 0, SAND: 1, WALL: 2, WATER: 3, SMOKE: 4, OIL: 5, FIRE: 6, METAL: 7, STONE: 8,
       ICE: 9, STEAM: 10, LAVA: 11, MOLTEN_METAL: 12, GUNPOWDER: 13, GRAVEL: 14, SNOW: 15, BROKEN_GLASS: 16, GLASS: 17, BRICK: 18,
+      ALUMINIUM: 19, COPPER: 20, GOLD: 21, TITANIUM: 22, TUNGSTEN: 23, CERAMIC: 24, DIAMOND: 25, INSULATION: 26,
     });
     expect(() => validateElements(ELEMENTS)).not.toThrow();
     expect(elementByKey(ELEMENTS, 'FIRE').life).toEqual({ start: 200, decay: 4, becomes: 'SMOKE' });

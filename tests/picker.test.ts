@@ -39,8 +39,8 @@ describe('M8.1 AC2 picker tabs', () => {
       Powders: ['Sand', 'Gravel', 'Snow', 'Broken glass'],
       Liquids: ['Water', 'Oil'],
       Gases: ['Smoke'],
-      Solids: ['Wall', 'Basalt', 'Glass', 'Brick'],
-      Metals: ['Metal'],
+      Solids: ['Wall', 'Basalt', 'Glass', 'Brick', 'Ceramic', 'Diamond', 'Aerogel'],
+      Metals: ['Steel', 'Aluminium', 'Copper', 'Gold', 'Titanium', 'Tungsten'],
       Explosives: ['Fire', 'Gunpowder'],
       Tools: ['Heat', 'Cool', 'Wind'],
     });
@@ -86,7 +86,7 @@ describe('M8.1 AC4 search', () => {
   it('matches the label ignoring case, in tab order', () => {
     expect(labels(searchEntries(tabs, 'ea'))).toEqual(['Heat']);
     expect(labels(searchEntries(tabs, 'SAND'))).toEqual(['Sand']);
-    expect(labels(searchEntries(tabs, 'l'))).toEqual(['Gravel', 'Broken glass', 'Oil', 'Wall', 'Basalt', 'Glass', 'Metal', 'Cool']);
+    expect(labels(searchEntries(tabs, 'l'))).toEqual(['Gravel', 'Broken glass', 'Oil', 'Wall', 'Basalt', 'Glass', 'Aerogel', 'Steel', 'Aluminium', 'Gold', 'Cool']);
   });
 
   it('finds tools as well as elements', () => {

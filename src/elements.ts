@@ -319,6 +319,16 @@ const IRON_FUSION = 1944;
 // Silica's heat of fusion: 8.5 kJ/mol (quartz, CRC Handbook) over 60.08 g/mol is 141 kJ/kg; 148 kJ/kg for cristobalite. Glass has no
 // sharp melting point of its own, so every row that melts into molten glass takes this one: 145 kJ/kg times glass's 2,500 kg/m³, in MJ/m³.
 const GLASS_FUSION = 362;
+// Aerogel is the same silica at 150 kg/m³: 145 kJ/kg times 150 kg/m³, 21.75 MJ/m³.
+const AEROGEL_FUSION = 21.75;
+// Heats of fusion in kJ/kg times the solid's density, in MJ/m³ (the heat-capacity unit × °C): aluminium 10.7 kJ/mol (397 kJ/kg), copper
+// 13.0 kJ/mol (205), gold 12.55 kJ/mol (63.7), titanium 14.15 kJ/mol (295), tungsten 52.3 kJ/mol (285), alumina 111 kJ/mol (1,088; CRC Handbook).
+const ALUMINIUM_FUSION = 1072;
+const COPPER_FUSION = 1837;
+const GOLD_FUSION = 1229;
+const TITANIUM_FUSION = 1329;
+const TUNGSTEN_FUSION = 5500;
+const ALUMINA_FUSION = 4298;
 // What the finished look adds to pure water's absorption on every channel, per metre (see the WATER row).
 const WATER_TURBIDITY = 0.085;
 
@@ -424,12 +434,12 @@ export const ELEMENTS = [
     category: 'Explosives',
     description: 'A flame: it lights what is flammable beside it, then fades into smoke.',
   },
-  // Steel-like metal, the best conductor of the table: 50 W/m·K (carbon steel 45 to 60; copper's 400 is eight times it) and
+  // Steel-like metal (the key stays METAL): 50 W/m·K (carbon steel 45 to 60; copper's 400 is eight times it) and
   // 3.5 MJ/m³·K (iron's 0.449 kJ/kg·K at 7,870 kg/m³). Melts at iron's 1,538 °C.
   {
     key: 'METAL',
     id: 7,
-    label: 'Metal',
+    label: 'Steel',
     color: [0.70, 0.74, 0.80],
     state: 'solid',
     density: 7870,
@@ -441,7 +451,7 @@ export const ELEMENTS = [
     look: { grain: 0.02 },
     toolbar: 1,
     category: 'Metals',
-    description: 'Steel-like metal: it carries heat well and melts only at very high temperatures.',
+    description: 'Steel: it carries heat well and melts only at very high temperatures.',
   },
   // Basalt, the rock lava really cools into (and the one LAVA's numbers describe): 2,900 kg/m³ (the average of basalt,
   // 2.9 g/cm³, Wikipedia "Basalt"; granite's 2.7), 2.0 W/m·K (the mean of the 1962 to 1986 measurements, 1.96, Natural Resources
@@ -675,6 +685,142 @@ export const ELEMENTS = [
     toolbar: 4,
     category: 'Solids',
     description: 'Fired clay: it shrugs off lava and breaks into gravel in a blast.',
+  },
+  // Aluminium: 2,700 kg/m³, 237 W/m·K and 2.42 MJ/m³·K (0.897 kJ/kg·K), melting at 660.3 °C (CRC Handbook; Wikipedia, List of
+  // thermal conductivities). Melts into molten metal that sets back into aluminium, far below steel's 1,538 °C.
+  {
+    key: 'ALUMINIUM',
+    id: 19,
+    label: 'Aluminium',
+    color: [0.78, 0.80, 0.83],
+    state: 'solid',
+    density: 2700,
+    conductivity: 237,
+    heatCapacity: 2.42,
+    above: { temp: 660, becomes: 'MOLTEN_METAL', latent: ALUMINIUM_FUSION },
+    look: { grain: 0.02 },
+    toolbar: 2,
+    category: 'Metals',
+    description: 'Light silvery metal: it carries heat almost as well as copper and melts at 660 °C.',
+  },
+  // Copper: 8,960 kg/m³, 401 W/m·K and 3.45 MJ/m³·K (0.385 kJ/kg·K), melting at 1,084.6 °C (CRC Handbook).
+  {
+    key: 'COPPER',
+    id: 20,
+    label: 'Copper',
+    color: [0.80, 0.38, 0.20],
+    state: 'solid',
+    density: 8960,
+    conductivity: 401,
+    heatCapacity: 3.45,
+    above: { temp: 1085, becomes: 'MOLTEN_METAL', latent: COPPER_FUSION },
+    look: { grain: 0.02 },
+    toolbar: 3,
+    category: 'Metals',
+    description: 'Reddish metal that carries heat about eight times better than steel and melts at 1,085 °C.',
+  },
+  // Gold: 19,300 kg/m³, 318 W/m·K and 2.49 MJ/m³·K (0.129 kJ/kg·K), melting at 1,064.2 °C (CRC Handbook). As dense as tungsten, nearly
+  // three times as dense as steel: a molten cell of it sinks under molten steel.
+  {
+    key: 'GOLD',
+    id: 21,
+    label: 'Gold',
+    color: [0.95, 0.72, 0.15],
+    state: 'solid',
+    density: 19300,
+    conductivity: 318,
+    heatCapacity: 2.49,
+    above: { temp: 1064, becomes: 'MOLTEN_METAL', latent: GOLD_FUSION },
+    look: { grain: 0.02 },
+    toolbar: 4,
+    category: 'Metals',
+    description: 'Very heavy yellow metal that carries heat well and melts at 1,064 °C; molten, it sinks under molten steel.',
+  },
+  // Titanium: 4,506 kg/m³, 21.9 W/m·K and 2.36 MJ/m³·K (0.523 kJ/kg·K), melting at 1,668 °C (CRC Handbook; a poorer conductor than steel).
+  {
+    key: 'TITANIUM',
+    id: 22,
+    label: 'Titanium',
+    color: [0.55, 0.57, 0.62],
+    state: 'solid',
+    density: 4506,
+    conductivity: 21.9,
+    heatCapacity: 2.36,
+    above: { temp: 1668, becomes: 'MOLTEN_METAL', latent: TITANIUM_FUSION },
+    look: { grain: 0.02 },
+    toolbar: 5,
+    category: 'Metals',
+    description: 'Strong, light metal that carries heat worse than steel and melts at 1,668 °C.',
+  },
+  // Tungsten: 19,300 kg/m³, 173 W/m·K and 2.55 MJ/m³·K (0.132 kJ/kg·K), melting at 3,422 °C (CRC Handbook), the highest of any metal.
+  {
+    key: 'TUNGSTEN',
+    id: 23,
+    label: 'Tungsten',
+    color: [0.36, 0.37, 0.40],
+    state: 'solid',
+    density: 19300,
+    conductivity: 173,
+    heatCapacity: 2.55,
+    above: { temp: 3422, becomes: 'MOLTEN_METAL', latent: TUNGSTEN_FUSION },
+    look: { grain: 0.02 },
+    toolbar: 6,
+    category: 'Metals',
+    description: 'Dark, very heavy metal that melts only at 3,422 °C, higher than any other metal.',
+  },
+  // Ceramic: alumina, the crucible ceramic: 3,950 kg/m³, 30 W/m·K (99.5% alumina at room temperature, 25 to 35; it falls with
+  // heat) and 3.48 MJ/m³·K (0.88 kJ/kg·K), melting at 2,072 °C (CRC Handbook) into molten ceramic that sets back, far above steel's
+  // melt. It has no crush: a blast does not break it (its cracking by thermal shock is M8.1k's).
+  {
+    key: 'CERAMIC',
+    id: 24,
+    label: 'Ceramic',
+    color: [0.88, 0.85, 0.78],
+    state: 'solid',
+    density: 3950,
+    conductivity: 30,
+    heatCapacity: 3.48,
+    above: { temp: 2072, becomes: 'LAVA', latent: ALUMINA_FUSION },
+    toolbar: 5,
+    category: 'Solids',
+    description: 'Fired alumina, as in a crucible: it holds molten steel and no blast breaks it.',
+  },
+  // Diamond: 3,510 kg/m³, 2,200 W/m·K (type IIa; 1,000 to 2,200) and 1.79 MJ/m³·K (0.509 kJ/kg·K): the best conductor there is. The
+  // game's conduction caps a pair's exchange at their mean (`heatShare`), which this row reaches: heat crosses it as fast as the
+  // grid allows, about four times copper's pace. It mimics no real material in never melting or crushing (the real one turns to
+  // graphite or burns at 700 to 1,500 °C in air and melts only under pressure).
+  {
+    key: 'DIAMOND',
+    id: 25,
+    label: 'Diamond',
+    color: [0.74, 0.92, 0.98],
+    state: 'solid',
+    density: 3510,
+    conductivity: 2200,
+    heatCapacity: 1.79,
+    toolbar: 6,
+    category: 'Solids',
+    description: 'The hardest and best heat-conducting solid: it never melts or breaks here.',
+  },
+  // Silica aerogel, the best insulator that lasts at lava's temperature: 150 kg/m³ (blankets 120 to 200, an estimate), 0.015 W/m·K
+  // (0.013 to 0.020 at room temperature, handbook; mineral wool's 0.04 is too poor a barrier for one cell between lava and water,
+  // see the insulationWall scenario) and 0.15 MJ/m³·K (about 1.0 kJ/kg·K at that density, an estimate), the bulk of the blanket as one
+  // solid. It is amorphous silica: it melts at quartz's 1,713 °C, well over lava's temperature, taking silica's 145 kJ/kg (see
+  // `GLASS_FUSION`) times its own 150 kg/m³, 22 MJ/m³ (`AEROGEL_FUSION`), not the glass row's. The molten cell keeps the aerogel's
+  // ctype and sets back into aerogel, giving out the latent heat it took in (setting into glass would give out glass's 362).
+  {
+    key: 'INSULATION',
+    id: 26,
+    label: 'Aerogel',
+    color: [0.90, 0.80, 0.42],
+    state: 'solid',
+    density: 150,
+    conductivity: 0.015,
+    heatCapacity: 0.15,
+    above: { temp: 1713, becomes: 'LAVA', latent: AEROGEL_FUSION },
+    toolbar: 7,
+    category: 'Solids',
+    description: 'Aerogel, a silica foam: heat passes through it far worse than through stone, and it melts only above the temperature of lava.',
   },
 ] as const satisfies readonly ElementDef[];
 
