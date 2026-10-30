@@ -134,6 +134,12 @@ Water, ice and steam are three rows, as are wax and molten wax, nitrogen in its 
 
 Rejected: one element per substance whose state follows its temperature. Every state needs different properties, so the CA would work out the state before every property read, in every phase and every pass, and the table's rows (one place for a material's numbers, validated, packed for the GPU) would turn into functions of temperature.
 
+## Bench runs are compared back to back; the log is history
+
+`npm run bench:compare <base> [<head>]` benches base, head, base, head in one sitting and reports the change against the gap between the two runs of the same code. The bench refuses to start while another program loads the GPU, so a speed check never needs a baseline taken when an item started, and a busy GPU only postpones the check. `bench/results.jsonl` records every clean run with a fingerprint of the code it measured, so a later session can look up what a state of the code measured (`bench:show`).
+
+Rejected: comparing against a logged run. Two runs of the same code minutes apart differ by up to 20 % (backlog D43), and days apart add driver, clock and heat differences; only runs taken back to back tell a change from noise. A fixed pass/fail threshold on one run for the same reason.
+
 ## Molten elements remember what they set into
 
 LAVA and MOLTEN_METAL are shared by many materials: lava for rock, glass, ceramic and aerogel, molten metal for the six metals. A cell that melts into one writes the element it melted from, or its `setsInto` (sand sets into glass, not sand), as its ctype in `kind` bits 16–23, and the molten cell sets back into that element, at that element's threshold and latent heat. Its order against other elements by density, its readout name ("Molten gold"; "Lava" for basalt) and its color follow the ctype too, so molten gold sinks under molten steel.

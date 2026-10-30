@@ -8,6 +8,8 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
     "isolatedModules": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
@@ -15,5 +17,5 @@
     "outDir": "dist",
     "types": ["@webgpu/types", "node"]
   },
-  "include": ["src", "tests", "vite.config.ts", "vitest.bench.config.ts"]
+  "include": ["src", "tests", "bench", "vite.config.ts", "vitest.bench.config.ts"]
 }

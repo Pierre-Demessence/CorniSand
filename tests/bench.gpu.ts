@@ -1,3 +1,4 @@
+import { writeFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { type CellData, tempView } from '../src/cell-fields';
 import { ELEMENT as T } from '../src/elements';
@@ -18,7 +19,8 @@ import { mulberry32 } from '../src/random';
 // passes show in the breakdown under their own labels, and their sum in the `air` column. Every measured frame also
 // renders into a screen-sized texture after the simulation; the render passes show under `render:` labels, their sum
 // in the `render` column (the `sum` column is the simulation's alone). Every scene runs in the finished and in the cells
-// look (the `look` column); BENCH_LOOKS=cells narrows it to one.
+// look (the `look` column); BENCH_LOOKS=cells narrows it to one. BENCH_OUT=<path> also writes the adapter and the two
+// tables there as JSON (bench/bench.ts sets it to log a run).
 
 const WIDTH = 2560;
 const HEIGHT = 1340;
@@ -333,6 +335,7 @@ describe.skipIf(!device)('bench', () => {
     console.table(rows);
     console.log('GPU ms per 1x frame by pass (mean of the frames, every pass split into its own compute pass):');
     console.table(breakdown);
+    if (process.env.BENCH_OUT) writeFileSync(process.env.BENCH_OUT, JSON.stringify({ adapter: description, rows, breakdown }));
     if (!only && !splitOnly) expect(rows).toHaveLength(SPEEDS.length * scenes.length * airRuns.length * looks.length);
   });
 

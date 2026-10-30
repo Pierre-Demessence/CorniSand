@@ -9,7 +9,9 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "vitest run",
-    "bench": "vitest run --config vitest.bench.config.ts",
+    "bench": "node bench/bench.ts run",
+    "bench:compare": "node bench/bench.ts compare",
+    "bench:show": "node bench/bench.ts show",
     "preview": "vite preview"
   },
   "devDependencies": {
