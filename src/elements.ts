@@ -388,7 +388,7 @@ const WATER_TURBIDITY = 0.085;
 // air's surface coefficient (`AIR.surfaceCoefficient`), whatever the material.
 export const ELEMENTS = [
   // Empty space is air: 1.2 kg/m³ at 20 °C, and its density at its air cell's temperature follows the ideal-gas law.
-  { key: 'EMPTY', id: 0, label: 'Empty', color: [0.06, 0.06, 0.08], state: 'empty', density: 1.2 },
+  { key: 'EMPTY', id: 0, label: 'Air', color: [0.06, 0.06, 0.08], state: 'empty', density: 1.2 },
   // Dry sand: 0.27 W/m·K (0.25 to 0.35 for dry quartz sand) and 1.3 MJ/m³·K (1,600 kg/m³ at 0.8 kJ/kg·K).
   // Angle of repose 34° (dry sand 30 to 35°: Wikipedia's table 34°, Dartmouth's engineering notes 35° for dry irregular sand).
   // Quartz melts at 1,713 °C (cristobalite's melting point) into molten glass, which sets into glass.

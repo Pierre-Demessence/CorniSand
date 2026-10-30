@@ -8,7 +8,7 @@ const element = (id: number): ElementDef => ELEMENTS.find((e) => e.id === id)!;
 
 describe('M6 AC23: the readout line', () => {
   it('shows the air temperature and pressure for empty space', () => {
-    expect(formatProbe(element(T.EMPTY), { type: T.EMPTY, temp: 0, pressure: 1.2, airTemp: 23.4 })).toBe('Empty · 23 °C · pressure +1.20');
+    expect(formatProbe(element(T.EMPTY), { type: T.EMPTY, temp: 0, pressure: 1.2, airTemp: 23.4 })).toBe('Air · 23 °C · pressure +1.20');
   });
 
   it('shows the pressure after a material\'s own temperature', () => {
@@ -21,7 +21,7 @@ describe('M6 AC23: the readout line', () => {
 
   it('ends after the temperature without air', () => {
     expect(formatProbe(element(T.SAND), { type: T.SAND, temp: 25 })).toBe('Sand · 25 °C');
-    expect(formatProbe(element(T.EMPTY), { type: T.EMPTY, temp: 0 })).toBe('Empty');
+    expect(formatProbe(element(T.EMPTY), { type: T.EMPTY, temp: 0 })).toBe('Air');
   });
 
   it('writes a pressure that rounds to zero without a sign', () => {
