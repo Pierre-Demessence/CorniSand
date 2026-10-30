@@ -478,6 +478,105 @@ export function showcase(): Scene {
   return { name: 'showcase', width, height, fields: canvas.fields, floorY: WALL, chambers: [] };
 }
 
+/**
+ * `materials`: a lab of the M8.1 materials in five walled rooms side by side, each open at the top (the grid edge
+ * closes it). Rectangles are [x0, x1) by [y0, y1); `widths` lists the rooms from left to right and `materialsRooms`
+ * lays them out.
+ */
+export const MATERIALS = {
+  height: 80,
+  widths: { blast: 72, lava: 66, column: 24, pane: 36, nitrogen: 20 },
+  /** A pool `depth` deep at lava's 1,300 °C with a block of each metal and of ceramic on its floor; ceramic starts preheated to `ceramicTemp`, within its shock limit of the lava. */
+  lava: { depth: 24, block: 6, blockHeight: 8, gap: 3, ceramicTemp: 1200 },
+  /** Four layers of `layer` rows, the lightest at the bottom: they swap into the order of their densities. */
+  column: { layer: 8 },
+  /**
+   * A charge of gunpowder `charge` wide by `chargeHeight` tall with a lit cell on its left, and from its right edge
+   * (`from` is the gap to the first, `x` the offset of each) blocks that a blast breaks (the blast crushes them in the
+   * order of their toughness) or leaves whole (ceramic, diamond); the glass is a pane.
+   */
+  blast: {
+    charge: 8, chargeHeight: 6, fire: 1,
+    blocks: [
+      { type: T.STONE, x: 6, width: 5, height: 8 },
+      { type: T.BRICK, x: 15, width: 5, height: 8 },
+      { type: T.GLASS, x: 24, width: 2, height: 14 },
+      { type: T.ICE, x: 31, width: 5, height: 8 },
+      { type: T.CERAMIC, x: 42, width: 5, height: 8 },
+      { type: T.DIAMOND, x: 51, width: 5, height: 8 },
+    ],
+  },
+  /** A glass pane at `temp` with a drop of water released `gap` rows over it: the water is 280 K colder than the glass, well past the 150 K that cracks it. */
+  pane: { thickness: 4, temp: 300, dropWidth: 4, dropHeight: 2, gap: 8 },
+  /** Water under liquid nitrogen: it freezes some of the water and boils off into a gas that rises. */
+  nitrogen: { water: 12, nitrogen: 8 },
+};
+
+export type MaterialsRoom = keyof typeof MATERIALS.widths;
+
+export const MATERIALS_ROOMS = Object.keys(MATERIALS.widths) as MaterialsRoom[];
+
+/** The columns [x0, x1) inside each room of the `materials` scene, and the scene's width. */
+export function materialsRooms(): { rooms: Record<MaterialsRoom, { x0: number; x1: number }>; width: number } {
+  let x = WALL;
+  const rooms = {} as Record<MaterialsRoom, { x0: number; x1: number }>;
+  for (const name of MATERIALS_ROOMS) {
+    rooms[name] = { x0: x, x1: x + MATERIALS.widths[name] };
+    x += MATERIALS.widths[name] + WALL;
+  }
+  return { rooms, width: x };
+}
+
+/**
+ * A lab of the new materials: blocks of six metals and ceramic in a lava pool (aluminium melts first; copper and gold
+ * need longer, titanium, tungsten and ceramic stay), mercury, water, oil and sawdust stacked in the wrong order so they swap into the right
+ * one, a gunpowder charge with basalt, brick, glass, ice, ceramic and diamond beside it, a hot glass pane that a drop
+ * of water cracks, and a pool of liquid nitrogen over water.
+ */
+export function materials(): Scene {
+  const { height, lava, column, blast, pane, nitrogen } = MATERIALS;
+  const { rooms, width } = materialsRooms();
+  const canvas = new Canvas(width, height);
+  canvas.fill(T.WALL, 0, width, 0, WALL);
+  canvas.fill(T.WALL, 0, WALL, 0, height);
+  for (const name of MATERIALS_ROOMS) canvas.fill(T.WALL, rooms[name].x1, rooms[name].x1 + WALL, 0, height);
+
+  const lavaRoom = rooms.lava;
+  canvas.fill(T.LAVA, lavaRoom.x0, lavaRoom.x1, WALL, WALL + lava.depth);
+  [T.METAL, T.ALUMINIUM, T.COPPER, T.GOLD, T.TITANIUM, T.TUNGSTEN, T.CERAMIC].forEach((type, i) => {
+    const x0 = lavaRoom.x0 + lava.gap + i * (lava.block + lava.gap);
+    canvas.fill(type, x0, x0 + lava.block, WALL, WALL + lava.blockHeight);
+    if (type === T.CERAMIC) canvas.fillTemp(lava.ceramicTemp, x0, x0 + lava.block, WALL, WALL + lava.blockHeight);
+  });
+
+  const columnRoom = rooms.column;
+  [T.SAWDUST, T.OIL, T.WATER, T.MERCURY].forEach((type, i) => {
+    canvas.fill(type, columnRoom.x0, columnRoom.x1, WALL + i * column.layer, WALL + (i + 1) * column.layer);
+  });
+
+  const blastRoom = rooms.blast;
+  const chargeX0 = blastRoom.x0 + blast.fire + 1;
+  const chargeX1 = chargeX0 + blast.charge;
+  canvas.fill(T.GUNPOWDER, chargeX0, chargeX1, WALL, WALL + blast.chargeHeight);
+  canvas.fire(chargeX0 - 1, WALL + 2);
+  for (const block of blast.blocks) {
+    canvas.fill(block.type, chargeX1 + block.x, chargeX1 + block.x + block.width, WALL, WALL + block.height);
+  }
+
+  const paneRoom = rooms.pane;
+  canvas.fill(T.GLASS, paneRoom.x0, paneRoom.x1, WALL, WALL + pane.thickness);
+  canvas.fillTemp(pane.temp, paneRoom.x0, paneRoom.x1, WALL, WALL + pane.thickness);
+  const dropX0 = ((paneRoom.x0 + paneRoom.x1) >> 1) - (pane.dropWidth >> 1);
+  const dropY0 = WALL + pane.thickness + pane.gap;
+  canvas.fill(T.WATER, dropX0, dropX0 + pane.dropWidth, dropY0, dropY0 + pane.dropHeight);
+
+  const nitrogenRoom = rooms.nitrogen;
+  canvas.fill(T.WATER, nitrogenRoom.x0, nitrogenRoom.x1, WALL, WALL + nitrogen.water);
+  canvas.fill(T.LIQUID_NITROGEN, nitrogenRoom.x0, nitrogenRoom.x1, WALL + nitrogen.water, WALL + nitrogen.water + nitrogen.nitrogen);
+
+  return { name: 'materials', width, height, fields: canvas.fields, floorY: WALL, chambers: [] };
+}
+
 export const SCENES: Record<string, () => Scene> = {
   uTube,
   basin,
@@ -495,6 +594,7 @@ export const SCENES: Record<string, () => Scene> = {
   mound,
   physics,
   showcase,
+  materials,
   ...SCENARIO_SCENES,
 };
 
@@ -608,6 +708,11 @@ export const SCENE_INFO: Record<string, SceneInfo> = {
     label: 'Showcase',
     group: 'labs',
     description: 'One of everything the finished look draws; press C to see the cells look.',
+  },
+  materials: {
+    label: 'Materials lab',
+    group: 'labs',
+    description: 'Metals in lava, a stack of liquids, a blast, a hot pane and a water drop, and liquid nitrogen on water.',
   },
   ...SCENARIO_INFO,
 };

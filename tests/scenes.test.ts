@@ -7,7 +7,7 @@ import {
   HOURGLASS, SCENARIO_SCENES, THERMOMETER, crucible, densityColumn, freeFall, heatedLayer, hourglass, iceCup, insulationWall, metalBars, nitrogenOnWater, sealedBars, steamBurn, thermometer,
 } from '../src/scenarios';
 import {
-  BLAST, BLAST_CENTER, BLAST_MARK, EXPLOSION, explosion, findScene, HEAT_BARS, heatBars, ICE_LAVA, iceLava, MOLTEN_METAL, moltenMetal, PHYSICS, PHYSICS_ROOMS, physicsRooms, PLUME, plume, DESCRIPTION_MAX, SCENE_GROUPS, SCENE_INFO, SCENES, SHOWCASE, STEAM_CEILING, steamCeiling, uTube,
+  BLAST, BLAST_CENTER, BLAST_MARK, EXPLOSION, explosion, findScene, HEAT_BARS, heatBars, ICE_LAVA, iceLava, MOLTEN_METAL, moltenMetal, MATERIALS, MATERIALS_ROOMS, materialsRooms, PHYSICS, PHYSICS_ROOMS, physicsRooms, PLUME, plume, DESCRIPTION_MAX, SCENE_GROUPS, SCENE_INFO, SCENES, SHOWCASE, STEAM_CEILING, steamCeiling, uTube,
   type PhysicsRoom,
 } from '../src/scenes';
 import { chamberLevel, liquidVolume } from './metrics';
@@ -128,7 +128,8 @@ describe('scenes', () => {
     const { pond } = physicsRooms().rooms;
     for (const [name, build] of Object.entries(SCENES)) {
       // The scenario scenes set their own temperatures (M8.9).
-      if (name === 'heatBars' || Object.hasOwn(SCENARIO_SCENES, name)) continue;
+      // `materials` sets the lava, the hot pane and the preheated ceramic; its own test checks them.
+      if (name === 'heatBars' || name === 'materials' || Object.hasOwn(SCENARIO_SCENES, name)) continue;
       const { fields, width } = build();
       const temp = tempView(fields);
       for (let i = 0; i < temp.length; i++) {
@@ -251,6 +252,70 @@ describe('scenes', () => {
     expect([at(0, height - 1), at(width - 1, height - 1), at(width / 2, height - 1)], 'walls at the sides, open at the top').toEqual([T.WALL, T.WALL, T.EMPTY]);
     expect(at(width / 2, 0), 'a floor').toBe(T.WALL);
     for (const s of smoke) expect(at(s.x0, s.y0), 'smoke rests on the floor').toBe(T.SMOKE);
+  });
+
+  it('M8.1 AC25: lay out the materials lab as five walled rooms with every cell inside the grid and each experiment where it belongs', () => {
+    const scene = findScene('materials')!;
+    const { fields, width, height } = scene;
+    const { rooms, width: expected } = materialsRooms();
+    const { lava, column, blast, pane, nitrogen } = MATERIALS;
+    expect([width, height]).toEqual([expected, MATERIALS.height]);
+    for (const field of CELL_FIELDS) expect(fields[field.name], field.name).toHaveLength(width * height);
+    const temp = tempView(fields);
+    const at = (x: number, y: number): number => fields.kind[y * width + x] & 0xff;
+    const count = (type: number, x0: number, x1: number): number => {
+      let n = 0;
+      for (let y = 0; y < height; y++) for (let x = x0; x < x1; x++) if (at(x, y) === type) n++;
+      return n;
+    };
+    for (const name of MATERIALS_ROOMS) {
+      expect(at(rooms[name].x1, height - 1), `wall right of ${name}`).toBe(T.WALL);
+      expect(at(rooms[name].x0, 0), `floor of ${name}`).toBe(T.WALL);
+    }
+
+    // Lava pool with a block of each metal and of ceramic, ceramic preheated.
+    const lavaRoom = rooms.lava;
+    expect(count(T.LAVA, lavaRoom.x0, lavaRoom.x1), 'lava around the blocks').toBe((lavaRoom.x1 - lavaRoom.x0) * lava.depth - 7 * lava.block * lava.blockHeight);
+    const blockTypes = [T.METAL, T.ALUMINIUM, T.COPPER, T.GOLD, T.TITANIUM, T.TUNGSTEN, T.CERAMIC];
+    blockTypes.forEach((type, i) => {
+      const x0 = lavaRoom.x0 + lava.gap + i * (lava.block + lava.gap);
+      expect(count(type, lavaRoom.x0, lavaRoom.x1), `block ${i}`).toBe(lava.block * lava.blockHeight);
+      expect(at(x0 + 1, WALL + lava.blockHeight - 1)).toBe(type);
+      expect(at(x0 - 1, WALL + 1), 'lava beside the block').toBe(T.LAVA);
+      expect(temp[(WALL + 1) * width + x0 + 1], `temperature of block ${i}`).toBe(Math.fround(type === T.CERAMIC ? lava.ceramicTemp : elementTemperature(ELEMENTS.find((e) => e.id === type)!)));
+    });
+    expect(temp[(WALL + 1) * width + lavaRoom.x0], 'lava').toBe(Math.fround(1300));
+
+    // The column: four liquids and a powder, lightest first, so they swap.
+    const columnRoom = rooms.column;
+    [T.SAWDUST, T.OIL, T.WATER, T.MERCURY].forEach((type, i) => {
+      expect(at(columnRoom.x0, WALL + i * column.layer), `layer ${i} bottom`).toBe(type);
+      expect(at(columnRoom.x1 - 1, WALL + (i + 1) * column.layer - 1), `layer ${i} top`).toBe(type);
+    });
+
+    // The blast room: a charge with one lit cell, then each block.
+    const blastRoom = rooms.blast;
+    expect(count(T.GUNPOWDER, blastRoom.x0, blastRoom.x1)).toBe(blast.charge * blast.chargeHeight);
+    expect(count(T.FIRE, blastRoom.x0, blastRoom.x1)).toBe(1);
+    for (const block of blast.blocks) expect(count(block.type, blastRoom.x0, blastRoom.x1), `type ${block.type}`).toBe(block.width * block.height);
+    const last = blast.blocks[blast.blocks.length - 1];
+    expect(blastRoom.x0 + blast.fire + 1 + blast.charge + last.x + last.width, 'the last block is inside the room').toBeLessThanOrEqual(blastRoom.x1);
+
+    // The pane at 300 °C and the drop of water over it.
+    const paneRoom = rooms.pane;
+    expect(count(T.GLASS, paneRoom.x0, paneRoom.x1)).toBe((paneRoom.x1 - paneRoom.x0) * pane.thickness);
+    expect(temp[WALL * width + paneRoom.x0]).toBe(pane.temp);
+    expect(count(T.WATER, paneRoom.x0, paneRoom.x1)).toBe(pane.dropWidth * pane.dropHeight);
+    let lowestDrop = height;
+    for (let y = 0; y < height; y++) for (let x = paneRoom.x0; x < paneRoom.x1; x++) if (at(x, y) === T.WATER) lowestDrop = Math.min(lowestDrop, y);
+    expect(lowestDrop - (WALL + pane.thickness), 'the drop hangs over the pane').toBe(pane.gap);
+
+    // Liquid nitrogen at its painted temperature over water.
+    const nitrogenRoom = rooms.nitrogen;
+    const cells = (nitrogenRoom.x1 - nitrogenRoom.x0);
+    expect(count(T.WATER, nitrogenRoom.x0, nitrogenRoom.x1)).toBe(cells * nitrogen.water);
+    expect(count(T.LIQUID_NITROGEN, nitrogenRoom.x0, nitrogenRoom.x1)).toBe(cells * nitrogen.nitrogen);
+    expect(temp[(WALL + nitrogen.water) * width + nitrogenRoom.x0], 'liquid nitrogen').toBe(Math.fround(-196));
   });
 
   it('M8.8 AC17: lay out the physics scene as eight walled rooms side by side, every cell inside the grid', () => {
