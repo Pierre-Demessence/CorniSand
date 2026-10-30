@@ -1,6 +1,6 @@
 # Volume changes
 
-Research for backlog I22, not a plan: nothing here is decided. A cell is one unit of matter in every state (the comment above `ELEMENTS` in `src/elements.ts`; `docs/simulation.md`, "Heat"), so nothing changes volume: mercury does not swell when heated, water does not grow when it freezes, and a boiling water cell becomes one steam cell, a burst of air pressure standing in for its expansion (`Transition.burst`, the WATER row). This doc gathers how matter could change volume, what it costs in this engine, and what to decide. It is roadmap M12.5, to be confirmed: once M8.1 adds MERCURY and GLASS, the `thermometer` scenario decides between A, B and C (Options). Nothing else in the roadmap waits on it.
+Research for backlog I22, not a plan: nothing here is decided but that matter will change volume. A cell is one unit of matter in every state (the comment above `ELEMENTS` in `src/elements.ts`; `docs/simulation.md`, "Heat"), so nothing changes volume: mercury does not swell when heated, water does not grow when it freezes, and a boiling water cell becomes one steam cell, a burst of air pressure standing in for its expansion (`Transition.burst`, the WATER row). This doc gathers how matter could change volume, what it costs in this engine, and what to decide. It is roadmap M12.5, after M12.14 gives each material its states and its own liquid: A (Options) is ruled out, and M12.5's plan decides between B and C, the `thermometer` scenario judging C. M12.15 (boiling metals) waits on it. Beyond ice and the thermometer, the errors it removes are larger: a snow cell (300 kg/m³) melts into a whole water cell, about three times the water it holds, and sand (1,600) or gravel (1,800) melt into as many glass or basalt cells (2,500 and 2,900 kg/m³), where real glass or basalt would fill about two thirds of them.
 
 ## Sizes
 
@@ -57,7 +57,7 @@ TPT's exaggerated mercury is not an option: "Real physics first" (`docs/decision
 
 ## Open questions
 
-- A, B or C: is a thermometer that reads (a 7-cell rise) worth a large plan and, for C, 11 to 13 bits of amount per cell (Storage)? Judge on the `thermometer` scenario (a 33×33 mercury bulb under a one-cell-wide glass tube, one mark per 5 °C) once M8.1 adds MERCURY and GLASS.
+- B or C: is a thermometer that reads (a 7-cell rise) worth 11 to 13 bits of amount per cell (Storage)? Judge on the `thermometer` scenario (a 33×33 mercury bulb under a one-cell-wide glass tube, one mark per 5 °C).
 - Liquids and solids only, or gases too: `densityAt` gives a gas the ideal-gas law, so C taken literally makes smoke at 1,000 °C fill 4.3 times the cells it fills at 20 °C (roadmap M8.3 lists gases that expand when heated).
 - Steam's `k`, if any (I25).
 - Which transitions carry the amount: a phase change of one substance does, burning does not; sand melting into glass would lose a third of its volume if it does (SAND's 1,600 kg/m³ counts the air between its grains, glass is about 2,500).

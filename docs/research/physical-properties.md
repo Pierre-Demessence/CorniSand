@@ -163,6 +163,7 @@ Each is written into its slice of `docs/roadmap.md`; the data stays here for tha
 - **Weather and a water cycle**: saturated air at 20 °C holds 17.3 g/m³ of vapor, a water cell's mass in about 58,000 cells of air, so a whole 2560×1340 grid of air holds about 60 water cells. Still water evaporates about 0.1–0.2 mm an hour at room temperature: a one-cell puddle dries in 7 to 14 hours. Backlog I25 is the same fact from the other side: the air cannot take a steam cell's latent heat.
 - **Diffusion as a mechanic**: a dye spreads through water by diffusion about one cell in half an hour (`D` ≈ 0.4–0.7×10⁻⁹ m²/s); liquids mix by flowing, which the CA already does.
 - **Real-speed sound and shock waves**: D33.
+- **Melting points that follow the pressure**: ice melts 0.0075 °C lower per atmosphere of extra pressure (the Clausius–Clapeyron slope from its latent heat and its 9% change of volume), so one degree takes about 135 atmospheres, and other materials move as little. Boiling points do move with the pressure (M8.3).
 - **Conductivity that changes with temperature**: tens of percent (water's 0.56 to 0.68 W/m·K from 0 to 100 °C; carbon steel's about halves by 800 °C), small next to the factors above. Heat capacity is not ruled out: steel's moves by a factor of ten (Heat capacity by temperature).
 
 ## Observables
