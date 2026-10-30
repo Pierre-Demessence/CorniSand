@@ -9,14 +9,4 @@ fn graphics_fire(c: Cell, color: vec3f) -> vec3f {
   return mix(dim, color, t);
 }
 `,
-  // A molten cell: its row's color pulled toward the color of the element it sets into and darkened, so what it melted from
-  // shows through and the glow of its temperature, added after, still makes it brighter as it heats. One with no ctype keeps its
-  // table color.
-  molten: /* wgsl */`
-fn graphics_molten(c: Cell, color: vec3f) -> vec3f {
-  let k = kindMelt(c.kind);
-  if (k == 0u) { return color; }
-  return mix(color, elColor(k), 0.6) * 0.65;
-}
-`,
 };

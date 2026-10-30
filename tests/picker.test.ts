@@ -116,18 +116,18 @@ describe('M8.1 AC31 paintTarget', () => {
   const target = (key: keyof typeof ELEMENT, temp: number) => paintTarget(ELEMENTS, ELEMENT[key], temp);
 
   it('follows the transitions the temperature passes', () => {
-    expect(target('WATER', -10)).toEqual({ id: ELEMENT.ICE, ctype: 0, ignites: false });
-    expect(target('WATER', 20)).toEqual({ id: ELEMENT.WATER, ctype: 0, ignites: false });
-    expect(target('WATER', 110)).toEqual({ id: ELEMENT.STEAM, ctype: 0, ignites: false });
-    expect(target('STONE', 1300)).toEqual({ id: ELEMENT.LAVA, ctype: ELEMENT.STONE, ignites: false });
-    expect(target('METAL', 1600)).toEqual({ id: ELEMENT.MOLTEN_METAL, ctype: ELEMENT.METAL, ignites: false });
-    expect(target('ICE', 20)).toEqual({ id: ELEMENT.WATER, ctype: 0, ignites: false });
-    expect(target('STEAM', 20)).toEqual({ id: ELEMENT.WATER, ctype: 0, ignites: false });
+    expect(target('WATER', -10)).toEqual({ id: ELEMENT.ICE, ignites: false });
+    expect(target('WATER', 20)).toEqual({ id: ELEMENT.WATER, ignites: false });
+    expect(target('WATER', 110)).toEqual({ id: ELEMENT.STEAM, ignites: false });
+    expect(target('STONE', 1300)).toEqual({ id: ELEMENT.LAVA, ignites: false });
+    expect(target('METAL', 1600)).toEqual({ id: ELEMENT.MOLTEN_METAL, ignites: false });
+    expect(target('ICE', 20)).toEqual({ id: ELEMENT.WATER, ignites: false });
+    expect(target('STEAM', 20)).toEqual({ id: ELEMENT.WATER, ignites: false });
   });
 
-  it('M8.1 AC32: a molten element painted as itself has no ctype, and one that cools to its solid has none either', () => {
-    expect(target('LAVA', 1300)).toEqual({ id: ELEMENT.LAVA, ctype: 0, ignites: false });
-    expect(target('LAVA', 1000)).toEqual({ id: ELEMENT.STONE, ctype: 0, ignites: false });
+  it('M8.1 AC32: a liquid painted at its own temperature is itself, and one that cools to its solid is the solid', () => {
+    expect(target('LAVA', 1300)).toEqual({ id: ELEMENT.LAVA, ignites: false });
+    expect(target('LAVA', 1000)).toEqual({ id: ELEMENT.STONE, ignites: false });
   });
 
   it('stays at exactly a threshold', () => {
@@ -137,15 +137,15 @@ describe('M8.1 AC31 paintTarget', () => {
   });
 
   it('never paints fire: a flammable row past its ignition is itself, flagged as igniting', () => {
-    expect(target('OIL', 300)).toEqual({ id: ELEMENT.OIL, ctype: 0, ignites: true });
+    expect(target('OIL', 300)).toEqual({ id: ELEMENT.OIL, ignites: true });
     expect(target('OIL', 250).ignites).toBe(false);
-    expect(target('GUNPOWDER', 500)).toEqual({ id: ELEMENT.GUNPOWDER, ctype: 0, ignites: true });
+    expect(target('GUNPOWDER', 500)).toEqual({ id: ELEMENT.GUNPOWDER, ignites: true });
   });
 
   it('gives a row with nothing to pass back as itself', () => {
-    expect(target('BRICK', 9000)).toEqual({ id: ELEMENT.BRICK, ctype: 0, ignites: false });
-    expect(target('SAND', 2000), 'sand past its melting point is molten glass').toEqual({ id: ELEMENT.LAVA, ctype: ELEMENT.GLASS, ignites: false });
-    expect(target('FIRE', 1000)).toEqual({ id: ELEMENT.FIRE, ctype: 0, ignites: false });
+    expect(target('BRICK', 9000)).toEqual({ id: ELEMENT.BRICK, ignites: false });
+    expect(target('SAND', 2000), 'sand past its melting point is molten glass').toEqual({ id: ELEMENT.MOLTEN_GLASS, ignites: false });
+    expect(target('FIRE', 1000)).toEqual({ id: ELEMENT.FIRE, ignites: false });
   });
 
   it('paints every row except EMPTY: it has a button, or a button row at its own temperature makes it', () => {
@@ -211,7 +211,7 @@ describe('M8.1 AC33 paint temperature', () => {
     const lava = searchEntries(tabs, 'lava', ELEMENTS);
     expect(lava[0]).toMatchObject({ id: ELEMENT.STONE, label: 'Lava', temperature: 1300 });
     expect(labels(searchEntries(tabs, 'ice', ELEMENTS))).toEqual(['Ice']);
-    expect(labels(searchEntries(tabs, 'molten', ELEMENTS))).toEqual(['Molten metal', 'Molten wax']);
+    expect(labels(searchEntries(tabs, 'molten', ELEMENTS))).toEqual(['Molten steel', 'Molten wax', 'Molten aluminium', 'Molten copper', 'Molten gold', 'Molten titanium', 'Molten tungsten', 'Molten glass', 'Molten ceramic', 'Molten aerogel']);
     expect(searchEntries(tabs, 'empty', ELEMENTS)).toEqual([]);
     for (const hit of [...steam, ...lava]) expect(hit.description.trim()).not.toBe('');
   });

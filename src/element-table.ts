@@ -45,16 +45,14 @@ export const PROP_FIELDS: readonly PropField[] = [
   { name: 'aboveWidth', wgslType: 'f32', value: (e) => (e.above ? latentWidth(e, e.above) : 0) },
   // The ID of the element a cell becomes: below in bits 0-7, above in bits 8-15, the pressure transition (or, for a row that
   // only cracks from thermal shock, the element it cracks into) in bits 16-23.
-  // 0 (EMPTY) when absent, which no cell reaches since the threshold is out of range. Bits 24-31: the ctype a cell gets
-  // when it passes the above into a molten element (its `setsInto`, by default the row itself), 0 for any other above.
+  // 0 (EMPTY) when absent, which no cell reaches since the threshold is out of range. Bits 24-31 are free.
   {
     name: 'transitions',
     wgslType: 'u32',
     value: (e, all) =>
       (e.below ? elementByKey(all, e.below.becomes).id : 0)
       | ((e.above ? elementByKey(all, e.above.becomes).id : 0) << 8)
-      | ((e.pressureAbove || e.cracksInto ? elementByKey(all, (e.pressureAbove?.becomes ?? e.cracksInto)!).id : 0) << 16)
-      | ((e.above && elementByKey(all, e.above.becomes).molten ? elementByKey(all, e.above.setsInto ?? e.key).id : 0) << 24),
+      | ((e.pressureAbove || e.cracksInto ? elementByKey(all, (e.pressureAbove?.becomes ?? e.cracksInto)!).id : 0) << 16),
   },
   // The pressure the cell releases into the air as it passes the above threshold, or ignites into FIRE.
   { name: 'aboveBurst', wgslType: 'f32', value: (e) => (e.above ? transitionBurst(e.above) : 0) },
@@ -69,8 +67,8 @@ export const PROP_FIELDS: readonly PropField[] = [
   { name: 'spread', wgslType: 'f32', value: (e) => elementSpread(e) },
   // The sideways speed a powder grain gets when it slides off a step, in cells per dispatch, from its angle of repose (0 for everything else).
   { name: 'slide', wgslType: 'f32', value: (e) => elementSlide(e) },
-  // Whether the element is molten: its cells carry a ctype, the element they set into.
-  { name: 'molten', wgslType: 'u32', value: (e) => (e.molten ? 1 : 0) },
+  // Padding.
+  { name: 'pad2', wgslType: 'u32', value: () => 0 },
   // The temperature difference to a neighbor above which the cell cracks into the element in bits 16-23 of `transitions`
   // (`shockLimit`); 0 for a row that cannot crack.
   { name: 'shockLimit', wgslType: 'f32', value: (e) => shockLimit(e) ?? 0 },

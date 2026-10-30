@@ -7,6 +7,7 @@ import type { Look, LookSettings } from '../src/look';
 import type { Simulation } from '../src/simulation';
 import { gaussian } from './air-pulse';
 import { cell, createSim, device, runMany } from './gpu';
+import { MOLTEN_LIQUIDS } from './molten-table';
 
 // M11's tests of the finished look (docs/rendering.md). One grid cell per pixel; the width is a multiple of 64
 // so a row of pixels is a multiple of 256 bytes, the alignment a texture copy needs.
@@ -184,8 +185,8 @@ describe.skipIf(!device)('M11.2 grain', () => {
   });
 
   it('M11 AC4: variant 0 is the table color and the mean shade over the 256 variants is within 1 step of it', async () => {
-    // Empty space is the wall. Lava, molten metal and fire are not their table color: they glow or take it from their life.
-    for (const e of ROWS.filter((row) => !['EMPTY', 'LAVA', 'MOLTEN_METAL', 'FIRE'].includes(row.key))) {
+    // Empty space is the wall. The molten liquids and fire are not their table color: they glow or take it from their life.
+    for (const e of ROWS.filter((row) => !['EMPTY', 'FIRE', ...MOLTEN_LIQUIDS].includes(row.key))) {
       const pixels = await variantsOf(e.id);
       pixelAt(pixels, width, 0, 0).forEach((channel, c) => {
         expect(Math.abs(channel - e.color[c] * 255), `${e.key} variant 0, channel ${c}`).toBeLessThanOrEqual(1);

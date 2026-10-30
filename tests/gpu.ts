@@ -59,9 +59,9 @@ export const idleInput: SimulationInput = {
   particleType: ELEMENT.SAND,
 };
 
-// A `kind` word; a molten `type` takes the `ctype` it sets into.
-export function cell(type: number, variant = 0, ctype = 0): number {
-  return kindWord(type, variant, ctype);
+// A `kind` word.
+export function cell(type: number, variant = 0): number {
+  return kindWord(type, variant);
 }
 
 export function cellType(c: number): number {

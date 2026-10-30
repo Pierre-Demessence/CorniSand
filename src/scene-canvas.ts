@@ -2,8 +2,8 @@ import { emptyCellData, kindWord, tempView, type CellData } from './cell-fields'
 import { ELEMENT as T, ELEMENTS, elementByKey, elementTemperature, type ElementDef } from './elements';
 
 // The kind word, packed as `makeCell` in `cell.wgsl.ts` does.
-export function packCell(type: number, variant = 0, ctype = 0): number {
-  return kindWord(type, variant, ctype);
+export function packCell(type: number, variant = 0): number {
+  return kindWord(type, variant);
 }
 
 // The temperature a cell of this element of the default table starts at.
@@ -27,9 +27,9 @@ export class Canvas {
     this.temps.fill(startTemp(T.EMPTY));
   }
 
-  /** Fills columns [x0, x1) and rows [y0, y1); a molten `type` takes the `ctype` it sets into (0: its own `below`). */
-  fill(type: number, x0: number, x1: number, y0: number, y1: number, ctype = 0): void {
-    const c = packCell(type, 0, ctype);
+  /** Fills columns [x0, x1) and rows [y0, y1). */
+  fill(type: number, x0: number, x1: number, y0: number, y1: number): void {
+    const c = packCell(type);
     const temp = startTemp(type);
     for (let y = y0; y < y1; y++) {
       this.fields.kind.fill(c, y * this.width + x0, y * this.width + x1);

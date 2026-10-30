@@ -99,14 +99,6 @@ export interface ElementDef {
   description?: string;
   /** How the finished look draws the element, read by the display alone (`src/display-table.ts`); each value defaults by state. */
   look?: LookDef;
-  /**
-   * A molten element (liquid rock, liquid metal): its cells remember the element they set into in their ctype (`kind` bits
-   * 16-23), written by the `above` that made them (`Transition.setsInto`). A cell with ctype k sets into k below k's `above`
-   * temperature, by k's latent heat, and moves by k's density; one with ctype 0 sets into its own `below`. Needs a `below`.
-   */
-  molten?: true;
-  /** What a molten cell that sets into this element is called, where "Molten <label>" is wrong (basalt's lava is "Lava"). CPU only, for `cellName`. */
-  meltLabel?: string;
 }
 
 /** The display-only properties of a row (`ElementDef.look`). Every value is 0 to 1. */
@@ -142,13 +134,6 @@ export interface Transition {
    * it ignites by touching fire. Default 0. Dimensionless, like the air's pressure.
    */
   burst?: number;
-  /**
-   * The key of the element a cell that passes this `above` into a molten element sets back into once it cools: written as
-   * the molten cell's ctype. Default: the row itself. That element needs an `above` into the same molten element, at this
-   * temperature or below it; the molten cell sets by that `above`'s temperature and latent heat. Only on an `above` into a
-   * molten element.
-   */
-  setsInto?: string;
 }
 
 /**
@@ -299,28 +284,9 @@ export function latentWidth(e: ElementDef, t: Transition): number {
   return transitionLatent(t) / elementHeatCapacity(e);
 }
 
-/**
- * The row a molten cell of `e` with this ctype sets into: the ctype's row when `e` is molten and that row's `above` becomes
- * `e`; undefined for any other cell, which is what the GPU makes of an unknown ctype too (`kindMelt`).
- */
-export function meltRow(table: readonly ElementDef[], e: ElementDef, ctype: number): ElementDef | undefined {
-  if (!e.molten || ctype === 0) return undefined;
-  const row = table.find((r) => r.id === ctype);
-  return row?.above?.becomes === e.key ? row : undefined;
-}
-
-/**
- * What the pointer readout and the paint preview call a cell: a molten cell by what it sets into, the `meltLabel` of that
- * row ("Lava" for basalt) or else "Molten " and its label in lower case ("Molten glass"); with ctype 0 by the molten row's
- * `below`. Every other cell is its row's label.
- */
-export function cellName(table: readonly ElementDef[], id: number, ctype = 0): string {
-  const e = table.find((r) => r.id === id);
-  if (!e) return '';
-  if (!e.molten) return e.label;
-  const sets = meltRow(table, e, ctype) ?? table.find((r) => r.key === e.below?.becomes);
-  if (!sets) return e.label;
-  return sets.meltLabel ?? `Molten ${sets.label.toLowerCase()}`;
+/** What the pointer readout and the paint preview call a cell: its row's label ("Molten gold", "Lava"), or '' for an ID the table does not have. */
+export function cellName(table: readonly ElementDef[], id: number): string {
+  return table.find((r) => r.id === id)?.label ?? '';
 }
 
 /**
@@ -393,7 +359,7 @@ export const ELEMENTS = [
   // Angle of repose 34° (dry sand 30 to 35°: Wikipedia's table 34°, Dartmouth's engineering notes 35° for dry irregular sand).
   // Quartz melts at 1,713 °C (cristobalite's melting point) into molten glass, which sets into glass.
   { key: 'SAND', id: 1, label: 'Sand', color: [0.80, 0.70, 0.48], state: 'powder', density: 1600, conductivity: 0.27, heatCapacity: 1.3, repose: 34,
-    above: { temp: 1713, becomes: 'LAVA', latent: GLASS_FUSION, setsInto: 'GLASS' },
+    above: { temp: 1713, becomes: 'MOLTEN_GLASS', latent: GLASS_FUSION },
     toolbar: 1, category: 'Powders', description: 'Dry grains that fall and pile up into a slope.' },
   // The engine's invincible wall and the world's edge, not a real material: it never conducts, so heat never leaves the world.
   { key: 'WALL', id: 2, label: 'Wall', color: [0.43, 0.45, 0.47], state: 'solid', density: 2500,
@@ -517,8 +483,6 @@ export const ELEMENTS = [
     conductivity: 2,
     heatCapacity: 2.4,
     above: { temp: 1200, becomes: 'LAVA', latent: LAVA_LATENT },
-    // Basalt's melt is what LAVA is: any molten cell that sets into basalt is called "Lava".
-    meltLabel: 'Lava',
     // Crushed rock: a blast turns basalt into gravel above the pressure its fracture toughness gives. 1.7 MPa·√m is the scale's
     // anchor (`PRESSURE_PER_TOUGHNESS`), inside the 1.4 to 3.8 measured on igneous rocks at pressure (basalt in the open air
     // reads 0.6 to 1.3, porosity lowering it); tuned in tests/air-crush.test.ts so that a gunpowder charge of about 50 cells
@@ -579,15 +543,16 @@ export const ELEMENTS = [
   },
   // Lava is molten stone: liquid stone at 2,700 kg/m³, painted at 1,300 °C and setting at 1,200. Its latent heat is rock's
   // physical one: about 450 kJ/kg (basalt) at 2,700 kg/m³ is 1,200 MJ/m³. It is what keeps a pile of lava flowing in open
-  // air for a while. Molten basalt conducts about 1 W/m·K and holds 4.0 MJ/m³·K (1.5 kJ/kg·K). It is the molten element of
-  // the rocks: a cell remembers what it melted from (its ctype) and sets back into that. Molten silicate expands by about 4e-5 per K: 2,700 kg/m³ at 1,200 °C, 2,668 at 1,500.
+  // air for a while. Molten basalt conducts about 1 W/m·K and holds 4.0 MJ/m³·K (1.5 kJ/kg·K). It is basalt's and gravel's
+  // liquid. Molten silicate expands by about 4e-5 per K: 2,700 kg/m³ at 1,200 °C, 2,668 at 1,500.
   // Viscosity 30 Pa·s, the middle of basaltic lava at eruption temperatures (10 to 100 Pa·s). No button: Stone painted above 1,200 °C
-  // is lava, at 1,300 °C by default.
+  // is lava, at 1,300 °C by default. Its color is a red-orange pulled toward basalt's and darkened (mix 0.6, times 0.65), like
+  // the liquids of the other materials, so the solid it came from shows through and the glow of its temperature, added after, makes it brighter as it heats.
   {
     key: 'LAVA',
     id: 11,
     label: 'Lava',
-    color: [0.92, 0.32, 0.06],
+    color: [0.442, 0.263, 0.172],
     state: 'liquid',
     density: 2700,
     densityKnots: [[1200, 2700], [1500, 2668]],
@@ -597,18 +562,17 @@ export const ELEMENTS = [
     viscosity: 30,
     // Opaque: it hides the wall and casts a shadow like rock, and it shines on its own, so it takes no depth tint.
     look: { opacity: 1 },
-    molten: true,
-    graphics: 'molten',
     below: { temp: 1200, becomes: 'STONE', latent: LAVA_LATENT },
   },
   // Molten steel: 7,000 kg/m³, painted at 1,600 °C, sets back into METAL at 1,538. Liquid iron conducts about 35 W/m·K and
   // holds 5.7 MJ/m³·K (0.82 kJ/kg·K). Its density falls by about 0.83 kg/m³ per K from 7,000 at the melting point. Viscosity
   // 6 mPa·s (liquid iron, 5 to 7 mPa·s near its melting point). No button: Metal painted above 1,538 °C is molten steel, at 1,600 °C by default.
+  // Its color is orange pulled toward steel's and darkened, as lava's is (see LAVA).
   {
     key: 'MOLTEN_METAL',
     id: 12,
-    label: 'Molten metal',
-    color: [1.0, 0.62, 0.28],
+    label: 'Molten steel',
+    color: [0.533, 0.45, 0.385],
     state: 'liquid',
     density: 7000,
     densityKnots: [[1538, 7000], [1700, 6866]],
@@ -617,8 +581,6 @@ export const ELEMENTS = [
     heatCapacity: 5.7,
     viscosity: 0.006,
     look: { opacity: 1 },
-    molten: true,
-    graphics: 'molten',
     below: { temp: 1538, becomes: 'METAL', latent: IRON_FUSION },
   },
   // Black powder: grains of 1.7 to 1.82 g/cm³ (safety data sheets; 1,700 kg/m³ here, so it sinks through sand and water),
@@ -662,7 +624,7 @@ export const ELEMENTS = [
     conductivity: 0.4,
     heatCapacity: 2.4,
     repose: 38,
-    above: { temp: 1200, becomes: 'LAVA', latent: LAVA_LATENT, setsInto: 'STONE' },
+    above: { temp: 1200, becomes: 'LAVA', latent: LAVA_LATENT },
     toolbar: 2,
     category: 'Powders',
     description: 'Loose broken rock: a blast leaves it where basalt and brick were; it melts into lava.',
@@ -700,7 +662,7 @@ export const ELEMENTS = [
     conductivity: 0.3,
     heatCapacity: 2.1,
     repose: 38,
-    above: { temp: 1400, becomes: 'LAVA', latent: GLASS_FUSION, setsInto: 'GLASS' },
+    above: { temp: 1400, becomes: 'MOLTEN_GLASS', latent: GLASS_FUSION },
     toolbar: 4,
     category: 'Powders',
     description: 'Sharp glass shards: a blast leaves them where glass was; they melt into glass.',
@@ -708,7 +670,7 @@ export const ELEMENTS = [
   // Soda-lime glass: 2,500 kg/m³, 1.0 W/m·K (window glass 0.8 to 1.0) and 2.1 MJ/m³·K (0.84 kJ/kg·K). Fracture toughness 0.74
   // MPa·√m (soda-lime-silica glass in mode I), so a blast breaks it a good deal farther out than basalt. Real glass softens
   // over a range with no sharp melting point; the table melts it at 1,400 °C, the melting range of a furnace (1,400 to 1,500),
-  // into the molten glass (LAVA) that sand makes at 1,713 °C, and takes silica's latent heat. Transparent: the finished look draws it over the wall behind it at opacity 0.4 (a lighter shadow too) and it has hardly any grain.
+  // into the molten glass that sand makes at 1,713 °C, and takes silica's latent heat. Transparent: the finished look draws it over the wall behind it at opacity 0.4 (a lighter shadow too) and it has hardly any grain.
   {
     key: 'GLASS',
     id: 17,
@@ -718,7 +680,7 @@ export const ELEMENTS = [
     density: 2500,
     conductivity: 1,
     heatCapacity: 2.1,
-    above: { temp: 1400, becomes: 'LAVA', latent: GLASS_FUSION },
+    above: { temp: 1400, becomes: 'MOLTEN_GLASS', latent: GLASS_FUSION },
     toughness: GLASS_TOUGHNESS,
     pressureAbove: { becomes: 'BROKEN_GLASS' },
     // Thermal shock: E 72 GPa and linear expansion 9e-6 per °C, and the critical quench of 150 K the shock scale is anchored on
@@ -755,7 +717,7 @@ export const ELEMENTS = [
     description: 'Fired clay: it shrugs off lava and breaks into gravel in a blast.',
   },
   // Aluminium: 2,700 kg/m³, 237 W/m·K and 2.42 MJ/m³·K (0.897 kJ/kg·K), melting at 660.3 °C (CRC Handbook; Wikipedia, List of
-  // thermal conductivities). Melts into molten metal that sets back into aluminium, far below steel's 1,538 °C.
+  // thermal conductivities). Melts into molten aluminium that sets back, far below steel's 1,538 °C.
   {
     key: 'ALUMINIUM',
     id: 19,
@@ -765,7 +727,7 @@ export const ELEMENTS = [
     density: 2700,
     conductivity: 237,
     heatCapacity: 2.42,
-    above: { temp: 660, becomes: 'MOLTEN_METAL', latent: ALUMINIUM_FUSION },
+    above: { temp: 660, becomes: 'MOLTEN_ALUMINIUM', latent: ALUMINIUM_FUSION },
     look: { grain: 0.02 },
     toolbar: 2,
     category: 'Metals',
@@ -781,7 +743,7 @@ export const ELEMENTS = [
     density: 8960,
     conductivity: 401,
     heatCapacity: 3.45,
-    above: { temp: 1085, becomes: 'MOLTEN_METAL', latent: COPPER_FUSION },
+    above: { temp: 1085, becomes: 'MOLTEN_COPPER', latent: COPPER_FUSION },
     look: { grain: 0.02 },
     toolbar: 3,
     category: 'Metals',
@@ -798,7 +760,7 @@ export const ELEMENTS = [
     density: 19300,
     conductivity: 318,
     heatCapacity: 2.49,
-    above: { temp: 1064, becomes: 'MOLTEN_METAL', latent: GOLD_FUSION },
+    above: { temp: 1064, becomes: 'MOLTEN_GOLD', latent: GOLD_FUSION },
     look: { grain: 0.02 },
     toolbar: 4,
     category: 'Metals',
@@ -814,7 +776,7 @@ export const ELEMENTS = [
     density: 4506,
     conductivity: 21.9,
     heatCapacity: 2.36,
-    above: { temp: 1668, becomes: 'MOLTEN_METAL', latent: TITANIUM_FUSION },
+    above: { temp: 1668, becomes: 'MOLTEN_TITANIUM', latent: TITANIUM_FUSION },
     look: { grain: 0.02 },
     toolbar: 5,
     category: 'Metals',
@@ -830,7 +792,7 @@ export const ELEMENTS = [
     density: 19300,
     conductivity: 173,
     heatCapacity: 2.55,
-    above: { temp: 3422, becomes: 'MOLTEN_METAL', latent: TUNGSTEN_FUSION },
+    above: { temp: 3422, becomes: 'MOLTEN_TUNGSTEN', latent: TUNGSTEN_FUSION },
     look: { grain: 0.02 },
     toolbar: 6,
     category: 'Metals',
@@ -851,7 +813,7 @@ export const ELEMENTS = [
     density: 3950,
     conductivity: 30,
     heatCapacity: 3.48,
-    above: { temp: 2072, becomes: 'LAVA', latent: ALUMINA_FUSION },
+    above: { temp: 2072, becomes: 'MOLTEN_CERAMIC', latent: ALUMINA_FUSION },
     toughness: 4,
     expansion: 8.1e-6,
     stiffness: 372,
@@ -881,8 +843,8 @@ export const ELEMENTS = [
   // (0.013 to 0.020 at room temperature, handbook; mineral wool's 0.04 is too poor a barrier for one cell between lava and water,
   // see the insulationWall scenario) and 0.15 MJ/m³·K (about 1.0 kJ/kg·K at that density, an estimate), the bulk of the blanket as one
   // solid. It is amorphous silica: it melts at quartz's 1,713 °C, well over lava's temperature, taking silica's 145 kJ/kg (see
-  // `GLASS_FUSION`) times its own 150 kg/m³, 22 MJ/m³ (`AEROGEL_FUSION`), not the glass row's. The molten cell keeps the aerogel's
-  // ctype and sets back into aerogel, giving out the latent heat it took in (setting into glass would give out glass's 362).
+  // `GLASS_FUSION`) times its own 150 kg/m³, 22 MJ/m³ (`AEROGEL_FUSION`), not the glass row's. Its liquid
+  // sets back into aerogel, giving out the latent heat it took in (setting into glass would give out glass's 362).
   {
     key: 'INSULATION',
     id: 26,
@@ -892,7 +854,7 @@ export const ELEMENTS = [
     density: 150,
     conductivity: 0.015,
     heatCapacity: 0.15,
-    above: { temp: 1713, becomes: 'LAVA', latent: AEROGEL_FUSION },
+    above: { temp: 1713, becomes: 'MOLTEN_AEROGEL', latent: AEROGEL_FUSION },
     toolbar: 7,
     category: 'Solids',
     description: 'Aerogel, a silica foam: heat passes through it far worse than through stone, and it melts only above the temperature of lava.',
@@ -1058,6 +1020,150 @@ export const ELEMENTS = [
     heatCapacity: 1.4,
     below: { temp: 356.73, becomes: 'MERCURY', latent: MERCURY_VAPORIZATION },
   },
+  // Molten aluminium: molten steel's values with its density scaled to the solid's 2,700 kg/m³ (and its viscosity with it, so the
+  // spread keeps its pace) and its color pulled toward the solid's and darkened. Sets back into aluminium at 660 °C. No button: aluminium
+  // painted above 660 °C is molten aluminium, at 1,600 °C by default. Estimated, not read from a source: M12.14d gives it its own data.
+  {
+    key: 'MOLTEN_ALUMINIUM',
+    id: 36,
+    label: 'Molten aluminium',
+    color: [0.564, 0.473, 0.397],
+    state: 'liquid',
+    density: 2700,
+    densityKnots: [[1538, 2700], [1700, 2648.31]],
+    temperature: 1600,
+    conductivity: 35,
+    heatCapacity: 5.7,
+    viscosity: 0.0023142857,
+    look: { opacity: 1 },
+    below: { temp: 660, becomes: 'ALUMINIUM', latent: ALUMINIUM_FUSION },
+  },
+  // Molten copper: molten steel's values with its density scaled to the solid's 8,960 kg/m³ (and its viscosity with it, so the
+  // spread keeps its pace) and its color pulled toward the solid's and darkened. Sets back into copper at 1,085 °C. No button: copper
+  // painted above 1,085 °C is molten copper, at 1,600 °C by default. Estimated, not read from a source: M12.14d gives it its own data.
+  {
+    key: 'MOLTEN_COPPER',
+    id: 37,
+    label: 'Molten copper',
+    color: [0.572, 0.309, 0.151],
+    state: 'liquid',
+    density: 8960,
+    densityKnots: [[1538, 8960], [1700, 8788.48]],
+    temperature: 1600,
+    conductivity: 35,
+    heatCapacity: 5.7,
+    viscosity: 0.00768,
+    look: { opacity: 1 },
+    below: { temp: 1085, becomes: 'COPPER', latent: COPPER_FUSION },
+  },
+  // Molten gold: molten steel's values with its density scaled to the solid's 19,300 kg/m³ (and its viscosity with it, so the
+  // spread keeps its pace) and its color pulled toward the solid's and darkened. Sets back into gold at 1,064 °C. No button: gold
+  // painted above 1,064 °C is molten gold, at 1,600 °C by default. Estimated, not read from a source: M12.14d gives it its own data.
+  {
+    key: 'MOLTEN_GOLD',
+    id: 38,
+    label: 'Molten gold',
+    color: [0.63, 0.442, 0.131],
+    state: 'liquid',
+    density: 19300,
+    densityKnots: [[1538, 19300], [1700, 18930.54]],
+    temperature: 1600,
+    conductivity: 35,
+    heatCapacity: 5.7,
+    viscosity: 0.0165428571,
+    look: { opacity: 1 },
+    below: { temp: 1064, becomes: 'GOLD', latent: GOLD_FUSION },
+  },
+  // Molten titanium: molten steel's values with its density scaled to the solid's 4,506 kg/m³ (and its viscosity with it, so the
+  // spread keeps its pace) and its color pulled toward the solid's and darkened. Sets back into titanium at 1,668 °C. No button: titanium
+  // painted above 1,668 °C is molten titanium, at 1,768 °C by default. Estimated, not read from a source: M12.14d gives it its own data.
+  {
+    key: 'MOLTEN_TITANIUM',
+    id: 39,
+    label: 'Molten titanium',
+    color: [0.474, 0.384, 0.315],
+    state: 'liquid',
+    density: 4506,
+    densityKnots: [[1538, 4506], [1700, 4419.74]],
+    temperature: 1768,
+    conductivity: 35,
+    heatCapacity: 5.7,
+    viscosity: 0.0038622857,
+    look: { opacity: 1 },
+    below: { temp: 1668, becomes: 'TITANIUM', latent: TITANIUM_FUSION },
+  },
+  // Molten tungsten: molten steel's values with its density scaled to the solid's 19,300 kg/m³ (and its viscosity with it, so the
+  // spread keeps its pace) and its color pulled toward the solid's and darkened. Sets back into tungsten at 3,422 °C. No button: tungsten
+  // painted above 3,422 °C is molten tungsten, at 3,522 °C by default. Estimated, not read from a source: M12.14d gives it its own data.
+  {
+    key: 'MOLTEN_TUNGSTEN',
+    id: 40,
+    label: 'Molten tungsten',
+    color: [0.4, 0.305, 0.229],
+    state: 'liquid',
+    density: 19300,
+    densityKnots: [[1538, 19300], [1700, 18930.54]],
+    temperature: 3522,
+    conductivity: 35,
+    heatCapacity: 5.7,
+    viscosity: 0.0165428571,
+    look: { opacity: 1 },
+    below: { temp: 3422, becomes: 'TUNGSTEN', latent: TUNGSTEN_FUSION },
+  },
+  // Molten glass: lava's values with its density scaled to the solid's 2,500 kg/m³ (and its viscosity with it, so the spread keeps
+  // its pace) and its color pulled toward the solid's and darkened. Glass, broken glass and sand melt into it; it sets into glass at 1,400 °C. No button: painted above its melting point it is what the
+  // solid becomes, at 1,500 °C by default. Estimated, not read from a source: M12.14d gives it its own data.
+  {
+    key: 'MOLTEN_GLASS',
+    id: 41,
+    label: 'Molten glass',
+    color: [0.454, 0.395, 0.335],
+    state: 'liquid',
+    density: 2500,
+    densityKnots: [[1200, 2500], [1500, 2470.37]],
+    temperature: 1500,
+    conductivity: 1,
+    heatCapacity: 4,
+    viscosity: 27.7777777778,
+    look: { opacity: 1 },
+    below: { temp: 1400, becomes: 'GLASS', latent: GLASS_FUSION },
+  },
+  // Molten ceramic: lava's values with its density scaled to the solid's 3,950 kg/m³ (and its viscosity with it, so the spread keeps
+  // its pace) and its color pulled toward the solid's and darkened. Ceramic melts into it and it sets back into ceramic at 2,072 °C. No button: painted above its melting point it is what the
+  // solid becomes, at 2,172 °C by default. Estimated, not read from a source: M12.14d gives it its own data.
+  {
+    key: 'MOLTEN_CERAMIC',
+    id: 42,
+    label: 'Molten ceramic',
+    color: [0.582, 0.415, 0.32],
+    state: 'liquid',
+    density: 3950,
+    densityKnots: [[1200, 3950], [1500, 3903.19]],
+    temperature: 2172,
+    conductivity: 1,
+    heatCapacity: 4,
+    viscosity: 43.8888888889,
+    look: { opacity: 1 },
+    below: { temp: 2072, becomes: 'CERAMIC', latent: ALUMINA_FUSION },
+  },
+  // Molten aerogel: lava's values with its density scaled to the solid's 150 kg/m³ (and its viscosity with it, so the spread keeps
+  // its pace) and its color pulled toward the solid's and darkened. Aerogel melts into it and it sets back into aerogel at 1,713 °C, not into glass. No button: painted above its melting point it is what the
+  // solid becomes, at 1,813 °C by default. Estimated, not read from a source: M12.14d gives it its own data.
+  {
+    key: 'MOLTEN_AEROGEL',
+    id: 43,
+    label: 'Molten aerogel',
+    color: [0.59, 0.395, 0.179],
+    state: 'liquid',
+    density: 150,
+    densityKnots: [[1200, 150], [1500, 148.22]],
+    temperature: 1813,
+    conductivity: 1,
+    heatCapacity: 4,
+    viscosity: 1.6666666667,
+    look: { opacity: 1 },
+    below: { temp: 1713, becomes: 'INSULATION', latent: AEROGEL_FUSION },
+  },
 ] as const satisfies readonly ElementDef[];
 
 /** The IDs of the default table by key: the only way code outside the table names an element. */
@@ -1191,23 +1297,9 @@ function validateTransitions(elements: readonly ElementDef[]): void {
       }
       const target = byKey.get(t.becomes);
       if (!target) throw new Error(`${name}.becomes "${t.becomes}" is not in the table`);
-      if (t.setsInto !== undefined && !(side === 'above' && target.molten)) throw new Error(`${name}.setsInto is only for an above into a molten element`);
-      if (side === 'above' && target.molten) {
-        // A cell melting into a molten element sets back into `setsInto` (default: this row) by that row's own `above`, which
-        // must lead into the same molten element, and it is molten from this threshold up: that must not lie under the one
-        // it sets by, or the molten cell would be past its own setting point at once.
-        const sets = byKey.get(t.setsInto ?? e.key);
-        if (!sets) throw new Error(`${name}.setsInto "${t.setsInto}" is not in the table`);
-        if (sets.above?.becomes !== t.becomes) throw new Error(`${name}: ${sets.key} (setsInto) needs an above into ${t.becomes}`);
-        if (!(t.temp >= sets.above.temp)) throw new Error(`${name}.temp ${t.temp} is under the ${sets.above.temp} of ${sets.key}, which the molten cell sets by`);
-        if (target.above && !(t.temp <= target.above.temp)) throw new Error(`${name}.temp ${t.temp} is over the ${target.above.temp} of ${target.key}`);
-        continue;
-      }
       const [targetLow, targetHigh] = range(target);
       if (!(t.temp >= targetLow && t.temp <= targetHigh)) throw new Error(`${name}.temp ${t.temp} is outside the range ${targetLow}..${targetHigh} of ${target.key}`);
     }
-    if (e.molten && !e.below) throw new Error(`element ${e.key}: a molten element needs a below: what a cell with no ctype sets into`);
-    if (e.meltLabel !== undefined && e.meltLabel.trim() === '') throw new Error(`element ${e.key}: meltLabel must not be empty`);
     if (e.toughness !== undefined && !e.pressureAbove && e.expansion === undefined) throw new Error(`element ${e.key}: toughness is only for an element with a pressureAbove or an expansion`);
     if ((e.expansion === undefined) !== (e.stiffness === undefined)) throw new Error(`element ${e.key}: expansion and stiffness go together`);
     if (e.expansion !== undefined) {

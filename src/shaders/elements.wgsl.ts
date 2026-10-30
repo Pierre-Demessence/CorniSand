@@ -65,47 +65,4 @@ fn elPressureBecomes(t: u32) -> u32 { return (elements[t].transitions >> 16u) & 
 // Thermal shock: the temperature difference to a neighbor above which a cell cracks (0: it cannot), and the element it
 // cracks into, which is its pressure target.
 fn elShockLimit(t: u32) -> f32 { return elements[t].shockLimit; }
-// The ctype a cell gets when it passes its 'above' into a molten element: the element it sets back into; 0 for any other above.
-fn elAboveCtype(t: u32) -> u32 { return (elements[t].transitions >> 24u) & 0xffu; }
-fn elMolten(t: u32) -> bool { return elements[t].molten != 0u; }
-
-// -- Molten memory --
-// A molten cell carries a ctype in bits 16-23 of its 'kind' word: the element it sets into. These read the kind word, so a
-// pass that binds only 'kind' can use them.
-
-// The element a molten cell sets into: its ctype when it names a row whose 'above' becomes this molten element, else 0 (a cell
-// with ctype 0, or an unknown ctype, sets into its own 'below').
-fn kindMelt(kind: u32) -> u32 {
-  let k = (kind >> 16u) & 0xffu;
-  if (k == 0u) { return 0u; }
-  let t = kind & 0xffu;
-  if (elMolten(t) && elAboveBecomes(k) == t) { return k; }
-  return 0u;
-}
-
-// The lower threshold of a cell, and the latent width under it: the cell's own 'below', or for a molten cell with a ctype the
-// 'above' of the element it sets into (its latent heat over the molten element's capacity).
-fn kindBelowTemp(kind: u32) -> f32 {
-  let k = kindMelt(kind);
-  if (k != 0u) { return elAboveTemp(k); }
-  return elBelowTemp(kind & 0xffu);
-}
-fn kindBelowWidth(kind: u32) -> f32 {
-  let k = kindMelt(kind);
-  if (k != 0u) { return elAboveWidth(k) * elHeatCapacity(k) / elHeatCapacity(kind & 0xffu); }
-  return elBelowWidth(kind & 0xffu);
-}
-
-// A cell's temperature ('effectiveTemp' in src/heat.ts): its stored temperature clamped to its thresholds.
-fn kindTemp(kind: u32, stored: f32) -> f32 {
-  return clamp(stored, kindBelowTemp(kind), elAboveTemp(kind & 0xffu));
-}
-
-// The density that does not depend on the temperature, of the cell: a molten cell with a ctype has the density of the element
-// it sets into (the solid's stands in for its liquid's).
-fn kindDensity(kind: u32) -> f32 {
-  let k = kindMelt(kind);
-  if (k != 0u) { return elDensity(k); }
-  return elDensity(kind & 0xffu);
-}
 `;

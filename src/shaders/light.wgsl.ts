@@ -34,7 +34,7 @@ ${DISPLAY_FIELDS.map((f) => `  ${f.name}: f32,`).join('\n')}
 // 1 at EMISSION_REFERENCE; twin of `emissionShare` in src/heat.ts). An element with a lifetime and its own graphics (fire)
 // shines in its graphics color, twice as bright while young and fading with its life. A flyer is a cell like any other.
 // A graphics function replaces the glow of an element with a lifetime (fire); on any other it only sets the base color the
-// glow is added to (a molten cell's tint).
+// glow is added to.
 export const lightWGSL = (styled: readonly ElementDef[]): string => /* wgsl */`
 fn srgbToLinear(c: vec3f) -> vec3f {
   let v = max(c, vec3f(0.0));

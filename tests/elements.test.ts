@@ -38,6 +38,7 @@ describe('element table', () => {
       ICE: 9, STEAM: 10, LAVA: 11, MOLTEN_METAL: 12, GUNPOWDER: 13, GRAVEL: 14, SNOW: 15, BROKEN_GLASS: 16, GLASS: 17, BRICK: 18,
       ALUMINIUM: 19, COPPER: 20, GOLD: 21, TITANIUM: 22, TUNGSTEN: 23, CERAMIC: 24, DIAMOND: 25, INSULATION: 26,
       SAWDUST: 27, WAX: 28, MOLTEN_WAX: 29, NITROGEN: 30, LIQUID_NITROGEN: 31, SOLID_NITROGEN: 32, MERCURY: 33, SOLID_MERCURY: 34, MERCURY_VAPOR: 35,
+      MOLTEN_ALUMINIUM: 36, MOLTEN_COPPER: 37, MOLTEN_GOLD: 38, MOLTEN_TITANIUM: 39, MOLTEN_TUNGSTEN: 40, MOLTEN_GLASS: 41, MOLTEN_CERAMIC: 42, MOLTEN_AEROGEL: 43,
     });
     expect(() => validateElements(ELEMENTS)).not.toThrow();
     expect(elementByKey(ELEMENTS, 'FIRE').life).toEqual({ start: 200, decay: 4, becomes: 'SMOKE' });
@@ -97,7 +98,8 @@ describe('element table', () => {
   });
 
   it('M5: starts fire at its flame temperature and everything else at room temperature, packed for the GPU', () => {
-    const painted: Record<string, number> = { FIRE: 1000, SMOKE: 150, ICE: -20, STEAM: 110, LAVA: 1300, MOLTEN_METAL: 1600, SNOW: -10, MOLTEN_WAX: 80, LIQUID_NITROGEN: -196, SOLID_NITROGEN: -220, SOLID_MERCURY: -50, MERCURY_VAPOR: 400 };
+    const painted: Record<string, number> = { FIRE: 1000, SMOKE: 150, ICE: -20, STEAM: 110, LAVA: 1300, MOLTEN_METAL: 1600, SNOW: -10, MOLTEN_WAX: 80, LIQUID_NITROGEN: -196, SOLID_NITROGEN: -220, SOLID_MERCURY: -50, MERCURY_VAPOR: 400,
+      MOLTEN_ALUMINIUM: 1600, MOLTEN_COPPER: 1600, MOLTEN_GOLD: 1600, MOLTEN_TITANIUM: 1768, MOLTEN_TUNGSTEN: 3522, MOLTEN_GLASS: 1500, MOLTEN_CERAMIC: 2172, MOLTEN_AEROGEL: 1813 };
     for (const e of ELEMENTS) expect(elementTemperature(e), e.key).toBe(painted[e.key] ?? ROOM_TEMP);
     expect(elementTemperature({ ...MUD, temperature: -20 })).toBe(-20);
     const floats = new Float32Array(packElements(ELEMENTS));

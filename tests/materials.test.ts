@@ -13,12 +13,12 @@ import { cell, createSim, device, mulberry32, readCells, runMany } from './gpu';
 import { Canvas, WALL, tank } from '../src/scene-canvas';
 import { columnsWithAbove, countType, heatContent } from './metrics';
 import { NO_SHOCK_TABLE } from './no-shock-table';
+import { MOLTEN_LIQUIDS } from './molten-table';
 import { control, scenario, waitsFor } from './scenario';
 
 // The materials of M8.1 and what they do: the rows (this file), then each one's main behavior as a scene test.
 
 const NO_AIR = { air: false };
-const ctypeOf = (kind: number): number => (kind >>> 16) & 0xff;
 const typeOf = (kind: number): number => kind & 0xff;
 
 // A row of single cells at the given stored temperatures, each beside a wall (which holds no heat), run for `supersteps`.
@@ -35,15 +35,15 @@ async function row(cells: { kind: number; temp: number }[], supersteps = 1): Pro
 }
 
 const row$ = (key: string): ElementDef => elementByKey(ELEMENTS, key);
-// The stored temperature a melting cell must pass to melt, and the one a molten cell with ctype k must fall under to set.
+// The stored temperature a melting cell must pass to melt, and the one a liquid cell must fall under to set.
 const meltsAbove = (e: ElementDef): number => e.above!.temp + (e.above!.latent ?? 0) / elementHeatCapacity(e);
-const setsBelow = (k: ElementDef): number => k.above!.temp - (k.above!.latent ?? 0) / elementHeatCapacity(row$('LAVA'));
+const setsBelow = (liquid: ElementDef): number => liquid.below!.temp - (liquid.below!.latent ?? 0) / elementHeatCapacity(liquid);
 
 describe('M8.1e rows', () => {
   it('is a valid table, and basalt is named and crushed as the plan says', () => {
     expect(() => validateElements(ELEMENTS)).not.toThrow();
     expect(row$('STONE').label).toBe('Basalt');
-    expect(cellName(ELEMENTS, T.LAVA, T.STONE), 'melted basalt').toBe('Lava');
+    expect(cellName(ELEMENTS, T.LAVA), 'melted basalt').toBe('Lava');
     expect(row$('STONE').pressureAbove?.becomes).toBe('GRAVEL');
     expect(row$('BRICK').pressureAbove?.becomes).toBe('GRAVEL');
     expect(row$('GLASS').pressureAbove?.becomes).toBe('BROKEN_GLASS');
@@ -65,27 +65,25 @@ describe('M8.1e rows', () => {
 });
 
 describe.skipIf(!device)('M8.1 AC16: sand and broken glass melt into molten glass', () => {
-  it('sand past 1,713 °C by its latent width becomes lava that sets into glass, not sand', async () => {
+  it('sand past 1,713 °C by its latent width becomes molten glass that sets into glass, not sand', async () => {
     const sand = row$('SAND');
     expect(sand.above!.temp).toBe(1713);
     const short = await row([{ kind: cell(T.SAND), temp: meltsAbove(sand) - 1 }]);
     expect(typeOf(short.kinds[0]), 'sand just short of the end of its latent range').toBe(T.SAND);
     const past = await row([{ kind: cell(T.SAND), temp: meltsAbove(sand) + 1 }]);
-    expect(typeOf(past.kinds[0]), 'sand just past it').toBe(T.LAVA);
-    expect(ctypeOf(past.kinds[0]), 'it remembers glass').toBe(T.GLASS);
-    expect(cellName(ELEMENTS, typeOf(past.kinds[0]), ctypeOf(past.kinds[0]))).toBe('Molten glass');
+    expect(typeOf(past.kinds[0]), 'sand just past it').toBe(T.MOLTEN_GLASS);
+    expect(cellName(ELEMENTS, typeOf(past.kinds[0]))).toBe('Molten glass');
 
-    const set = await row([{ kind: past.kinds[0], temp: setsBelow(row$('GLASS')) - 5 }]);
+    const set = await row([{ kind: past.kinds[0], temp: setsBelow(row$('MOLTEN_GLASS')) - 5 }]);
     expect(typeOf(set.kinds[0]), 'cooled under glass\'s setting point').toBe(T.GLASS);
-    expect(ctypeOf(set.kinds[0])).toBe(0);
+    expect(set.kinds[0] >>> 16).toBe(0);
   });
 
   it('broken glass melts into the same molten glass, and glass does too', async () => {
     for (const key of ['BROKEN_GLASS', 'GLASS']) {
       const e = row$(key);
       const past = await row([{ kind: cell(e.id), temp: meltsAbove(e) + 1 }]);
-      expect(typeOf(past.kinds[0]), `${key} past its melting`).toBe(T.LAVA);
-      expect(ctypeOf(past.kinds[0]), `${key} sets into glass`).toBe(T.GLASS);
+      expect(typeOf(past.kinds[0]), `${key} past its melting`).toBe(T.MOLTEN_GLASS);
     }
   });
 
@@ -93,8 +91,7 @@ describe.skipIf(!device)('M8.1 AC16: sand and broken glass melt into molten glas
     const gravel = row$('GRAVEL');
     const past = await row([{ kind: cell(T.GRAVEL), temp: meltsAbove(gravel) + 1 }]);
     expect(typeOf(past.kinds[0])).toBe(T.LAVA);
-    expect(ctypeOf(past.kinds[0])).toBe(T.STONE);
-    const set = await row([{ kind: past.kinds[0], temp: row$('STONE').above!.temp - row$('STONE').above!.latent! / elementHeatCapacity(row$('LAVA')) - 5 }]);
+    const set = await row([{ kind: past.kinds[0], temp: setsBelow(row$('LAVA')) - 5 }]);
     expect(typeOf(set.kinds[0]), 'cooled lava of gravel').toBe(T.STONE);
   });
 
@@ -109,8 +106,8 @@ describe.skipIf(!device)('M8.1 AC16: sand and broken glass melt into molten glas
 // M8.1f: the metals and refractories (aluminium, copper, gold, titanium, tungsten, ceramic, diamond, insulation).
 
 const METALS = ['METAL', 'ALUMINIUM', 'COPPER', 'GOLD', 'TITANIUM', 'TUNGSTEN'] as const;
-// The stored temperature a molten cell with ctype k must fall under to set: k's latent heat over the molten element's capacity.
-const setsBelowIn = (k: ElementDef, molten: ElementDef): number => k.above!.temp - (k.above!.latent ?? 0) / elementHeatCapacity(molten);
+/** The key of the liquid a metal melts into. */
+const liquidOf = (key: string): string => `MOLTEN_${key}`;
 // Thermal diffusivity up to the common factor HEAT_UNIT: the ratio of two rows' is the ratio of their speeds.
 const diffusivity = (e: ElementDef): number => elementConductivity(e) / elementHeatCapacity(e);
 
@@ -119,19 +116,19 @@ describe('M8.1 AC24, AC23 and AC15: the M8.1f rows', () => {
     expect(row$('METAL').label).toBe('Steel');
     const metals = pickerTabs(ELEMENTS).find((t) => t.name === 'Metals')!;
     expect(metals.entries.map((e) => e.label)).toEqual(['Steel', 'Aluminium', 'Copper', 'Gold', 'Titanium', 'Tungsten']);
-    expect(cellName(ELEMENTS, T.MOLTEN_METAL, 0)).toBe('Molten steel');
-    expect(cellName(ELEMENTS, T.MOLTEN_METAL, T.ALUMINIUM)).toBe('Molten aluminium');
+    expect(cellName(ELEMENTS, T.MOLTEN_METAL)).toBe('Molten steel');
+    expect(cellName(ELEMENTS, T.MOLTEN_ALUMINIUM)).toBe('Molten aluminium');
     expect(pickerTabs(ELEMENTS).find((t) => t.name === 'Solids')!.entries.map((e) => e.label)).toEqual(
       expect.arrayContaining(['Ceramic', 'Diamond', 'Aerogel']),
     );
   });
 
-  it('melts each metal at its handbook temperature, in the order aluminium, gold, copper, steel, titanium, tungsten, into the molten metal that sets back into it', () => {
+  it('melts each metal at its handbook temperature, in the order aluminium, gold, copper, steel, titanium, tungsten, into the molten metal of its own that sets back into it', () => {
     const melt = (key: string): number => row$(key).above!.temp;
     expect([melt('ALUMINIUM'), melt('GOLD'), melt('COPPER'), melt('METAL'), melt('TITANIUM'), melt('TUNGSTEN')]).toEqual([660, 1064, 1085, 1538, 1668, 3422]);
     for (const key of METALS) {
-      expect(row$(key).above!.becomes, key).toBe('MOLTEN_METAL');
-      expect(row$(key).above!.setsInto ?? key, `${key} sets into itself`).toBe(key);
+      expect(row$(key).above!.becomes, key).toBe(liquidOf(key));
+      expect(row$(liquidOf(key)).below!.becomes, `${key}'s liquid sets into itself`).toBe(key);
     }
   });
 
@@ -154,19 +151,18 @@ describe('M8.1 AC24, AC23 and AC15: the M8.1f rows', () => {
   });
 });
 
-describe.skipIf(!device)('M8.1 AC9 and AC10: each M8.1f metal melts into molten metal that remembers it', () => {
-  it.each(METALS.filter((k) => k !== 'METAL'))('%s melts into molten metal with its own ctype, is named after it, and sets back', async (key) => {
+describe.skipIf(!device)('M8.1 AC9 and AC10: each M8.1f metal melts into a molten metal of its own', () => {
+  it.each(METALS.filter((k) => k !== 'METAL'))('%s melts into its own molten metal, named after it, and sets back', async (key) => {
     const e = row$(key);
-    const molten = row$('MOLTEN_METAL');
+    const molten = row$(liquidOf(key));
     const short = await row([{ kind: cell(e.id), temp: meltsAbove(e) - 1 }]);
     expect(typeOf(short.kinds[0]), `${key} just short of the end of its latent range`).toBe(e.id);
     const past = await row([{ kind: cell(e.id), temp: meltsAbove(e) + 1 }]);
-    expect(typeOf(past.kinds[0]), `${key} just past it`).toBe(T.MOLTEN_METAL);
-    expect(ctypeOf(past.kinds[0]), 'it remembers itself').toBe(e.id);
-    expect(cellName(ELEMENTS, typeOf(past.kinds[0]), ctypeOf(past.kinds[0]))).toBe(`Molten ${e.label.toLowerCase()}`);
-    const set = await row([{ kind: past.kinds[0], temp: setsBelowIn(e, molten) - 5 }]);
+    expect(typeOf(past.kinds[0]), `${key} just past it`).toBe(molten.id);
+    expect(cellName(ELEMENTS, typeOf(past.kinds[0]))).toBe(`Molten ${e.label.toLowerCase()}`);
+    const set = await row([{ kind: past.kinds[0], temp: setsBelow(molten) - 5 }]);
     expect(typeOf(set.kinds[0]), 'cooled under its setting point').toBe(e.id);
-    expect(ctypeOf(set.kinds[0])).toBe(0);
+    expect(set.kinds[0] >>> 16).toBe(0);
   });
 
   it('keeps diamond at 9,000 °C, ceramic at 2,000 and tungsten at 3,000 as they are over 100 supersteps', async () => {
@@ -182,11 +178,11 @@ describe.skipIf(!device)('M8.1 AC9 and AC10: each M8.1f metal melts into molten 
     const sim = createSim(width, height, 10, { elements: ELEMENTS, air: false });
     const next = mulberry32(10);
     const rand = (): number => next() / 2 ** 32;
-    // [element, ctype, lowest and highest start temperature], across the thresholds of each row.
-    const range: [number, number, number, number][] = [
-      [T.ALUMINIUM, 0, 300, 1200], [T.MOLTEN_METAL, T.ALUMINIUM, 100, 900], [T.COPPER, 0, 800, 1800], [T.MOLTEN_METAL, T.COPPER, 400, 1500],
-      [T.GOLD, 0, 800, 1900], [T.TITANIUM, 0, 1400, 2400], [T.TUNGSTEN, 0, 3000, 4800], [T.MOLTEN_METAL, T.TUNGSTEN, 2000, 4800],
-      [T.CERAMIC, 0, 1800, 3600], [T.LAVA, T.CERAMIC, 1500, 3600], [T.INSULATION, 0, 1500, 4200], [T.DIAMOND, 0, 20, 3000], [T.WATER, 0, 0, 90],
+    // [element, lowest and highest start temperature], across the thresholds of each row.
+    const range: [number, number, number][] = [
+      [T.ALUMINIUM, 300, 1200], [T.MOLTEN_ALUMINIUM, 100, 900], [T.COPPER, 800, 1800], [T.MOLTEN_COPPER, 400, 1500],
+      [T.GOLD, 800, 1900], [T.TITANIUM, 1400, 2400], [T.TUNGSTEN, 3000, 4800], [T.MOLTEN_TUNGSTEN, 2000, 4800],
+      [T.CERAMIC, 1800, 3600], [T.MOLTEN_CERAMIC, 1500, 3600], [T.INSULATION, 1500, 4200], [T.DIAMOND, 20, 3000], [T.WATER, 0, 90],
     ];
     const kind = new Uint32Array(width * height);
     const temp = new Uint32Array(width * height);
@@ -198,8 +194,8 @@ describe.skipIf(!device)('M8.1 AC9 and AC10: each M8.1f metal melts into molten 
           kind[i] = cell(T.WALL);
           continue;
         }
-        const [type, ctype, low, high] = range[Math.floor(rand() * range.length)];
-        kind[i] = cell(type, 0, ctype);
+        const [type, low, high] = range[Math.floor(rand() * range.length)];
+        kind[i] = cell(type);
         temps[i] = low + rand() * (high - low);
       }
     }
@@ -428,7 +424,8 @@ describe.skipIf(!device)('crucible', () => {
     wrong: 'ceramic melting at 1,400 °C with a tenth of its latent heat',
     measure: () => changedCupCells(
       crucible(T.CERAMIC),
-      ELEMENTS.map((e) => (e.key === 'CERAMIC' ? { ...e, above: { ...e.above, temp: 1400, latent: e.above.latent / 10 } } : e)),
+      // The liquid sets where the ceramic melts, at the same latent heat.
+      ELEMENTS.map((e) => (e.key === 'CERAMIC' ? { ...e, above: { ...e.above, temp: 1400, latent: e.above.latent / 10 } } : e.key === 'MOLTEN_CERAMIC' ? { ...e, below: { ...e.below, temp: 1400, latent: e.below.latent / 10 } } : e)),
     ),
     target: [0, 0],
     timeout: 60_000,
@@ -450,7 +447,7 @@ describe('M8.1 AC17 and AC31: the M8.1g rows', () => {
 
   it('orders the densities as the plan says: mercury is the densest liquid, sawdust floats on oil, water and molten wax', () => {
     const density = (key: string): number => row$(key).density;
-    const liquids = ELEMENTS.filter((e: ElementDef) => e.state === 'liquid' && !e.molten);
+    const liquids = ELEMENTS.filter((e: ElementDef) => e.state === 'liquid' && !MOLTEN_LIQUIDS.includes(e.key));
     expect(Math.max(...liquids.map((e: ElementDef) => e.density))).toBe(density('MERCURY'));
     expect(density('SAWDUST')).toBeLessThan(density('MOLTEN_WAX'));
     expect(density('MOLTEN_WAX')).toBeLessThan(density('OIL'));

@@ -6,10 +6,10 @@ import { wgslFloat } from '../movement';
 export const heatWGSL = /* wgsl */`
 // The temperature a cell conducts at: its stored temperature clamped to its element's thresholds. The two differ only
 // while the cell takes in or gives out the latent heat of a transition; an element without a threshold has one at
-// +-3e38, so the clamp changes nothing for it. A molten cell with a ctype is clamped at the threshold of the element it
-// sets into (\`kindTemp\`).
+// +-3e38, so the clamp changes nothing for it.
 fn cellTemp(c: Cell) -> f32 {
-  return kindTemp(c.kind, cellStoredTemp(c));
+  let t = cellType(c);
+  return clamp(cellStoredTemp(c), elBelowTemp(t), elAboveTemp(t));
 }
 
 // One heat exchange between two cells of a block; returns their new stored temperatures. The pair meets at the
