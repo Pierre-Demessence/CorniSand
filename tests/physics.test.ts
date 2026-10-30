@@ -35,11 +35,11 @@ describe('M8.8 AC2: the share of a pair', () => {
     const expected = (ka: number, ca: number, kb: number, cb: number): number =>
       (PAIR_TIME / CELL_SIZE ** 2) * ((2 * ka * kb) / (ka + kb)) * (1 / (ca * HEAT_UNIT) + 1 / (cb * HEAT_UNIT));
     expect(share(metal, metal)).toBeCloseTo(expected(50, 3.5, 50, 3.5), 12);
-    expect(share(metal, stone)).toBeCloseTo(expected(50, 3.5, 2.5, 2.2), 12);
+    expect(share(metal, stone)).toBeCloseTo(expected(50, 3.5, 2, 2.4), 12);
     expect(share(stone, metal), 'symmetric').toBe(share(metal, stone));
-    // The numbers the plan quotes: about 0.064 for steel, 0.0051 for stone, 0.00065 for water.
+    // The numbers the plan quotes: about 0.064 for steel, 0.0038 for basalt, 0.00065 for water.
     expect(share(metal, metal)).toBeCloseTo(0.0644, 3);
-    expect(share(stone, stone)).toBeCloseTo(0.00512, 4);
+    expect(share(stone, stone)).toBeCloseTo(0.00375, 4);
     expect(share(water, water)).toBeCloseTo(0.000647, 5);
     expect(CONDUCTION * 1e6, 'per W/m·K and per 1/(J/m³·K)').toBeCloseTo(PAIR_TIME / CELL_SIZE ** 2, 6);
   });
@@ -60,7 +60,9 @@ describe('M8.8 AC4: the rows come from physical data', () => {
     WATER: { k: [0.55, 0.65], c: [4.1, 4.25] },
     OIL: { k: [0.1, 0.18], c: [1.4, 1.9] },
     METAL: { k: [40, 80], c: [3.3, 4] },
-    STONE: { k: [2, 3.5], c: [2, 2.6] },
+    STONE: { k: [1.3, 2.9], c: [2, 2.9] },
+    GLASS: { k: [0.8, 1], c: [2, 2.3] },
+    BRICK: { k: [0.6, 1], c: [1.4, 1.8] },
     ICE: { k: [2, 2.4], c: [1.7, 2] },
     STEAM: { k: [35, 50], c: [1.9, 2.1] },
     LAVA: { k: [0.5, 2], c: [3, 4.5] },

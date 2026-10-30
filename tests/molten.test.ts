@@ -4,7 +4,7 @@ import { PROP_FIELDS, packElements } from '../src/element-table';
 import { ELEMENT as T, ELEMENTS, elementByKey, elementHeatCapacity, validateElements, type ElementDef } from '../src/elements';
 import { Canvas, tank } from '../src/scene-canvas';
 import { cell, createSim, device, idleInput, readCells, run, runMany } from './gpu';
-import { GLASS, GLASS_ABOVE, GOLD, MOLTEN_TABLE } from './molten-table';
+import { GOLD, MOLTEN_TABLE } from './molten-table';
 
 // Molten memory (M8.1d): a molten cell carries the element it sets into (its ctype, `kind` bits 16-23). The table is the
 // default one plus a few solids that melt into its molten elements (tests/molten-table.ts).
@@ -53,7 +53,7 @@ describe('M8.1 molten rows (table)', () => {
     expect(() => validateElements(withSand({ temp: 1713, becomes: 'LAVA', latent: 800, setsInto: 'NOPE' }))).toThrow(/setsInto "NOPE" is not in the table/);
     expect(() => validateElements(withSand({ temp: 1713, becomes: 'LAVA', latent: 800, setsInto: 'WATER' }))).toThrow(/WATER \(setsInto\) needs an above into LAVA/);
     expect(() => validateElements(withSand({ temp: 1713, becomes: 'LAVA', latent: 800, setsInto: 'GOLD' }))).toThrow(/GOLD \(setsInto\) needs an above into LAVA/);
-    expect(() => validateElements(withSand({ temp: 1600, becomes: 'LAVA', latent: 800, setsInto: 'GLASS' }))).toThrow(/under the 1713 of GLASS/);
+    expect(() => validateElements(withSand({ temp: 1300, becomes: 'LAVA', latent: 800, setsInto: 'GLASS' }))).toThrow(/under the 1400 of GLASS/);
     expect(() => validateElements(withSand({ temp: 1900, becomes: 'LAVA', latent: 800, setsInto: 'GLASS' }))).not.toThrow();
     // Not on a below, and not on an above into an element that is not molten.
     const water = MOLTEN_TABLE.map((e) => (e.key === 'WATER' ? { ...e, above: { ...e.above!, setsInto: 'WATER' } } : e));
@@ -74,8 +74,8 @@ describe('M8.1 molten rows (table)', () => {
     const ctype = (e: ElementDef): number => at(e, 'transitions') >>> 24;
     expect(ctype(elementByKey(MOLTEN_TABLE, 'STONE')), 'stone sets into stone').toBe(T.STONE);
     expect(ctype(metal), 'steel sets into steel').toBe(T.METAL);
-    expect(ctype(sand), 'sand sets into glass').toBe(GLASS);
-    expect(ctype(glass)).toBe(GLASS);
+    expect(ctype(sand), 'sand sets into glass').toBe(T.GLASS);
+    expect(ctype(glass)).toBe(T.GLASS);
     expect(ctype(gold)).toBe(GOLD);
     expect(ctype(elementByKey(MOLTEN_TABLE, 'WATER')), 'water boils into steam, which is not molten').toBe(0);
     expect(ctype(lava), 'lava has no above').toBe(0);
@@ -93,8 +93,8 @@ describe.skipIf(!device)('M8.1 AC9: a molten cell sets into the element it remem
     const cases: [string, ElementDef, number][] = [
       ['stone', elementByKey(MOLTEN_TABLE, 'STONE'), T.STONE],
       ['steel', metal, T.METAL],
-      ['sand', sand, GLASS],
-      ['glass', glass, GLASS],
+      ['sand', sand, T.GLASS],
+      ['glass', glass, T.GLASS],
       ['gold', gold, GOLD],
     ];
     for (const [name, e, ctype] of cases) {
@@ -149,27 +149,27 @@ describe.skipIf(!device)('M8.1 AC9: a molten cell sets into the element it remem
   it('sand melts into lava that sets into glass: the full round trip through the table', async () => {
     const molten = await row([{ kind: cell(T.SAND), temp: meltsAbove(sand) + 10 }, wall]);
     expect(typeOf(molten.kinds[0])).toBe(T.LAVA);
-    expect(ctypeOf(molten.kinds[0])).toBe(GLASS);
+    expect(ctypeOf(molten.kinds[0])).toBe(T.GLASS);
     // Cooled under glass's setting point, it is glass, not sand.
     const set = await row([{ kind: molten.kinds[0], temp: setsBelow(glass, lava) - 5 }, wall]);
-    expect(typeOf(set.kinds[0])).toBe(GLASS);
+    expect(typeOf(set.kinds[0])).toBe(T.GLASS);
     expect(ctypeOf(set.kinds[0])).toBe(0);
   });
 
   it('a molten cell keeps its temperature at its ctype\'s threshold while it gives out its latent heat', async () => {
-    // Stored at 1,600 °C, glass's lava is under its 1,713 °C setting point: its temperature is 1,713 and the plain lava's is 1,600.
-    const glassLava = cell(T.LAVA, 0, GLASS);
-    expect(GLASS_ABOVE.temp).toBe(1713);
+    // Stored at 1,350 °C, glass's lava is under its 1,400 °C setting point but not yet set (it sets under about 1,310): its temperature is 1,400 and the plain lava's is 1,350.
+    const glassLava = cell(T.LAVA, 0, T.GLASS);
+    expect(glass.above!.temp).toBe(1400);
     const sim = createSim(2, 1, 1, { elements: MOLTEN_TABLE, ...NO_AIR });
     const temp = new Uint32Array(2);
-    tempView({ temp }).set([1600, 1600]);
-    // Two liquid cells side by side exchange heat at their (clamped) temperatures: 1,713 against 1,600 moves heat from the
-    // glass's lava into the plain one, which a plain 1,600 against 1,600 would not.
+    tempView({ temp }).set([1350, 1350]);
+    // Two liquid cells side by side exchange heat at their (clamped) temperatures: 1,400 against 1,350 moves heat from the
+    // glass's lava into the plain one, which a plain 1,350 against 1,350 would not.
     sim.load({ kind: new Uint32Array([glassLava, cell(T.LAVA)]), temp });
     await run(sim, 1);
     const temps = tempView({ temp: await sim.fields.read('temp') });
-    expect(temps[0], 'the glass lava gave heat').toBeLessThan(1600);
-    expect(temps[1], 'the plain lava took it').toBeGreaterThan(1600);
+    expect(temps[0], 'the glass lava gave heat').toBeLessThan(1350);
+    expect(temps[1], 'the plain lava took it').toBeGreaterThan(1350);
   });
 });
 

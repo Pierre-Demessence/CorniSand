@@ -7,7 +7,7 @@ import { GLOW_RAMP, HEAT_LEGEND_TEMPS, HEAT_RAMP, heatRampCSS, type RampKnot } f
 import type { Simulation } from '../src/simulation';
 import { toggleView } from '../src/toolbar';
 import { cell, createSim, device, runMany } from './gpu';
-import { GLASS, GOLD, MOLTEN_TABLE } from './molten-table';
+import { GOLD, MOLTEN_TABLE } from './molten-table';
 
 // One grid cell per pixel: 64 pixels of 4 bytes are one 256-byte row, the alignment a texture copy needs.
 const WIDTH = 64;
@@ -127,9 +127,9 @@ describe.skipIf(!device)('M5.5b heat on the display', () => {
 
   it('M8.1 AC12: molten cells of different ctypes are drawn in different colors, and each brightens as it heats', async () => {
     // Lava that sets into stone, into glass or into nothing, and molten steel that sets into steel or into gold, at the same
-    // temperatures (all over their setting points: a glass lava sets under 1,463 °C).
+    // temperatures (all over their setting points: a glass lava sets under about 1,310 °C).
     const cases: [number, number, number][] = [
-      [T.LAVA, T.STONE, 1300], [T.LAVA, T.STONE, 1800], [T.LAVA, T.STONE, 2000], [T.LAVA, GLASS, 1800], [T.LAVA, GLASS, 2000], [T.LAVA, 0, 1800],
+      [T.LAVA, T.STONE, 1300], [T.LAVA, T.STONE, 1800], [T.LAVA, T.STONE, 2000], [T.LAVA, T.GLASS, 1800], [T.LAVA, T.GLASS, 2000], [T.LAVA, 0, 1800],
       [T.MOLTEN_METAL, T.METAL, 1800], [T.MOLTEN_METAL, T.METAL, 2000], [T.MOLTEN_METAL, GOLD, 1800], [T.MOLTEN_METAL, GOLD, 2000],
     ];
     const sim = createSim(WIDTH, 1, 1, { elements: MOLTEN_TABLE });

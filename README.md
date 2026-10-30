@@ -25,7 +25,7 @@ Requires a WebGPU-capable browser (Chrome 113+, Edge 113+, Safari 18.2+).
 - An element picker: a tab per category (Powders, Liquids, Gases, Solids, Metals, Explosives, Tools), a search (/), a description on hover, and the 1 to 9 keys for the entries of the tab shown
 - Heat and Cool tools, a heat view (H) with a temperature legend, and the element and temperature under the pointer in the toolbar
 - Heat scenes: `heatBars`, `iceLava`, `steamCeiling` and `moltenMetal`, in the Scenes menu
-- Air: empty space is air that carries pressure, wind and heat, on a grid of 4×4-pixel cells. Lit gunpowder, and water flashing into steam, send out a pressure wave that throws sand and grains and crushes stone into sand; walls stop the air and the edge of the screen lets it out. Wind pushes smoke, flames and flying grains but not through a pile or a pool. Hot things warm the air above them, which rises in a plume that draws smoke in, so a hot block cools slowly in the open
+- Air: empty space is air that carries pressure, wind and heat, on a grid of 4×4-pixel cells. Lit gunpowder, and water flashing into steam, send out a pressure wave that throws sand and grains and crushes basalt, brick, glass and ice into gravel, broken glass and snow; walls stop the air and the edge of the screen lets it out. Wind pushes smoke, flames and flying grains but not through a pile or a pool. Hot things warm the air above them, which rises in a plume that draws smoke in, so a hot block cools slowly in the open
 - Wind tool: drag to blow the air under the brush along the stroke, faster for a faster drag
 - An air view (A) with a legend: pressure in colors that get lighter as it rises and arrows for the wind; the element, temperature and air pressure under the pointer in the toolbar
 - Air scenes: `explosion`, `plume` and `mound`, in the Scenes menu; `?air=2` runs the air at 2×2-pixel cells (sharper, slower)
@@ -40,7 +40,7 @@ Requires a WebGPU-capable browser (Chrome 113+, Edge 113+, Safari 18.2+).
 - **Left click**: draw the selected particle
 - **Right click**: erase
 - **Scroll wheel**: brush size
-- **1–9**: select Sand, Water, Oil, Fire, Smoke, Wall, Metal, Stone, Ice (Lava, Steam and Gunpowder by their buttons)
+- **1–9**: select Sand, Water, Oil, Fire, Smoke, Wall, Metal, Basalt, Ice (Lava, Steam and Gunpowder by their buttons)
 - **Heat / Cool buttons**: hold the left button to warm or cool what is under the brush
 - **Wind button**: drag with the left button to blow the air along the stroke
 - **H**: heat view on / off

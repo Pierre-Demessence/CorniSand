@@ -3,7 +3,7 @@ import { CELL_FIELDS, tempView } from '../src/cell-fields';
 import { ELEMENT as T, ELEMENTS, elementByKey, elementTemperature } from '../src/elements';
 import { unpackHalf2 } from '../src/half';
 import { packCell, WALL } from '../src/scene-canvas';
-import { HOURGLASS, SCENARIO_SCENES, heatedLayer, hourglass, iceCup, sealedBars, steamBurn } from '../src/scenarios';
+import { HOURGLASS, SCENARIO_SCENES, freeFall, heatedLayer, hourglass, iceCup, sealedBars, steamBurn } from '../src/scenarios';
 import {
   BLAST, BLAST_CENTER, BLAST_MARK, EXPLOSION, explosion, findScene, HEAT_BARS, heatBars, ICE_LAVA, iceLava, MOLTEN_METAL, moltenMetal, PHYSICS, PHYSICS_ROOMS, physicsRooms, PLUME, plume, DESCRIPTION_MAX, SCENE_GROUPS, SCENE_INFO, SCENES, SHOWCASE, STEAM_CEILING, steamCeiling, uTube,
   type PhysicsRoom,
@@ -66,6 +66,8 @@ describe('scenes', () => {
       'heatedLayer-below': heatedLayer('below'),
       hourglass: hourglass(),
       'hourglass-wide': hourglass(2 * HOURGLASS.outlet),
+      freeFall: freeFall(),
+      'freeFall-pebble': freeFall(T.GRAVEL),
       sealedBars: sealedBars('METAL'),
       'sealedBars-stone': sealedBars('STONE'),
       'sealedBars-ice': sealedBars('ICE'),
@@ -90,7 +92,7 @@ describe('scenes', () => {
       expect(name.startsWith(`${info.family}-`), name).toBe(true);
     }
     // The variants AC7 registers.
-    expect(Object.values(SCENE_INFO).filter((info) => info.family !== undefined)).toHaveLength(6);
+    expect(Object.values(SCENE_INFO).filter((info) => info.family !== undefined)).toHaveLength(7);
   });
 
   it('build every scene with consistent sizes and only known particle types', () => {

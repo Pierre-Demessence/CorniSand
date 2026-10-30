@@ -368,6 +368,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {
 
   // The wall behind the field, dithered.
   var color = wallColor(uv, in.position.xy);
+  let wall = color;
   // In the heat view empty space shows the temperature of its air, dimmed so the cells that hold heat stand out.
   if (HAS_AIR && heatView && pType == EL_EMPTY) {
     color = heatColor(air.y) * 0.5;
@@ -389,6 +390,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {
       }
       if (u.cellsLook < 0.5 && !airView && elState(pType) == ST_LIQUID) {
         color = liquidColor(pType, color, cellX, cellY);
+      }
+      // A solid that does not hide the wall (glass: opacity below 1) shows it through, in the finished look.
+      if (u.cellsLook < 0.5 && !airView && elState(pType) == ST_SOLID) {
+        color = mix(wall, color, displayProps[pType].opacity);
       }
       color = litColor(cell, color);
     }

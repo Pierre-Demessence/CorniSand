@@ -35,7 +35,7 @@ const withRow = (key: string, change: Partial<ElementDef>): ElementDef[] => [...
 describe('element table', () => {
   it('AC11: describes every current material, the IDs the cells already store', () => {
     expect(ELEMENT).toEqual({ EMPTY: 0, SAND: 1, WALL: 2, WATER: 3, SMOKE: 4, OIL: 5, FIRE: 6, METAL: 7, STONE: 8,
-      ICE: 9, STEAM: 10, LAVA: 11, MOLTEN_METAL: 12, GUNPOWDER: 13,
+      ICE: 9, STEAM: 10, LAVA: 11, MOLTEN_METAL: 12, GUNPOWDER: 13, GRAVEL: 14, SNOW: 15, BROKEN_GLASS: 16, GLASS: 17, BRICK: 18,
     });
     expect(() => validateElements(ELEMENTS)).not.toThrow();
     expect(elementByKey(ELEMENTS, 'FIRE').life).toEqual({ start: 200, decay: 4, becomes: 'SMOKE' });
@@ -95,7 +95,7 @@ describe('element table', () => {
   });
 
   it('M5: starts fire at its flame temperature and everything else at room temperature, packed for the GPU', () => {
-    const painted: Record<string, number> = { FIRE: 1000, SMOKE: 150, ICE: -20, STEAM: 110, LAVA: 1300, MOLTEN_METAL: 1600 };
+    const painted: Record<string, number> = { FIRE: 1000, SMOKE: 150, ICE: -20, STEAM: 110, LAVA: 1300, MOLTEN_METAL: 1600, SNOW: -10 };
     for (const e of ELEMENTS) expect(elementTemperature(e), e.key).toBe(painted[e.key] ?? ROOM_TEMP);
     expect(elementTemperature({ ...MUD, temperature: -20 })).toBe(-20);
     const floats = new Float32Array(packElements(ELEMENTS));
@@ -108,7 +108,7 @@ describe('element table', () => {
     const metal = elementByKey(ELEMENTS, 'METAL');
     const stone = elementByKey(ELEMENTS, 'STONE');
     expect([metal.state, metal.density, elementConductivity(metal), elementHeatCapacity(metal)]).toEqual(['solid', 7870, 50, 3.5]);
-    expect([stone.state, stone.density, elementConductivity(stone), elementHeatCapacity(stone)]).toEqual(['solid', 2700, 2.5, 2.2]);
+    expect([stone.state, stone.density, elementConductivity(stone), elementHeatCapacity(stone)]).toEqual(['solid', 2900, 2, 2.4]);
     expect(elementConductivity(MUD)).toBe(0);
     expect(elementHeatCapacity(MUD)).toBe(1);
     expect(ELEMENTS.filter((e) => !elementHoldsHeat(e)).map((e) => e.key).sort()).toEqual(['EMPTY', 'WALL']);
@@ -121,7 +121,7 @@ describe('element table', () => {
     const at = (id: number, field: string): number => id * PROP_FIELDS.length + PROP_FIELDS.findIndex((f) => f.name === field);
     expect(floats[at(ELEMENT.METAL, 'conductivity')]).toBe(50);
     expect(floats[at(ELEMENT.METAL, 'heatCapacity')]).toBe(3.5);
-    expect(floats[at(ELEMENT.STONE, 'conductivity')]).toBe(2.5);
+    expect(floats[at(ELEMENT.STONE, 'conductivity')]).toBe(2);
     expect(floats[at(200, 'conductivity')]).toBe(0.25);
     expect(floats[at(200, 'heatCapacity')]).toBe(2);
     expect(floats[at(ELEMENT.WALL, 'conductivity')]).toBe(0);
@@ -160,7 +160,7 @@ describe('element table', () => {
     expect([floats[at(201, 'belowTemp')], floats[at(201, 'aboveTemp')], floats[at(201, 'aboveWidth')]]).toEqual([Math.fround(-NO_THRESHOLD), 0, 150]);
     expect(words[at(201, 'transitions')], 'only an above target').toBe(202 << 8);
     expect(words[at(203, 'transitions')], 'only a below target').toBe(202);
-    for (const key of ['SAND', 'WALL'] as const) {
+    for (const key of ['SMOKE', 'WALL'] as const) {
       expect([floats[at(ELEMENT[key], 'belowTemp')], floats[at(ELEMENT[key], 'aboveTemp')]], key).toEqual([Math.fround(-NO_THRESHOLD), Math.fround(NO_THRESHOLD)]);
       expect([floats[at(ELEMENT[key], 'belowWidth')], floats[at(ELEMENT[key], 'aboveWidth')], words[at(ELEMENT[key], 'transitions')]], key).toEqual([0, 0, 0]);
     }
@@ -229,8 +229,8 @@ describe('element table', () => {
   describe('M6 AC19: pressure transitions', () => {
     const CRUSHED: ElementDef = { ...MUD, state: 'solid', toughness: 1.2, pressureAbove: { becomes: 'SAND' } };
 
-    it('M6 AC19: crushes stone into sand, and never counts an element with a pressure transition as inert', () => {
-      expect(elementByKey(ELEMENTS, 'STONE').pressureAbove?.becomes).toBe('SAND');
+    it('M6 AC19: crushes basalt into gravel, and never counts an element with a pressure transition as inert', () => {
+      expect(elementByKey(ELEMENTS, 'STONE').pressureAbove?.becomes).toBe('GRAVEL');
       expect(elementInert(CRUSHED), 'a solid with only a pressure transition').toBe(false);
       expect(elementInert({ ...CRUSHED, pressureAbove: undefined, toughness: undefined })).toBe(true);
       expect(elementHoldsHeat(CRUSHED), 'a pressure transition gives no temperature').toBe(false);
@@ -243,13 +243,13 @@ describe('element table', () => {
       const floats = new Float32Array(buffer);
       const at = (id: number, field: string): number => id * PROP_FIELDS.length + PROP_FIELDS.findIndex((f) => f.name === field);
       expect(floats[at(ELEMENT.STONE, 'pressureAbove')]).toBe(Math.fround(crushPressure(elementByKey(ELEMENTS, 'STONE'))!));
-      expect((words[at(ELEMENT.STONE, 'transitions')] >> 16) & 0xff).toBe(ELEMENT.SAND);
+      expect((words[at(ELEMENT.STONE, 'transitions')] >> 16) & 0xff).toBe(ELEMENT.GRAVEL);
       // The temperature transition of stone keeps its bits.
       expect((words[at(ELEMENT.STONE, 'transitions')] >> 8) & 0xff).toBe(ELEMENT.LAVA);
       expect(floats[at(200, 'pressureAbove')]).toBe(Math.fround(1.2 * PRESSURE_PER_TOUGHNESS));
       expect(words[at(200, 'inert')]).toBe(0);
       expect(floats[at(ELEMENT.SAND, 'pressureAbove')]).toBe(Math.fround(NO_PRESSURE));
-      expect(words[at(ELEMENT.SAND, 'transitions')] >> 16).toBe(0);
+      expect((words[at(ELEMENT.SAND, 'transitions')] >> 16) & 0xff).toBe(0);
     });
 
     it('M8.8 AC6: gives a crush pressure of toughness times PRESSURE_PER_TOUGHNESS, anchored so STONE stays at 0.45', () => {
@@ -387,6 +387,15 @@ describe('M11.2 look rows and the display table', () => {
     expect(grain('METAL')).toBeLessThan(LOOK.grainSolid);
     expect(words(row({ look: { grain: 0.4 } }), 'MUD').grain).toBeCloseTo(0.4, 6);
     expect(packDisplay(row({}), lookSettings({ grainPowder: 0.2 })).at(200 * DISPLAY_FIELDS.length)).toBeCloseTo(0.2, 6);
+  });
+
+  it('M8.1 AC30: carries the look of the new rows: glass hides little of the wall and is nearly smooth, the powders and bricks keep the defaults of their state', () => {
+    const w = (key: string): Record<string, number> => words(ELEMENTS, key);
+    expect(w('GLASS').opacity, 'glass').toBeCloseTo(0.4, 6);
+    expect(w('GLASS').grain, 'glass').toBeCloseTo(0.01, 6);
+    for (const key of ['GRAVEL', 'SNOW', 'BROKEN_GLASS', 'BRICK']) expect(w(key).opacity, key).toBe(1);
+    for (const key of ['GRAVEL', 'SNOW', 'BROKEN_GLASS']) expect(w(key).grain, key).toBeCloseTo(LOOK.grainPowder, 6);
+    expect(w('BRICK').grain).toBeCloseTo(LOOK.grainSolid, 6);
   });
 
   it('defaults the opacity by state and takes the absorption of a row', () => {

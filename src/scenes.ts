@@ -567,12 +567,12 @@ export const SCENE_INFO: Record<string, SceneInfo> = {
   heatBars: {
     label: 'Heat bars',
     group: 'heat',
-    description: 'A metal bar above a stone bar, both at 500 °C at the left end: heat runs far faster along the metal (H).',
+    description: 'A metal bar above a basalt bar, both at 500 °C at the left end: heat runs far faster along the metal (H).',
   },
   iceLava: {
     label: 'Ice and lava',
     group: 'heat',
-    description: 'A block of ice touching a pool of lava: the ice melts, the water boils and the lava sets into stone (H).',
+    description: 'A block of ice touching a pool of lava: the ice melts, the water boils and the lava sets into basalt (H).',
   },
   steamCeiling: {
     label: 'Steam on a cold ceiling',

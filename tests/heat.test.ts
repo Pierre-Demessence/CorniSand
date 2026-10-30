@@ -8,7 +8,7 @@ import type { CellProbe, Simulation } from '../src/simulation';
 import { TOOLS } from '../src/toolbar';
 import { cell, cellType, countTypes, createSim, device, idleInput, mulberry32, readCells, run, runMany } from './gpu';
 import { heatContent } from './metrics';
-import { GLASS, GOLD, MOLTEN_TABLE } from './molten-table';
+import { GOLD, MOLTEN_TABLE } from './molten-table';
 
 const FIRE_TEMP = 1000;
 
@@ -591,6 +591,34 @@ describe.skipIf(!device)('M5.4b phase changes', () => {
 
 const count = (kinds: Uint32Array, type: number): number => countTypes(kinds).get(type) ?? 0;
 
+describe.skipIf(!device)('M8.1 AC17: every threshold of the table', () => {
+  // Generated from the table, so each new row is covered: a single cell beside a wall (which holds no heat) at the stored
+  // temperature one degree short of the end of its latent range stays, one degree past it changes into the transition's
+  // target, with the ctype a melting row gives. The range is the threshold plus (above) or minus (below) the latent width.
+  const sides = ELEMENTS.flatMap((e: ElementDef) => (['below', 'above'] as const).flatMap((side) => (e[side] ? [{ e, side, t: e[side] }] : [])));
+
+  it('has transitions to test', () => {
+    expect(sides.length).toBeGreaterThan(10);
+  });
+
+  it.each(sides.map((c) => [`${c.e.key} ${c.side} into ${c.t.becomes}`, c] as const))('%s', async (_name, { e, side, t }) => {
+    const target = elementByKey(ELEMENTS, t.becomes);
+    const width = (t.latent ?? 0) / elementHeatCapacity(e);
+    const edge = side === 'above' ? t.temp + width : t.temp - width;
+    const sign = side === 'above' ? 1 : -1;
+    const ctype = side === 'above' && target.molten ? elementByKey(ELEMENTS, t.setsInto ?? e.key).id : 0;
+    const sim = createSim(4, 1, 1, { elements: ELEMENTS, ...NO_AIR });
+    const temp = new Uint32Array(4);
+    tempView({ temp }).set([edge - sign, 0, edge + sign, 0]);
+    sim.load({ kind: new Uint32Array([cell(e.id), cell(T.WALL), cell(e.id), cell(T.WALL)]), temp });
+    await run(sim, 1);
+    const kinds = await readCells(sim);
+    expect(cellType(kinds[0]), `${e.key} one degree short of ${edge}`).toBe(e.id);
+    expect(cellType(kinds[2]), `${e.key} one degree past ${edge}`).toBe(target.id);
+    expect((kinds[2] >>> 16) & 0xff, `${target.key} ctype`).toBe(ctype);
+  });
+});
+
 describe.skipIf(!device)('M5.4c phase changes in scenes', () => {
   it('AC9: ice beside lava melts into water first, part of it boils, and the lava that touched water sets into stone', async () => {
     const scene = SCENES.iceLava();
@@ -835,11 +863,11 @@ describe.skipIf(!device)('M8.1 AC10: total heat with molten memory', () => {
     const next = mulberry32(10);
     const rand = (): number => next() / 2 ** 32;
     // [element, ctype, lowest and highest start temperature]: the temperatures straddle each threshold and the latent ends
-    // beyond it, so cells melt and set both ways: glass's lava sets under 1,463 °C, steel's under 1,197, gold's under 713.
+    // beyond it, so cells melt and set both ways: glass's lava sets under about 1,310 °C, steel's under 1,197, gold's under 713.
     const range: [number, number, number, number][] = [
       [T.ICE, 0, -100, 300], [T.WATER, 0, -100, 300], [T.STEAM, 0, -150, 300], [T.STONE, 0, 800, 1500], [T.SAND, 0, 1500, 2600],
-      [T.LAVA, 0, 700, 1500], [T.LAVA, T.STONE, 700, 1500], [T.LAVA, GLASS, 1200, 2200],
-      [GLASS, 0, 1500, 2400], [T.METAL, 0, 1300, 1900], [GOLD, 0, 800, 2000],
+      [T.LAVA, 0, 700, 1500], [T.LAVA, T.STONE, 700, 1500], [T.LAVA, T.GLASS, 1200, 2200],
+      [T.GLASS, 0, 1500, 2400], [T.METAL, 0, 1300, 1900], [GOLD, 0, 800, 2000],
       [T.MOLTEN_METAL, 0, 1200, 1900], [T.MOLTEN_METAL, T.METAL, 1000, 1900], [T.MOLTEN_METAL, GOLD, 500, 1500], [T.EMPTY, 0, 0, 0],
     ];
     const kind = new Uint32Array(width * height);
@@ -872,7 +900,7 @@ describe.skipIf(!device)('M8.1 AC10: total heat with molten memory', () => {
     // Glass's lava, steel's molten metal and stone's lava set into their solids, which grew (first run: glass 107 to 252, stone
     // 122 to 205, steel 98 to 312; gold went the other way, 121 to 45, since a conductor that good melts in its hot neighbors).
     const after = await measure();
-    for (const [type, name] of [[GLASS, 'glass'], [T.STONE, 'stone'], [T.METAL, 'steel']] as const) {
+    for (const [type, name] of [[T.GLASS, 'glass'], [T.STONE, 'stone'], [T.METAL, 'steel']] as const) {
       expect(after.types.get(type)!, name).toBeGreaterThan(before.types.get(type)!);
     }
     // And a cell that sets drops its ctype: a molten cell keeps one only while it is molten.

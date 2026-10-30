@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { ELEMENT as T, ELEMENTS, cellName, elementByKey, type ElementDef } from '../src/elements';
 import { formatPressure, formatProbe } from '../src/readout';
 import { paintPreview } from '../src/toolbar';
-import { GOLD, GLASS, MOLTEN_TABLE } from './molten-table';
+import { GOLD, MOLTEN_TABLE } from './molten-table';
 
 const element = (id: number): ElementDef => ELEMENTS.find((e) => e.id === id)!;
 
@@ -38,7 +38,7 @@ describe('M8.1 AC13: a molten cell is named by what it sets into', () => {
 
   it('uses the meltLabel of the element it sets into, else "Molten" and its label in lower case', () => {
     expect(name(T.LAVA, T.STONE), 'melted basalt').toBe('Lava');
-    expect(name(T.LAVA, GLASS)).toBe('Molten glass');
+    expect(name(T.LAVA, T.GLASS)).toBe('Molten glass');
     expect(name(T.MOLTEN_METAL, GOLD)).toBe('Molten gold');
     expect(name(T.MOLTEN_METAL, T.METAL)).toBe(molten('METAL'));
   });
@@ -61,9 +61,9 @@ describe('M8.1 AC13: a molten cell is named by what it sets into', () => {
 
   it('shows in the readout line, with the temperature clamped at the threshold of the element it sets into', () => {
     const lava = elementByKey(MOLTEN_TABLE, 'LAVA');
-    // Stored 1,600 °C under glass's 1,713 °C setting point: the glass lava reads 1,713, a plain lava 1,600.
-    expect(formatProbe(lava, { type: T.LAVA, ctype: GLASS, temp: 1600 }, MOLTEN_TABLE)).toBe('Molten glass · 1713 °C');
-    expect(formatProbe(lava, { type: T.LAVA, ctype: 0, temp: 1600 }, MOLTEN_TABLE)).toBe('Lava · 1600 °C');
+    // Stored 1,300 °C under glass's 1,400 °C setting point: the glass lava reads 1,400, a plain lava 1,300.
+    expect(formatProbe(lava, { type: T.LAVA, ctype: T.GLASS, temp: 1300 }, MOLTEN_TABLE)).toBe('Molten glass · 1400 °C');
+    expect(formatProbe(lava, { type: T.LAVA, ctype: 0, temp: 1300 }, MOLTEN_TABLE)).toBe('Lava · 1300 °C');
     expect(formatProbe(lava, { type: T.LAVA, ctype: T.STONE, temp: 1100 }, MOLTEN_TABLE)).toBe('Lava · 1200 °C');
     expect(formatProbe(lava, { type: T.LAVA, temp: 1300 })).toBe('Lava · 1300 °C');
   });

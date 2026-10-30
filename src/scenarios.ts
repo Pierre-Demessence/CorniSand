@@ -84,7 +84,7 @@ export function steamBurn(fill: SteamBurnFill = 'steam'): Scene {
 }
 
 /**
- * `contactTemp`: a steel block at 80 °C pressed against a granite block at 20 °C, a bar left to right. Their contact
+ * `contactTemp`: a steel block at 80 °C pressed against a basalt block at 20 °C, a bar left to right. Their contact
  * face jumps at once to the mean of their temperatures weighted by their effusivities and stays there until the heat
  * reaches a far end. The rows are `height` identical rows, so the heat runs along x only; the grid edge holds no heat.
  */
@@ -383,6 +383,7 @@ export const SCENARIO_SCENES: Record<string, () => Scene> = {
   ...version('hourglass', 'wide', () => hourglass(2 * HOURGLASS.outlet)),
   viscousSpread: () => viscousSpread(),
   freeFall: () => freeFall(),
+  ...version('freeFall', 'pebble', () => freeFall(T.GRAVEL)),
   sealedBars: () => sealedBars('METAL'),
   ...version('sealedBars', 'stone', () => sealedBars('STONE')),
   ...version('sealedBars', 'ice', () => sealedBars('ICE')),
@@ -426,7 +427,7 @@ export const SCENARIO_INFO: Record<string, SceneInfo> = {
   contactTemp: {
     label: 'Contact temperature',
     group: 'scenarios',
-    description: 'Why metal feels colder than wood: steel at 80 °C against granite at 20 °C, the contact face jumps to 71 °C.',
+    description: 'Why metal feels cold: steel at 80 °C against basalt at 20 °C, the contact face jumps to about 71 °C.',
   },
   redHotBar: {
     label: 'Red-hot bar',
@@ -437,7 +438,7 @@ export const SCENARIO_INFO: Record<string, SceneInfo> = {
   lavaCrust: {
     label: 'Lava crust',
     group: 'scenarios',
-    description: 'A pool of lava at 1,300 °C open to still air: a crust of stone grows down from the surface.',
+    description: 'A pool of lava at 1,300 °C open to still air: a crust of basalt grows down from the surface.',
     waitsFor: ['I26', 'B16'],
   },
   heatedLayer: {
@@ -479,7 +480,16 @@ export const SCENARIO_INFO: Record<string, SceneInfo> = {
   freeFall: {
     label: 'Free fall',
     group: 'scenarios',
+    version: 'sand',
     description: 'One grain of sand dropped from 1 m in a narrow column: a 0.3 mm grain lands in 0.58 to 0.74 s.',
+    waitsFor: ['I34'],
+  },
+  'freeFall-pebble': {
+    label: 'Free fall (pebble)',
+    group: 'scenarios',
+    family: 'freeFall',
+    version: 'pebble',
+    description: 'One piece of gravel dropped from 1 m in a narrow column: a 5 mm pebble lands in 0.45 to 0.47 s.',
     waitsFor: ['I34'],
   },
   sealedBars: {
@@ -489,11 +499,11 @@ export const SCENARIO_INFO: Record<string, SceneInfo> = {
     description: 'A steel bar 40 cells long, halves at 100 and 0 °C: the difference decays with a 21 s time constant.',
   },
   'sealedBars-stone': {
-    label: 'Stone bar relaxing',
+    label: 'Basalt bar relaxing',
     group: 'scenarios',
     family: 'sealedBars',
     version: 'stone',
-    description: 'A stone bar 12 cells long, halves at 100 and 0 °C: the difference decays with a 24 s time constant.',
+    description: 'A basalt bar 12 cells long, halves at 100 and 0 °C: the difference decays with a 32 s time constant.',
   },
   'sealedBars-ice': {
     label: 'Ice bar relaxing',

@@ -237,15 +237,15 @@ describe.skipIf(!device)('freeFall', () => {
   const TARGET = [0.58, 0.74] as const;
   const CAP = 6 * SUPERSTEPS_PER_SECOND;
 
-  async function fallTime(seed: number, elements: readonly ElementDef[] = ELEMENTS): Promise<number> {
-    const scene = freeFall();
+  async function fallTime(seed: number, elements: readonly ElementDef[] = ELEMENTS, grain: number = T.SAND): Promise<number> {
+    const scene = freeFall(grain);
     const sim = createSim(scene.width, scene.height, seed, { elements: elements });
     sim.load(scene.fields);
     for (let supersteps = 1; supersteps <= CAP; supersteps++) {
       await runMany(sim, 1);
       const kinds = await sim.fields.read('kind');
       for (let x = 0; x < scene.width; x++) {
-        if (cellType(kinds[WALL * scene.width + x]) === T.SAND) return supersteps / SUPERSTEPS_PER_SECOND;
+        if (cellType(kinds[WALL * scene.width + x]) === grain) return supersteps / SUPERSTEPS_PER_SECOND;
       }
     }
     return NaN;
@@ -272,6 +272,43 @@ describe.skipIf(!device)('freeFall', () => {
     wrong: 'SAND at four times the default drag',
     measure: () => fallTime(SEED, ELEMENTS.map((e) => (e.key === 'SAND' ? { ...e, drag: 4 * DEFAULT_DRAG } : e))),
     target: TARGET,
+    timeout: 120_000,
+  });
+
+  // Experiment: the pebble of the three grains: a gravel stone 5 mm across.
+  // Target: a 5 mm pebble settles at about 12 m/s (`docs/research/physical-properties.md`, Grain size), so drag adds little to the
+  //   0.452 s of free fall from 1 m in a vacuum (sqrt(2 x 1 / 9.81)); drag growing with the square of the speed gives 0.457 s at
+  //   12 m/s, 0.463 at 8 m/s and 0.453 at 20 m/s. The range is 0.45 to 0.47 s (tolerance inferred: the three speeds, plus the
+  //   game's one-dispatch resolution of 0.004 s). The fall is 1 m = 734 cells.
+  // Measure: the seconds (supersteps / 240) until the GRAVEL cell, dropped from rest 734 cells above the floor in still air, is a
+  //   cell on the floor again.
+  // Leaves out: the grain size (backlog I34, M12.1): every grain falls with the drag of its row, not of its size, so the pebble
+  //   falls like sand, slowly; and a heap's draft.
+  const PEBBLE_TARGET = [0.45, 0.47] as const;
+
+  scenario({
+    name: 'freeFall',
+    version: 'pebble',
+    measure: async () => ({ seconds: await fallTime(SEED, ELEMENTS, T.GRAVEL) }),
+    checks: [
+      {
+        value: 'seconds',
+        outcome: 'a gravel pebble falls 734 cells (1 m) in 0.45 to 0.47 s',
+        target: PEBBLE_TARGET,
+        waitsFor: waitsFor('freeFall-pebble'),
+        companion: [0.4, 1.5],
+      },
+    ],
+    timeout: 120_000,
+  });
+
+  // Four times the default drag slows the pebble well past a second.
+  control({
+    name: 'freeFall',
+    version: 'pebble',
+    wrong: 'GRAVEL at four times the default drag',
+    measure: () => fallTime(SEED, ELEMENTS.map((e) => (e.key === 'GRAVEL' ? { ...e, drag: 4 * DEFAULT_DRAG } : e)), T.GRAVEL),
+    target: PEBBLE_TARGET,
     timeout: 120_000,
   });
 });

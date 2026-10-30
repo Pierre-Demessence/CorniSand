@@ -245,14 +245,9 @@ describe('scenarios to build later', () => {
 
 describe('scenarios to build beside the built ones', () => {
   describe('freeFall', () => {
-    // Sand's check is built by M8.9g in `tests/scenarios-flow.test.ts`; the pebble and the flour need other materials.
+    // Sand's check is built by M8.9g in `tests/scenarios-flow.test.ts`; the pebble is built by M8.1e beside it; the flour needs another material.
     // Measure: dispatches until the grain reaches the floor, 734 cells (1 m) below.
     // Source: settling speeds from `docs/research/physical-properties.md` (Grain size).
-
-    // Pebble: a 5 mm grain settles at about 12 m/s, so drag adds little to the 0.452 s of free fall in a vacuum
-    //   (sqrt(2 x 1 / 9.81) = 0.452 s); drag growing with the square of the speed (estimate) gives 0.46 s.
-    // Needs: GRAVEL (M8.1e) and grain size (backlog I34, M12.1); M8.1e turns it into a waiting test.
-    it.todo('freeFall (pebble): a pebble lands from 1 m (734 cells) in 0.46 s');
 
     // Flour: 50 µm grains settle at 0.07 to 0.1 m/s, so 1 m takes 1 / 0.1 = 10 s to 1 / 0.07 = 14.3 s.
     // Needs: FLOUR (M8.2) and grain size (backlog I34, M12.1).

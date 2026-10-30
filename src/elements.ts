@@ -150,7 +150,7 @@ export interface PressureTransition {
 
 export const DEFAULT_DRAG = 1 / 64;
 
-// Pressure (dimensionless, like the air's) per MPa·√m of fracture toughness, anchored so that STONE's granite, 1.7, is
+// Pressure (dimensionless, like the air's) per MPa·√m of fracture toughness, anchored so that STONE's (basalt's) 1.7 is
 // the 0.45 that tests/air-crush.test.ts tuned: a gunpowder charge of about 50 cells crushes stone within about 15 cells.
 export const STONE_TOUGHNESS = 1.7;
 export const PRESSURE_PER_TOUGHNESS = 0.45 / STONE_TOUGHNESS;
@@ -316,6 +316,9 @@ const WATER_FUSION = 334;
 const WATER_VAPORIZATION = 2257;
 // Iron's heat of fusion: 247 kJ/kg (13.8 kJ/mol) times solid iron's 7,870 kg/m³, in MJ/m³.
 const IRON_FUSION = 1944;
+// Silica's heat of fusion: 8.5 kJ/mol (quartz, CRC Handbook) over 60.08 g/mol is 141 kJ/kg; 148 kJ/kg for cristobalite. Glass has no
+// sharp melting point of its own, so every row that melts into molten glass takes this one: 145 kJ/kg times glass's 2,500 kg/m³, in MJ/m³.
+const GLASS_FUSION = 362;
 // What the finished look adds to pure water's absorption on every channel, per metre (see the WATER row).
 const WATER_TURBIDITY = 0.085;
 
@@ -329,7 +332,9 @@ export const ELEMENTS = [
   { key: 'EMPTY', id: 0, label: 'Empty', color: [0.06, 0.06, 0.08], state: 'empty', density: 1.2 },
   // Dry sand: 0.27 W/m·K (0.25 to 0.35 for dry quartz sand) and 1.3 MJ/m³·K (1,600 kg/m³ at 0.8 kJ/kg·K).
   // Angle of repose 34° (dry sand 30 to 35°: Wikipedia's table 34°, Dartmouth's engineering notes 35° for dry irregular sand).
+  // Quartz melts at 1,713 °C (cristobalite's melting point) into molten glass, which sets into glass.
   { key: 'SAND', id: 1, label: 'Sand', color: [0.80, 0.70, 0.48], state: 'powder', density: 1600, conductivity: 0.27, heatCapacity: 1.3, repose: 34,
+    above: { temp: 1713, becomes: 'LAVA', latent: GLASS_FUSION, setsInto: 'GLASS' },
     toolbar: 1, category: 'Powders', description: 'Dry grains that fall and pile up into a slope.' },
   // The engine's invincible wall and the world's edge, not a real material: it never conducts, so heat never leaves the world.
   { key: 'WALL', id: 2, label: 'Wall', color: [0.43, 0.45, 0.47], state: 'solid', density: 2500,
@@ -438,29 +443,32 @@ export const ELEMENTS = [
     category: 'Metals',
     description: 'Steel-like metal: it carries heat well and melts only at very high temperatures.',
   },
-  // Granite-like stone: 2.5 W/m·K (granite 2 to 3.5) and 2.2 MJ/m³·K (0.82 kJ/kg·K at 2,700 kg/m³). Melts into lava at
-  // 1,200 °C, taking rock's physical latent heat (see LAVA).
+  // Basalt, the rock lava really cools into (and the one LAVA's numbers describe): 2,900 kg/m³ (the average of basalt,
+  // 2.9 g/cm³, Wikipedia "Basalt"; granite's 2.7), 2.0 W/m·K (the mean of the 1962 to 1986 measurements, 1.96, Natural Resources
+  // Canada's geothermal service report) and 2.4 MJ/m³·K (0.82 kJ/kg·K, measured on basalt glass at 40 °C, Wang et al., PMC7409246,
+  // rising with temperature: the table keeps one value). Melts into lava at 1,200 °C, the liquidus of basalt ("near or above
+  // 1200 °C", Wikipedia "Basalt") and LAVA's setting point, taking rock's physical latent heat (see LAVA).
   {
     key: 'STONE',
     id: 8,
-    label: 'Stone',
+    label: 'Basalt',
     color: [0.52, 0.46, 0.40],
     state: 'solid',
-    density: 2700,
-    conductivity: 2.5,
-    heatCapacity: 2.2,
-   
+    density: 2900,
+    conductivity: 2,
+    heatCapacity: 2.4,
     above: { temp: 1200, becomes: 'LAVA', latent: LAVA_LATENT },
-    // Basalt's melt is what LAVA is: any molten cell that sets into stone is called "Lava".
+    // Basalt's melt is what LAVA is: any molten cell that sets into basalt is called "Lava".
     meltLabel: 'Lava',
-    // Crushed rock: a blast turns stone into sand, its stand-in, above the pressure that granite's fracture toughness (about
-    // 1.7 MPa·√m) gives. It anchors the scale (`PRESSURE_PER_TOUGHNESS`), tuned in tests/air-crush.test.ts so that a
-    // gunpowder charge of about 50 cells crushes the stone within about 15 cells.
+    // Crushed rock: a blast turns basalt into gravel above the pressure its fracture toughness gives. 1.7 MPa·√m is the scale's
+    // anchor (`PRESSURE_PER_TOUGHNESS`), inside the 1.4 to 3.8 measured on igneous rocks at pressure (basalt in the open air
+    // reads 0.6 to 1.3, porosity lowering it); tuned in tests/air-crush.test.ts so that a gunpowder charge of about 50 cells
+    // crushes the basalt within about 15 cells.
     toughness: STONE_TOUGHNESS,
-    pressureAbove: { becomes: 'SAND' },
+    pressureAbove: { becomes: 'GRAVEL' },
     toolbar: 2,
     category: 'Solids',
-    description: 'Heavy rock that melts into lava when very hot and breaks into sand in a blast.',
+    description: 'Heavy volcanic rock that melts into lava when very hot and breaks into gravel in a blast.',
   },
   // Ice: 917 kg/m³, 2.2 W/m·K and 1.9 MJ/m³·K (2.05 kJ/kg·K). No button: Water painted below 0 °C is ice (`paintTarget`), at -20 °C by default. It does not float: a solid never moves.
   {
@@ -475,6 +483,12 @@ export const ELEMENTS = [
     heatCapacity: 1.9,
    
     above: { temp: 0, becomes: 'WATER', latent: WATER_FUSION },
+    // Ice is brittle: 0.1 MPa·√m, the low end of the range measured on ice (0.1 to 0.3 for shelf ice below freezing, Rist et al.
+    // 2002; 0.155 at zero porosity, Rist et al. 1999; read from search abstracts, not the papers), a seventh of glass's. Low
+    // enough that a steam burst or boiling pressure breaks ice into snow, on purpose: ice is the most brittle solid of the table.
+    // A blast breaks it into snow.
+    toughness: 0.1,
+    pressureAbove: { becomes: 'SNOW' },
   },
   // Steam: 0.59 kg/m³ at 100 °C (`densityTemp`; the ideal-gas law gives the rest). A cell is one unit of matter: its capacity is steam's 2.0 kJ/kg·K times the 1,000 kg/m³ of
   // the water it came from, 2.0 MJ/m³·K, and its conductivity keeps steam's real thermal diffusivity at that capacity:
@@ -564,6 +578,103 @@ export const ELEMENTS = [
     toolbar: 2,
     category: 'Explosives',
     description: 'Black powder: it catches fire when hot and goes off with a blast.',
+  },
+  // Gravel: crushed basalt (what a blast leaves of basalt and brick). Loose dry gravel weighs 1,500 to 1,900 kg/m³ (1,800 here).
+  // A cell is one unit of matter whatever its form, so a crushed cell keeps its parent's heat capacity, basalt's 2.4 MJ/m³·K
+  // (a crush then keeps the temperature and the latent heats match); a loose dry bed of coarse stones conducts only about 0.4 W/m·K
+  // (estimated, not read from a source). Angle of repose 38°: estimated, angular crushed stone stands at 35 to 45°. It melts into the same lava as basalt,
+  // which sets into basalt, with basalt's melting point and latent heat.
+  {
+    key: 'GRAVEL',
+    id: 14,
+    label: 'Gravel',
+    color: [0.45, 0.43, 0.41],
+    state: 'powder',
+    density: 1800,
+    conductivity: 0.4,
+    heatCapacity: 2.4,
+    repose: 38,
+    above: { temp: 1200, becomes: 'LAVA', latent: LAVA_LATENT, setsInto: 'STONE' },
+    toolbar: 2,
+    category: 'Powders',
+    description: 'Loose broken rock: a blast leaves it where basalt and brick were; it melts into lava.',
+  },
+  // Snow: what a blast leaves of ice. Settled snow weighs 200 to 500 kg/m³ (300 here); a cell is one unit of matter, so it keeps
+  // ice's heat capacity, 1.9 MJ/m³·K; the bed conducts only about 0.15 W/m·K (0.1 to 0.5 for settled snow, Sturm et al. 1997). It melts at 0 °C into water, with water's
+  // latent heat. Painted at -10 °C, the cold it was made at.
+  {
+    key: 'SNOW',
+    id: 15,
+    label: 'Snow',
+    color: [0.82, 0.86, 0.90],
+    state: 'powder',
+    density: 300,
+    temperature: -10,
+    conductivity: 0.15,
+    heatCapacity: 1.9,
+    repose: 40,
+    above: { temp: 0, becomes: 'WATER', latent: WATER_FUSION },
+    toolbar: 3,
+    category: 'Powders',
+    description: 'Light ice crystals: they pile up, and melt into water at 0 °C.',
+  },
+  // Broken glass (cullet): what a blast leaves of glass. Loose cullet weighs about 1,400 kg/m³ and, a cell being one unit of matter,
+  // keeps glass's heat capacity, 2.1 MJ/m³·K; a loose bed of shards conducts about 0.3 W/m·K and stands at about 38° (both estimated,
+  // not read from a source).
+  // It melts into the molten glass that glass does, at glass's temperature and latent heat.
+  {
+    key: 'BROKEN_GLASS',
+    id: 16,
+    label: 'Broken glass',
+    color: [0.62, 0.82, 0.84],
+    state: 'powder',
+    density: 1400,
+    conductivity: 0.3,
+    heatCapacity: 2.1,
+    repose: 38,
+    above: { temp: 1400, becomes: 'LAVA', latent: GLASS_FUSION, setsInto: 'GLASS' },
+    toolbar: 4,
+    category: 'Powders',
+    description: 'Sharp glass shards: a blast leaves them where glass was; they melt into glass.',
+  },
+  // Soda-lime glass: 2,500 kg/m³, 1.0 W/m·K (window glass 0.8 to 1.0) and 2.1 MJ/m³·K (0.84 kJ/kg·K). Fracture toughness 0.74
+  // MPa·√m (soda-lime-silica glass in mode I), so a blast breaks it a good deal farther out than basalt. Real glass softens
+  // over a range with no sharp melting point; the table melts it at 1,400 °C, the melting range of a furnace (1,400 to 1,500),
+  // into the molten glass (LAVA) that sand makes at 1,713 °C, and takes silica's latent heat. Transparent: the finished look draws it over the wall behind it at opacity 0.4 (a lighter shadow too) and it has hardly any grain.
+  {
+    key: 'GLASS',
+    id: 17,
+    label: 'Glass',
+    color: [0.55, 0.80, 0.82],
+    state: 'solid',
+    density: 2500,
+    conductivity: 1,
+    heatCapacity: 2.1,
+    above: { temp: 1400, becomes: 'LAVA', latent: GLASS_FUSION },
+    toughness: 0.74,
+    pressureAbove: { becomes: 'BROKEN_GLASS' },
+    look: { opacity: 0.4, grain: 0.01 },
+    toolbar: 3,
+    category: 'Solids',
+    description: 'Clear, brittle and hard: a blast shatters it; it melts into glass when very hot, and sand does too.',
+  },
+  // Fired clay brick: 1,900 kg/m³ (common brick 1,800 to 2,000), 0.7 W/m·K (0.6 to 1.0) and 1.6 MJ/m³·K (0.84 kJ/kg·K). Its
+  // toughness is 1.0 MPa·√m, estimated (not read from a source: fired clay is brittle, concrete reads 0.2 to 1.4). It has no melting
+  // point in the table: fired clay holds past 1,600 °C, beyond what lava reaches.
+  {
+    key: 'BRICK',
+    id: 18,
+    label: 'Brick',
+    color: [0.62, 0.27, 0.18],
+    state: 'solid',
+    density: 1900,
+    conductivity: 0.7,
+    heatCapacity: 1.6,
+    toughness: 1,
+    pressureAbove: { becomes: 'GRAVEL' },
+    toolbar: 4,
+    category: 'Solids',
+    description: 'Fired clay: it shrugs off lava and breaks into gravel in a blast.',
   },
 ] as const satisfies readonly ElementDef[];
 

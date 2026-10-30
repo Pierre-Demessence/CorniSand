@@ -110,6 +110,9 @@ describe.skipIf(!device)('M11.2 the two looks', () => {
   // A gas is a soft cloud in the finished look (M11.5), not a cell: it is not drawn in its cells-look color.
   const cloud = (e: ElementDef): boolean => e.state === 'gas';
 
+  // A solid with an opacity below 1 (glass) is drawn over the wall in the finished look (M8.1 AC30, tested below).
+  const seeThrough = (e: ElementDef): boolean => e.state === 'solid' && (e.look?.opacity ?? 1) < 1;
+
   it('M11 AC3: a cell with nothing around it is drawn in its cells-look color, for every element of the table', async () => {
     const width = 64;
     const row = everyElementRow(width);
@@ -118,7 +121,7 @@ describe.skipIf(!device)('M11.2 the two looks', () => {
     sim.load(row);
     const finished = await render(sim, width, 1, { look: 'finished' });
     const cells = await render(sim, width, 1, { look: 'cells' });
-    ROWS.filter((e) => !radiates(e) && !cloud(e)).forEach((e) => {
+    ROWS.filter((e) => !radiates(e) && !cloud(e) && !seeThrough(e)).forEach((e) => {
       const i = ROWS.indexOf(e);
       pixelAt(finished, width, i, 0).forEach((channel, c) => {
         expect(Math.abs(channel - cells[i * 4 + c]), `${e.key}, channel ${c}`).toBeLessThanOrEqual(1);
@@ -634,6 +637,60 @@ describe.skipIf(!device)('M11.6 liquid depth', () => {
     }
     // The settings do not reach the cells look.
     expect(await render(sim, width, height, { look: 'cells', settings: { depthScale: 0 } })).toEqual(cells);
+  });
+});
+
+describe.skipIf(!device)('M8.1 AC30: what the wall behind shows through', () => {
+  const width = 192;
+  const height = 192;
+  // The block of the shadow tests (lower right corner at (56, 152)), of `type`, in a table where `override` replaces a row's `look`.
+  async function shade(type: number, override?: { key: string; look: ElementDef['look'] }): Promise<number> {
+    const elements = override ? ELEMENTS.map((e: ElementDef) => (e.key === override.key ? { ...e, look: override.look } : e)) : ELEMENTS;
+    const kind = new Uint32Array(width * height);
+    const temp = new Uint32Array(width * height);
+    tempView({ temp }).fill(ROOM_TEMP);
+    for (let y = 152; y < 168; y++) for (let x = 24; x < 56; x++) kind[y * width + x] = cell(type);
+    const sim = createSim(width, height, 1, { elements });
+    sim.load({ kind, temp });
+    const on = await render(sim, width, height);
+    const off = await render(sim, width, height, { settings: { shadowDarkness: 0 } });
+    return gainAt(off, on, width, height, 58, 160);
+  }
+
+  it('M8.1 AC30: glass darkens the wall behind it less than the same glass with the default look of a solid, and more than nothing', async () => {
+    const glass = await shade(T.GLASS);
+    const solid = await shade(T.GLASS, { key: 'GLASS', look: { grain: 0.01 } });
+    expect(glass, 'glass').toBeGreaterThan(0);
+    expect(glass, 'glass against the same row as a solid').toBeLessThan(solid);
+    expect(solid, 'a solid glass casts the shadow of stone').toBe(await shade(T.STONE));
+  });
+
+  // The luminance of the middle of the block (world y 152 to 167, x 24 to 55), in the finished look or the cells look.
+  async function pane(type: number, look: Look, override?: ElementDef['look']): Promise<number> {
+    const elements = override ? ELEMENTS.map((e: ElementDef) => (e.key === 'GLASS' ? { ...e, look: override } : e)) : ELEMENTS;
+    const kind = new Uint32Array(width * height);
+    const temp = new Uint32Array(width * height);
+    tempView({ temp }).fill(ROOM_TEMP);
+    if (type !== 0) for (let y = 152; y < 168; y++) for (let x = 24; x < 56; x++) kind[y * width + x] = cell(type);
+    const sim = createSim(width, height, 1, { elements });
+    sim.load({ kind, temp });
+    const pixels = await render(sim, width, height, { look, settings: { shadowDarkness: 0, glowStrength: 0 } });
+    return patchLuminance(pixels, width, 32, height - 1 - 163, 16, 8);
+  }
+
+  it('M8.1 AC30: in the finished look glass shows the wall through it: its color is between the wall and the same glass drawn opaque', async () => {
+    const wall = await pane(0, 'finished');
+    const glass = await pane(T.GLASS, 'finished');
+    const opaque = await pane(T.GLASS, 'finished', { grain: 0.01, opacity: 1 });
+    expect(Math.abs(opaque - wall), 'the opaque pane differs from the wall').toBeGreaterThan(0.05 * 255);
+    expect(Math.abs(glass - wall), 'the glass differs from the wall').toBeGreaterThan(2);
+    expect(Math.abs(glass - wall), 'the glass is closer to the wall than the opaque pane is').toBeLessThan(Math.abs(opaque - wall));
+  });
+
+  it('M8.1 AC30: the cells look draws glass as its own color, whatever its opacity', async () => {
+    const glass = await pane(T.GLASS, 'cells');
+    const opaque = await pane(T.GLASS, 'cells', { grain: 0.01, opacity: 1 });
+    expect(glass).toBe(opaque);
   });
 });
 

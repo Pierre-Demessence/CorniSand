@@ -36,10 +36,10 @@ describe('M8.1 AC2 picker tabs', () => {
   it('lists the current elements by category in toolbar order', () => {
     const byTab = Object.fromEntries(tabs.map((t) => [t.name, labels(t.entries)]));
     expect(byTab).toEqual({
-      Powders: ['Sand'],
+      Powders: ['Sand', 'Gravel', 'Snow', 'Broken glass'],
       Liquids: ['Water', 'Oil'],
       Gases: ['Smoke'],
-      Solids: ['Wall', 'Stone'],
+      Solids: ['Wall', 'Basalt', 'Glass', 'Brick'],
       Metals: ['Metal'],
       Explosives: ['Fire', 'Gunpowder'],
       Tools: ['Heat', 'Cool', 'Wind'],
@@ -49,8 +49,8 @@ describe('M8.1 AC2 picker tabs', () => {
   it('follows a table: an extra row appears at its position, a row without a position or a category does not', () => {
     const before = ELEMENTS.map((e: ElementDef) => (e.key === 'SAND' ? { ...e, toolbar: 70 } : e));
     const powders = (table: readonly ElementDef[]) => labels(pickerTabs(table).find((t) => t.name === 'Powders')!.entries);
-    expect(powders([...before, { ...MUD, toolbar: 3 }])).toEqual(['Mud', 'Sand']);
-    expect(powders([...ELEMENTS, { ...MUD, toolbar: undefined }])).toEqual(['Sand']);
+    expect(powders([...before, { ...MUD, toolbar: 1 }])).toEqual(['Mud', 'Gravel', 'Snow', 'Broken glass', 'Sand']);
+    expect(powders([...ELEMENTS, { ...MUD, toolbar: undefined }])).toEqual(['Sand', 'Gravel', 'Snow', 'Broken glass']);
     expect(pickerTabs([...ELEMENTS, { ...MUD, category: 'Life' }]).map((t) => t.name)).toContain('Life');
   });
 
@@ -86,7 +86,7 @@ describe('M8.1 AC4 search', () => {
   it('matches the label ignoring case, in tab order', () => {
     expect(labels(searchEntries(tabs, 'ea'))).toEqual(['Heat']);
     expect(labels(searchEntries(tabs, 'SAND'))).toEqual(['Sand']);
-    expect(labels(searchEntries(tabs, 'l'))).toEqual(['Oil', 'Wall', 'Metal', 'Cool']);
+    expect(labels(searchEntries(tabs, 'l'))).toEqual(['Gravel', 'Broken glass', 'Oil', 'Wall', 'Basalt', 'Glass', 'Metal', 'Cool']);
   });
 
   it('finds tools as well as elements', () => {
@@ -143,7 +143,8 @@ describe('M8.1 AC31 paintTarget', () => {
   });
 
   it('gives a row with nothing to pass back as itself', () => {
-    expect(target('SAND', 9000)).toEqual({ id: ELEMENT.SAND, ctype: 0, ignites: false });
+    expect(target('BRICK', 9000)).toEqual({ id: ELEMENT.BRICK, ctype: 0, ignites: false });
+    expect(target('SAND', 2000), 'sand past its melting point is molten glass').toEqual({ id: ELEMENT.LAVA, ctype: ELEMENT.GLASS, ignites: false });
     expect(target('FIRE', 1000)).toEqual({ id: ELEMENT.FIRE, ctype: 0, ignites: false });
   });
 

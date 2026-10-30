@@ -7,13 +7,13 @@ import type { AirCellSize } from '../src/air';
 import { FRAME_SUPERSTEPS, cell, cellType, createSim, device, loadScene, readCells, run, runMany } from './gpu';
 
 // Pressure transitions (M6.5): a cell whose air cell is above its element's crush pressure (`crushPressure`) becomes the target
-// element in that dispatch, keeping its temperature. STONE is crushed into SAND.
+// element in that dispatch, keeping its temperature. STONE (basalt) is crushed into GRAVEL.
 
 const STONE = elementByKey(ELEMENTS, 'STONE');
-const SAND = elementByKey(ELEMENTS, 'SAND');
+const GRAVEL = elementByKey(ELEMENTS, 'GRAVEL');
 const LIMIT = crushPressure(STONE)!;
-// What 500 °C of stone becomes as sand: the same heat.
-const SAND_TEMP = (500 * elementHeatCapacity(STONE)) / elementHeatCapacity(SAND);
+// What 500 °C of basalt becomes as gravel: the same heat.
+const GRAVEL_TEMP = (500 * elementHeatCapacity(STONE)) / elementHeatCapacity(GRAVEL);
 
 // A charge of 8x6 gunpowder cells on a wall platform in the middle of an open grid, lit by a fire cell on its left; a row
 // of single stone cells (one cell does not seal an air cell) every 3 cells to its right, from the charge's right edge.
@@ -23,7 +23,7 @@ const CHARGE = { x0: 60, x1: 68, y0: 60, y1: 66 };
 const STONE_ROW = { y: 62, from: 69, to: 130, step: 3 };
 const SUPERSTEPS = 40;
 
-function blast(wall: boolean): { kind: Uint32Array<ArrayBuffer>; life: Uint32Array<ArrayBuffer>; stones: number[] } {
+function blast(wall: boolean, type: number = T.STONE): { kind: Uint32Array<ArrayBuffer>; life: Uint32Array<ArrayBuffer>; stones: number[] } {
   const kind = new Uint32Array(WIDTH * HEIGHT);
   const life = new Uint32Array(WIDTH * HEIGHT);
   const fill = (x0: number, y0: number, x1: number, y1: number, type: number): void => {
@@ -33,7 +33,7 @@ function blast(wall: boolean): { kind: Uint32Array<ArrayBuffer>; life: Uint32Arr
   fill(CHARGE.x0, CHARGE.y0, CHARGE.x1, CHARGE.y1, T.GUNPOWDER);
   const stones: number[] = [];
   for (let x = STONE_ROW.from; x < STONE_ROW.to; x += STONE_ROW.step) {
-    kind[STONE_ROW.y * WIDTH + x] = cell(T.STONE);
+    kind[STONE_ROW.y * WIDTH + x] = cell(type);
     stones.push(x);
   }
   // A wall two cells thick, 40 tall, 4 cells from the charge: the stones behind it are within the reach of the blast.
@@ -45,8 +45,9 @@ function blast(wall: boolean): { kind: Uint32Array<ArrayBuffer>; life: Uint32Arr
 
 // The stones of the row, by their distance from the charge's right edge, split into those that are not stone any more
 // after the blast and those that still are.
-async function crushedAt(options: { wall: boolean; air?: boolean }): Promise<{ crushed: number[]; standing: number[] }> {
-  const { kind, life, stones } = blast(options.wall);
+async function crushedAt(options: { wall: boolean; air?: boolean; type?: number }): Promise<{ crushed: number[]; standing: number[] }> {
+  const type = options.type ?? T.STONE;
+  const { kind, life, stones } = blast(options.wall, type);
   const sim = createSim(WIDTH, HEIGHT, 3, { air: options.air ?? true });
   sim.load({ kind, life });
   await runMany(sim, SUPERSTEPS);
@@ -54,8 +55,8 @@ async function crushedAt(options: { wall: boolean; air?: boolean }): Promise<{ c
   const crushed: number[] = [];
   const standing: number[] = [];
   for (const x of stones) {
-    if (kind[STONE_ROW.y * WIDTH + x] !== cell(T.STONE)) continue; // the wall stands there
-    (cellType(cells[STONE_ROW.y * WIDTH + x]) === T.STONE ? standing : crushed).push(x - CHARGE.x1);
+    if (kind[STONE_ROW.y * WIDTH + x] !== cell(type)) continue; // the wall stands there
+    (cellType(cells[STONE_ROW.y * WIDTH + x]) === type ? standing : crushed).push(x - CHARGE.x1);
   }
   return { crushed, standing };
 }
@@ -64,7 +65,7 @@ describe.skipIf(!device)('M6 pressure transitions', () => {
   describe('AC18: one cell', () => {
     // Three stones at 500 °C, in three air cells whose pressures are below, exactly at and above the limit. The air is at
     // the temperature of the stones, so the air exchange (before the dispatch) moves no heat.
-    it('M6 AC18: a cell becomes sand in the dispatch its air cell passes the limit, and keeps its heat, not its temperature', async () => {
+    it('M6 AC18: a cell becomes gravel in the dispatch its air cell passes the limit, and keeps its heat, not its temperature', async () => {
       const width = 64;
       const sim = createSim(width, 64, 3);
       const kind = new Uint32Array(width * 64);
@@ -82,11 +83,11 @@ describe.skipIf(!device)('M6 pressure transitions', () => {
       const cells = await readCells(sim);
       expect(cellType(cells[at(3)]), 'below the limit').toBe(T.STONE);
       expect(cellType(cells[at(8)]), 'exactly at the limit').toBe(T.STONE);
-      expect(cellType(cells[at(13)]), 'above the limit').toBe(T.SAND);
+      expect(cellType(cells[at(13)]), 'above the limit').toBe(T.GRAVEL);
       const temps = tempView({ temp: await sim.fields.read('temp') });
-      // Stone holds 2.2 per degree and sand 1.3: 500 degrees of stone are 846 degrees of sand, the same heat.
-      expect(temps[at(13)], 'the sand starts at the temperature that holds the heat of the stone').toBeCloseTo(SAND_TEMP, 0);
-      expect(temps[at(13)] * elementHeatCapacity(SAND), 'heat of the crushed cell').toBeCloseTo(500 * elementHeatCapacity(STONE), 0);
+      // Gravel keeps its parent's capacity (a cell is one unit of matter), so the crushed cell keeps the temperature too.
+      expect(temps[at(13)], 'the gravel starts at the temperature that holds the heat of the basalt').toBeCloseTo(GRAVEL_TEMP, 0);
+      expect(temps[at(13)] * elementHeatCapacity(GRAVEL), 'heat of the crushed cell').toBeCloseTo(500 * elementHeatCapacity(STONE), 0);
     });
 
     it('M6 AC18: the temperature threshold wins over the pressure limit in the same dispatch: hot stone in high pressure melts', async () => {
@@ -129,9 +130,9 @@ describe.skipIf(!device)('M6 pressure transitions', () => {
   });
 
   describe('AC18: a gunpowder charge', () => {
-    it('M6 AC18: stone near a lit charge is crushed into sand, stone far from it is not, and a wall shields the stone behind it', async () => {
+    it('M6 AC18: stone near a lit charge is crushed into gravel, stone far from it is not, and a wall shields the stone behind it', async () => {
       const open = await crushedAt({ wall: false });
-      // Measured: the stones up to 13 cells from the charge's right edge are crushed, those from 16 on stand.
+      // Measured: the stones up to 16 cells from the charge's right edge are crushed, those from 19 on stand.
       expect(open.crushed.length, 'stones crushed in the open').toBeGreaterThanOrEqual(4);
       expect(Math.max(...open.crushed), 'the farthest crushed stone, cells from the charge').toBeGreaterThanOrEqual(10);
       expect(Math.max(...open.crushed), 'the farthest crushed stone, cells from the charge').toBeLessThanOrEqual(20);
@@ -226,6 +227,51 @@ describe.skipIf(!device)('M6 pressure transitions', () => {
       for (let y = 20; y < 40; y++) if (cellType(cells[y * width + 4]) === T.STONE) standing++;
       // Without the wall the stone touches the open air cell and is crushed: the control.
       expect(standing, 'stone cells left of 20').toBe(wall ? 20 : 0);
+    });
+  });
+
+  // M8.1 AC15: the same charge among the materials that break, each as the row of single cells of the stone test (same cells,
+  // same seed): the less tough a material, the farther out it breaks. Ceramic and diamond, which never break, join with M8.1f.
+  describe('M8.1 AC15: what a blast breaks', () => {
+    const farthest = async (type: number): Promise<number> => {
+      const { crushed, standing } = await crushedAt({ wall: false, type });
+      expect(Math.min(...standing, Infinity), 'a cell left standing nearer than the farthest crushed one').toBeGreaterThan(Math.max(...crushed, 0));
+      return Math.max(...crushed, 0);
+    };
+
+    it('M8.1 AC15: basalt, brick, glass and ice break out to radii in the order of their toughness, glass farther out than basalt', async () => {
+      // Measured, in cells from the charge's right edge (the row's cells are 3 apart): basalt 16, brick 28, glass 46, ice 61 (the end of the row).
+      const radius = { basalt: await farthest(T.STONE), brick: await farthest(T.BRICK), glass: await farthest(T.GLASS), ice: await farthest(T.ICE) };
+      expect(radius.basalt, 'basalt').toBeGreaterThanOrEqual(10);
+      expect(radius.basalt, 'basalt').toBeLessThanOrEqual(20);
+      expect(radius.brick, 'brick, between basalt and glass').toBeGreaterThan(radius.basalt);
+      expect(radius.glass, 'glass farther out than brick').toBeGreaterThan(radius.brick);
+      expect(radius.glass, 'glass, in the open').toBeLessThanOrEqual(55);
+      expect(radius.ice, 'ice, the most brittle, farthest').toBeGreaterThan(radius.glass);
+    }, 120_000);
+
+    it('M8.1 AC15: each breaks into its broken form, keeping its heat', async () => {
+      const forms: [string, string][] = [['STONE', 'GRAVEL'], ['BRICK', 'GRAVEL'], ['GLASS', 'BROKEN_GLASS'], ['ICE', 'SNOW']];
+      const width = 64;
+      const sim = createSim(width, 64, 3);
+      const kind = new Uint32Array(width * 64);
+      const temp = new Uint32Array(width * 64);
+      tempView({ temp }).fill(-5);
+      const at = (airX: number): number => (9 * 4 + 1) * width + airX * 4 + 1;
+      forms.forEach(([key], i) => { kind[at(2 + 3 * i)] = cell(T[key as keyof typeof T]); });
+      sim.load({ kind, temp });
+      const { columns, rows } = sim.air;
+      const pressure = new Float32Array(columns * rows);
+      forms.forEach(([key], i) => { pressure[9 * columns + 2 + 3 * i] = Math.fround(crushPressure(elementByKey(ELEMENTS, key))! * 1.5); });
+      sim.air.load({ pressure, temperature: new Float32Array(columns * rows).fill(-5) });
+      await run(sim, 1);
+      const cells = await readCells(sim);
+      const temps = tempView({ temp: await sim.fields.read('temp') });
+      forms.forEach(([key, form], i) => {
+        const x = at(2 + 3 * i);
+        expect(cellType(cells[x]), `${key} past its limit`).toBe(T[form as keyof typeof T]);
+        expect(temps[x] * elementHeatCapacity(elementByKey(ELEMENTS, form)), `heat of the ${form}`).toBeCloseTo(-5 * elementHeatCapacity(elementByKey(ELEMENTS, key)), 0);
+      });
     });
   });
 });

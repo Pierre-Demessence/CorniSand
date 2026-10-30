@@ -196,13 +196,14 @@ describe.skipIf(!device)('steamBurn', () => {
 });
 
 describe.skipIf(!device)('contactTemp', () => {
-  // Experiment: why metal feels colder than wood: a steel block at 80 °C pressed against a granite block at 20 °C. Their
+  // Experiment: why metal feels colder than wood: a steel block at 80 °C pressed against a basalt block at 20 °C. Their
   //   contact face jumps at once to near the temperature of the block that passes heat on faster, and stays there.
   // Target: two bodies in perfect contact hold their contact face at the mean of their starting temperatures weighted by their
   //   effusivities sqrt(k C), at every time until the heat reaches their far ends (the exact solution for two semi-infinite
-  //   solids; Wikipedia, Thermal effusivity). The rows (steel 50 W/m·K and 3.5 MJ/m³·K, granite 2.5 and 2.2) give 71.0 °C. The
-  //   rows' cited ranges (steel 45 to 60 W/m·K and 3.5 to 3.85 MJ/m³·K, granite 2 to 3.5 W/m·K) give 69.14 to 72.72 °C, rounded
-  //   to 69.1 to 72.7.
+  //   solids; Wikipedia, Thermal effusivity). The rows (steel 50 W/m·K and 3.5 MJ/m³·K, basalt 2.0 and 2.4) give 71.5 °C. The
+  //   rows' cited ranges (steel 45 to 60 W/m·K and 3.5 to 3.85 MJ/m³·K; basalt 1.96, the mean of the compiled measurements, to
+  //   2.7 W/m·K, one measurement, and 0.82 to 0.96 kJ/kg·K, measured on basalt glass from 40 to 200 °C, at 2,900 kg/m³, that is
+  //   2.38 to 2.78 MJ/m³·K; sources in the STONE row) give 69.25 to 72.53 °C, rounded to 69.2 to 72.5.
   // Measure: the contact face from the two cells beside it, weighted by their conductivities (the face between two half cells
   //   in series), sampled every 5 s from 10 s, when the heat has spread over more than 5 cells of the stone, the slower
   //   side, to 60 s, before it reaches either far end (the steel's heat has then gone 43 of its 100 cells, the
@@ -215,7 +216,7 @@ describe.skipIf(!device)('contactTemp', () => {
     const b = effusivity(stone.k, stone.c);
     return (a * steelTemp + b * stoneTemp) / (a + b);
   };
-  const FACE_TARGET = nearest(faceTemp({ k: 45, c: 3.5 }, { k: 3.5, c: 2.2 }), faceTemp({ k: 60, c: 3.85 }, { k: 2, c: 2.2 }));
+  const FACE_TARGET = nearest(faceTemp({ k: 45, c: 3.5 }, { k: 2.7, c: 2.78 }), faceTemp({ k: 60, c: 3.85 }, { k: 1.96, c: 2.38 }));
   const DRIFT_TARGET = [0, 1] as const;
 
   async function face(seed: number, elements: readonly ElementDef[] = ELEMENTS): Promise<{ face: number; drift: number }> {
@@ -242,13 +243,13 @@ describe.skipIf(!device)('contactTemp', () => {
     name: 'contactTemp',
     measure: () => face(1),
     checks: [
-      { value: 'face', outcome: 'holds the contact face at 69.1 to 72.7 °C', target: FACE_TARGET },
+      { value: 'face', outcome: 'holds the contact face at 69.2 to 72.5 °C', target: FACE_TARGET },
       { value: 'drift', outcome: 'keeps the contact face within 1 °C from 10 s to 60 s', target: DRIFT_TARGET },
     ],
     timeout: 120_000,
   });
 
-  // Stone with a conductivity of 25 W/m·K holds the face near 58 °C.
+  // Basalt with a conductivity of 25 W/m·K holds the face near 58 °C.
   control({
     name: 'contactTemp',
     wrong: 'STONE at 25 W/m·K',

@@ -229,11 +229,11 @@ describe.skipIf(!device)('M6 ambient heat', () => {
     it('M6 AC15: a sealed wall box across all thresholds keeps the total heat of its cells, flyers and air, latent heat included, over 2,000 supersteps', async () => {
       const width = 52;
       const height = 44;
-      // The boiling water of a sealed box raises the pressure for good, so the stone of this box is crushed into sand: the
+      // The boiling water of a sealed box raises the pressure for good, so the basalt of this box is crushed into gravel: the
       // crush keeps the heat, which this test counts on the real table.
       const sim = createSim(width, height, 15);
       // The scene's seed is one whose box crushes some stone with the water convecting: the crush is marginal (a handful of
-      // the stone cells turn to sand), and of seeds 1 to 8, seeds 2, 5 and 8 do it, 8 the most.
+      // the stone cells turn to gravel), and of seeds 1 to 8, seeds 2, 5 and 8 do it, 8 the most.
       const next = mulberry32(8);
       const rand = (): number => next() / 2 ** 32;
       // Start temperatures straddle each element's thresholds (and the latent ends beyond them), so phases change both ways.
@@ -270,7 +270,7 @@ describe.skipIf(!device)('M6 ambient heat', () => {
       const after = await measure();
       // The air took part: the cells alone no longer hold the total.
       expect(Math.abs(after.cells - before.cells), 'heat that went into the air').toBeGreaterThan(MEASURED.airShare * 0.5);
-      expect(after.types.get(T.SAND) ?? 0, 'sand: the pressure of the boiling water crushed stone').toBeGreaterThan(0);
+      expect(after.types.get(T.GRAVEL) ?? 0, 'gravel: the pressure of the boiling water crushed basalt').toBeGreaterThan(0);
       for (const [type, name] of [[T.METAL, 'metal'], [T.STEAM, 'steam']] as const) {
         expect(after.types.get(type)!, name).toBeGreaterThan(before.types.get(type)!);
       }
