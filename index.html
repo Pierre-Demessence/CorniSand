@@ -237,6 +237,12 @@
             white-space: normal;
         }
 
+        /* Near the window's right edge the tooltip opens from the entry's right edge (main.ts sets the class). */
+        .picker-entry[data-tip].tip-end::after {
+            left: auto;
+            right: 0;
+        }
+
         #picker-search {
             flex: none;
             width: 170px;

@@ -26,6 +26,8 @@ function toolbarHeight(): number {
 }
 
 const TOUCH_TIP_MS = 1500;
+// The widest a picker entry's tooltip gets (`.picker-entry[data-tip]::after` in index.html).
+const TIP_MAX_WIDTH = 320;
 const PROBE_INTERVAL_MS = 100;
 
 async function main(): Promise<void> {
@@ -251,6 +253,16 @@ async function main(): Promise<void> {
 
   document.getElementById('speed-down')!.addEventListener('click', () => changeSpeed(-1));
   document.getElementById('speed-up')!.addEventListener('click', () => changeSpeed(1));
+
+  // A picker entry's tooltip opens from the entry's left edge and is at most TIP_MAX_WIDTH wide; near the window's right edge it
+  // opens from the entry's right edge instead (`tip-end`), so it stays inside the window. Entries are re-created, so one listener
+  // per event covers them all; hover and focus come before the tooltip shows, and a tap's pointer-over comes before its pointer-down.
+  const placeTip = (e: Event): void => {
+    const entry = e.target instanceof Element ? e.target.closest('.picker-entry[data-tip]') : null;
+    entry?.classList.toggle('tip-end', entry.getBoundingClientRect().left + TIP_MAX_WIDTH > window.innerWidth);
+  };
+  document.addEventListener('pointerover', placeTip);
+  document.addEventListener('focusin', placeTip);
 
   // Touch has no hover or focus ring, so a tap shows the tooltip for a moment. One listener covers the picker's entries too, which are re-created.
   const tipTimers = new WeakMap<Element, ReturnType<typeof setTimeout>>();

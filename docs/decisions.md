@@ -127,3 +127,15 @@ Rejected: a separate command from the start (the full versions would then run on
 Scenes are builders in `src/scenes.ts` and `src/scenarios.ts` with named regions the tests measure, variants as parameters, always on the current element table and cell format. The Scenes menu lists them from `SCENE_INFO` and opens one by reloading the page at `?scene=<key>`, so the link is shareable and Back works.
 
 Rejected: scenes as save files. A save would freeze a scene at one cell format, go stale with each field or default change, and make test setups unreviewable (a binary blob instead of a builder a reviewer can read).
+
+## Each state of matter and each broken form is an element of its own; the picker has one button per material
+
+Water, ice and steam are three rows, as are wax and molten wax, nitrogen in its three states, mercury in its three, and stone and gravel: each state has its own density, conductivity, heat capacity, viscosity or angle of repose, and its own look, and the CA reads them from the row of the cell's type. The picker has one button per material, with a paint temperature beside it: Water at −10 °C paints ice, Basalt at 1,300 °C lava, Gold at 1,100 °C molten gold (`paintTarget`, `src/toolbar.ts`). A state reached by heating or cooling another paintable row has no button of its own; a broken form (snow, gravel, broken glass) keeps one, since nothing heats a material into it.
+
+Rejected: one element per substance whose state follows its temperature. Every state needs different properties, so the CA would work out the state before every property read, in every phase and every pass, and the table's rows (one place for a material's numbers, validated, packed for the GPU) would turn into functions of temperature.
+
+## Molten elements remember what they set into
+
+LAVA and MOLTEN_METAL are shared by many materials: lava for rock, glass, ceramic and aerogel, molten metal for the six metals. A cell that melts into one writes the element it melted from, or its `setsInto` (sand sets into glass, not sand), as its ctype in `kind` bits 16–23, and the molten cell sets back into that element, at that element's threshold and latent heat. Its order against other elements by density, its readout name ("Molten gold"; "Lava" for basalt) and its color follow the ctype too, so molten gold sinks under molten steel.
+
+Rejected: one molten element per material, which adds a row for every solid that melts and still needs the link back for materials that set into something else (sand into glass); and one LAVA for rock and metal alike, which would make molten metal flow and conduct like rock and set metal into stone.

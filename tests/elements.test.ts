@@ -260,7 +260,7 @@ describe('element table', () => {
       expect(crushPressure(stone)).toBeCloseTo(0.45, 12);
       expect(crushPressure(CRUSHED)).toBeCloseTo(1.2 * PRESSURE_PER_TOUGHNESS, 12);
       expect(crushPressure({ ...CRUSHED, pressureAbove: undefined }), 'no crush, no pressure').toBeUndefined();
-      // A tougher solid needs a harder blast: glass about 0.75, granite 1.7, alumina ceramic about 4.
+      // A tougher solid needs a harder blast: glass about 0.75, basalt 1.7, alumina ceramic about 4.
       expect(crushPressure({ ...CRUSHED, toughness: 0.75 })!).toBeLessThan(crushPressure(stone)!);
       expect(crushPressure({ ...CRUSHED, toughness: 4 })!).toBeGreaterThan(crushPressure(stone)!);
     });
