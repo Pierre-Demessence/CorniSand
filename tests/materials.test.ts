@@ -4,7 +4,7 @@ import { ELEMENT as T, ELEMENTS, cellName, elementByKey, elementConductivity, el
 import { effectiveTemp } from '../src/heat';
 import { CELL_SIZE, HEAT_UNIT, PAIR_TIME } from '../src/physics';
 import {
-  CRUCIBLE, DENSITY_COLUMN, INSULATION_WALL, METAL_BARS, NITROGEN_ON_WATER, THERMOMETER, crucible, crucibleCup, densityColumn, densityColumnLayers, insulationWall, metalBars, nitrogenOnWater, thermometer,
+  CRUCIBLE, DENSITY_COLUMN, INSULATION_WALL, METAL_BARS, NITROGEN_ON_WATER, QUENCH, THERMOMETER, crucible, crucibleCup, densityColumn, densityColumnLayers, insulationWall, metalBars, nitrogenOnWater, quench, thermometer,
   thermometerLayout, thermometerLevel, type MetalBarsMaterial,
 } from '../src/scenarios';
 import type { Scene } from '../src/scenes';
@@ -12,6 +12,7 @@ import { pickerTabs } from '../src/toolbar';
 import { cell, createSim, device, mulberry32, readCells, runMany } from './gpu';
 import { Canvas, WALL, tank } from '../src/scene-canvas';
 import { columnsWithAbove, countType, heatContent } from './metrics';
+import { NO_SHOCK_TABLE } from './no-shock-table';
 import { control, scenario, waitsFor } from './scenario';
 
 // The materials of M8.1 and what they do: the rows (this file), then each one's main behavior as a scene test.
@@ -366,8 +367,9 @@ describe.skipIf(!device)('crucible', () => {
   // Target: no cell of the preheated ceramic cup or the tungsten cup changes over 2,000 supersteps; the cold ceramic cup cracks
   //   (M8.1 AC22).
   // Calculation: tungsten melts at 3,422 °C (handbook) and alumina at 2,072, far above the steel's 1,600, and neither is crushed;
-  //   a cell of either could only change by melting. The preheat is 100 K under the steel; whether that is within the ceramic's
-  //   shock limit is checked against the limit itself at M8.1k, which also makes the cold cup crack.
+  //   a cell of either could only change by melting, and tungsten is a metal, which never cracks from the heat. The preheat is 100 K
+  //   under the steel, inside the 174 K alumina withstands (`shockLimit`: 4 MPa·√m, 372 GPa, 8.1e-6 per °C against the glass
+  //   anchor), while the cold cup meets the steel 1,580 K hotter and cracks, as a real one does.
   // Measure: the number of cup cells whose element changed over 2,000 supersteps.
   const SUPERSTEPS = 2000;
   const cupCells = crucibleCup().reduce((n, r) => n + (r.x1 - r.x0) * (r.y1 - r.y0), 0);
@@ -406,9 +408,17 @@ describe.skipIf(!device)('crucible', () => {
       value: 'changed',
       outcome: 'the cold ceramic cup cracks: some of its cells change over 2,000 supersteps',
       target: [1, cupCells],
-      waitsFor: waitsFor('crucible-cold'),
-      companion: [0, cupCells],
     }],
+    timeout: 60_000,
+  });
+
+  // A ceramic ten times less expanding withstands ten times the difference: the cold cup does not crack.
+  control({
+    name: 'crucible',
+    version: 'cold',
+    wrong: 'ceramic expanding a tenth as much',
+    measure: () => changedCupCells(crucible(T.CERAMIC, 20), ELEMENTS.map((e) => (e.key === 'CERAMIC' ? { ...e, expansion: e.expansion / 10 } : e))),
+    target: [1, cupCells],
     timeout: 60_000,
   });
 
@@ -582,6 +592,59 @@ describe.skipIf(!device)('densityColumn', () => {
   });
 });
 
+describe.skipIf(!device)('quench', () => {
+  // Experiment: a glass pane at 300 °C with water at 20 °C dripped on it, and the same pane cooling in still air.
+  // Target: the glass cracks where the water touches it (at least the cells under the drip), and the pane cooling in still air
+  //   cracks nowhere (M8.1 AC28).
+  // Calculation: soda-lime glass bars quenched in water at 20 °C crack from a difference of 150 K (Malou et al. 2011,
+  //   Ceramics-Silikaty 55(3), the anchor of `shockLimit`); water at 20 °C meets the pane 280 K hotter than itself, well over
+  //   that; a pane cooling in still air has differences of a fraction of a kelvin between its cells (its Biot number is far
+  //   below 1, estimate), far under it. A drip 4 cells wide touches at least 4 cells of the pane.
+  // Measure: BROKEN_GLASS cells after 600 supersteps for the drip, and after 2,400 (5 s) for the pane in the air.
+  const paneCells = (QUENCH.width - 2 * WALL) * QUENCH.thickness;
+  async function cracked(version: 'water' | 'air', supersteps: number, elements: readonly ElementDef[] = ELEMENTS): Promise<number> {
+    const scene = quench(version);
+    const sim = createSim(scene.width, scene.height, 1, { elements });
+    sim.load(scene.fields);
+    await runMany(sim, supersteps);
+    return countType(await readCells(sim), T.BROKEN_GLASS);
+  }
+  const glassWith = (expansion: (e: ElementDef) => number): readonly ElementDef[] =>
+    ELEMENTS.map((e) => (e.key === 'GLASS' ? { ...e, expansion: expansion(e) } : e));
+
+  scenario({
+    name: 'quench',
+    measure: async () => ({ cracked: await cracked('water', 600) }),
+    checks: [{ value: 'cracked', outcome: `water at 20 °C cracks the glass pane at 300 °C where it touches it: at least ${QUENCH.dripWidth} cells`, target: [QUENCH.dripWidth, paneCells] }],
+    timeout: 60_000,
+  });
+  scenario({
+    name: 'quench',
+    version: 'air',
+    measure: async () => ({ cracked: await cracked('air', 2400) }),
+    checks: [{ value: 'cracked', outcome: 'the same pane cooling in still air for 5 s cracks nowhere', target: [0, 0] }],
+    timeout: 60_000,
+  });
+
+  // Glass that expands a tenth as much withstands ten times the difference: the water does not crack it.
+  control({
+    name: 'quench',
+    wrong: 'glass expanding a tenth as much',
+    measure: () => cracked('water', 600, glassWith((e) => e.expansion! / 10)),
+    target: [QUENCH.dripWidth, paneCells],
+    timeout: 60_000,
+  });
+  // Glass that expands 300 times as much cracks at half a kelvin: the pane cooling in the air cracks too.
+  control({
+    name: 'quench',
+    version: 'air',
+    wrong: 'glass expanding 300 times as much',
+    measure: () => cracked('air', 2400, glassWith((e) => e.expansion! * 300)),
+    target: [0, 0],
+    timeout: 60_000,
+  });
+});
+
 describe.skipIf(!device)('nitrogenOnWater', () => {
   // Experiment: liquid nitrogen poured onto water in a tank, the top closed.
   // Target: it floats (807 kg/m³ at -196 °C against water's 1,000), boils off until no liquid nitrogen is left and freezes a skin
@@ -611,7 +674,9 @@ describe.skipIf(!device)('nitrogenOnWater', () => {
       gas++;
       if (Math.floor(i / scene.width) >= SURFACE) gasAbove++;
     });
-    return { liquid: countType(cells, T.LIQUID_NITROGEN), ice: countType(cells, T.ICE), gasAbove: gas === 0 ? 0 : gasAbove / gas };
+    // The frozen water is the ice and the snow it cracks into where the liquid nitrogen touches it (thermal shock, M8.1k): both are water
+    // that froze, and the bound on it counts cells of water.
+    return { liquid: countType(cells, T.LIQUID_NITROGEN), ice: countType(cells, T.ICE) + countType(cells, T.SNOW), gasAbove: gas === 0 ? 0 : gasAbove / gas };
   }
 
   scenario({
@@ -633,13 +698,14 @@ describe.skipIf(!device)('nitrogenOnWater', () => {
     target: [0, 0],
     timeout: 120_000,
   });
-  // Water that freezes for a tenth of the heat lets the same nitrogen make far more than 0.78 ice cells per cell.
+  // Water that freezes for a hundredth of the heat lets the same nitrogen freeze far more than 0.78 cells per cell (a tenth is not enough: the snow the ice cracks into is a loose bed that insulates and holds the count at 96).
   control({
     name: 'nitrogenOnWater',
-    wrong: 'water freezing with a tenth of its latent heat',
+    wrong: 'water freezing with a hundredth of its latent heat',
     measure: async () => (await pour(ELEMENTS.map((e: ElementDef) => {
-      if (e.key === 'WATER') return { ...e, below: { ...e.below!, latent: e.below!.latent! / 10 } };
-      if (e.key === 'ICE') return { ...e, above: { ...e.above!, latent: e.above!.latent! / 10 } };
+      if (e.key === 'WATER') return { ...e, below: { ...e.below!, latent: e.below!.latent! / 100 } };
+      // The ice and the snow it cracks into are one water: both melt for a hundredth of the heat.
+      if (e.key === 'ICE' || e.key === 'SNOW') return { ...e, above: { ...e.above!, latent: e.above!.latent! / 100 } };
       return e;
     }))).ice,
     target: [1, MAX_ICE],
@@ -728,8 +794,8 @@ describe.skipIf(!device)('M8.1 AC21: wax', () => {
   // Experiment (not a scenario: its bars are not computed from data): a block of wax 6 cells wide and 2 high on a copper plate
   //   held at 100 °C (480 cells of copper hold the heat the wax takes in), and molten wax poured onto a slab of ice.
   // Target: the wax melts and the molten wax spreads wider than the block it started as; molten wax on ice sets into wax.
-  async function waxRun(canvas: Canvas, supersteps: number): Promise<Uint32Array> {
-    const sim = createSim(canvas.width, canvas.height, 1, NO_AIR);
+  async function waxRun(canvas: Canvas, supersteps: number, elements: readonly ElementDef[] = ELEMENTS): Promise<Uint32Array> {
+    const sim = createSim(canvas.width, canvas.height, 1, { ...NO_AIR, elements });
     sim.load(canvas.fields);
     await runMany(sim, supersteps);
     return readCells(sim);
@@ -758,7 +824,8 @@ describe.skipIf(!device)('M8.1 AC21: wax', () => {
     canvas.fill(T.ICE, WALL, width - WALL, WALL, WALL + 4);
     canvas.fill(T.MOLTEN_WAX, WALL, width - WALL, WALL + 4, WALL + 6);
     const poured = countType(canvas.fields.kind, T.MOLTEN_WAX);
-    const cells = await waxRun(canvas, 20_000);
+    // The slab is a cold plate here: hot wax on ice would crack it into snow, which insulates (thermal shock, M8.1k, `quench`).
+    const cells = await waxRun(canvas, 20_000, NO_SHOCK_TABLE);
     expect(countType(cells, T.MOLTEN_WAX), 'no molten wax is left').toBe(0);
     expect(countType(cells, T.WAX), 'it all set into wax').toBe(poured);
   }, 60_000);

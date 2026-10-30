@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { tempView } from '../src/cell-fields';
-import { ELEMENT as T, ELEMENTS, crushPressure, elementByKey, elementHeatCapacity } from '../src/elements';
+import { ELEMENT as T, ELEMENTS, crushPressure, elementByKey, elementHeatCapacity, type ElementDef } from '../src/elements';
 import { caWGSL } from '../src/shaders/ca.wgsl';
 import { RULES } from '../src/shaders/rules';
 import type { AirCellSize } from '../src/air';
 import { FRAME_SUPERSTEPS, cell, cellType, createSim, device, loadScene, readCells, run, runMany } from './gpu';
+import { NO_SHOCK_TABLE } from './no-shock-table';
 
 // Pressure transitions (M6.5): a cell whose air cell is above its element's crush pressure (`crushPressure`) becomes the target
 // element in that dispatch, keeping its temperature. STONE (basalt) is crushed into GRAVEL.
@@ -45,10 +46,10 @@ function blast(wall: boolean, type: number = T.STONE): { kind: Uint32Array<Array
 
 // The stones of the row, by their distance from the charge's right edge, split into those that are not stone any more
 // after the blast and those that still are.
-async function crushedAt(options: { wall: boolean; air?: boolean; type?: number }): Promise<{ crushed: number[]; standing: number[] }> {
+async function crushedAt(options: { wall: boolean; air?: boolean; type?: number; elements?: readonly ElementDef[] }): Promise<{ crushed: number[]; standing: number[] }> {
   const type = options.type ?? T.STONE;
   const { kind, life, stones } = blast(options.wall, type);
-  const sim = createSim(WIDTH, HEIGHT, 3, { air: options.air ?? true });
+  const sim = createSim(WIDTH, HEIGHT, 3, { air: options.air ?? true, ...(options.elements && { elements: options.elements }) });
   sim.load({ kind, life });
   await runMany(sim, SUPERSTEPS);
   const cells = await readCells(sim);
@@ -149,7 +150,8 @@ describe.skipIf(!device)('M6 pressure transitions', () => {
     }, 60_000);
 
     it('M6 AC18: without air nothing is crushed, and the CA source has the pressure code only with air', async () => {
-      const dry = await crushedAt({ wall: false, air: false });
+      // Without thermal shock: the stone beside the burning charge would crack from the heat (tests/shock.test.ts), which is no crush.
+      const dry = await crushedAt({ wall: false, air: false, elements: NO_SHOCK_TABLE });
       expect(dry.crushed, 'crushed stones').toEqual([]);
       const shape = { cellSize: 4, columns: 16, rows: 16 };
       expect(caWGSL(64, 64, ELEMENTS, RULES, 1024), 'without air').not.toContain('> elPressureAbove(t)');

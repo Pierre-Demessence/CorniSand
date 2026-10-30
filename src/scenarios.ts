@@ -390,6 +390,29 @@ export function crucible(cup: number = T.CERAMIC, cupTemp: number = CRUCIBLE.pre
 }
 
 /**
+ * `quench`: a glass pane `thickness` cells thick at `temp` on the floor of a tank, and either water at room temperature
+ * dripped onto it (a block of `dripWidth` by `dripHeight` cells released `gap` cells above the pane: `water`) or nothing, the
+ * pane cooling in still air (`air`). The water meets the glass 280 K colder than it, well past the 150 K that cracks glass
+ * (`GLASS_QUENCH`); the pane alone has differences of a fraction of a kelvin between its cells.
+ */
+export const QUENCH = { width: 36, thickness: 4, temp: 300, dripWidth: 4, dripHeight: 2, gap: 6, headroom: 14 } as const;
+
+export type QuenchVersion = 'water' | 'air';
+
+export function quench(version: QuenchVersion = 'water'): Scene {
+  const { width, thickness, temp, dripWidth, dripHeight, gap, headroom } = QUENCH;
+  const height = WALL + thickness + gap + dripHeight + headroom;
+  const canvas = tank(width, height);
+  canvas.fill(T.GLASS, WALL, width - WALL, WALL, WALL + thickness);
+  canvas.fillTemp(temp, WALL, width - WALL, WALL, WALL + thickness);
+  if (version === 'water') {
+    const x0 = Math.floor((width - dripWidth) / 2);
+    canvas.fill(T.WATER, x0, x0 + dripWidth, WALL + thickness + gap, WALL + thickness + gap + dripHeight);
+  }
+  return { name: 'quench', width, height, fields: canvas.fields, floorY: WALL, chambers: [] };
+}
+
+/**
  * `coolingBlock`: a steel block `side` cells (68 mm) wide at `temp`, hanging in a large box of room-temperature air
  * (the grid's edge is open air), `x0` and `y0` cells from the lower left corner.
  */
@@ -602,6 +625,8 @@ export const SCENARIO_SCENES: Record<string, () => Scene> = {
   crucible: () => crucible(T.CERAMIC),
   ...version('crucible', 'tungsten', () => crucible(T.TUNGSTEN, ROOM_TEMP)),
   ...version('crucible', 'cold', () => crucible(T.CERAMIC, ROOM_TEMP)),
+  quench: () => quench('water'),
+  ...version('quench', 'air', () => quench('air')),
   densityColumn: () => densityColumn(),
   nitrogenOnWater,
   thermometer: () => thermometer(THERMOMETER.startTemp, true),
@@ -806,8 +831,20 @@ export const SCENARIO_INFO: Record<string, SceneInfo> = {
     group: 'scenarios',
     family: 'crucible',
     version: 'cold',
-    description: 'The same steel in a cold ceramic cup: the shock of the heat should crack it.',
-    waitsFor: ['M8.1k'],
+    description: 'The same steel in a cold ceramic cup: the shock of the heat cracks it, and its cells turn to gravel.',
+  },
+  quench: {
+    label: 'Quenched glass',
+    group: 'scenarios',
+    version: 'water',
+    description: 'Water at 20 °C dripped onto a glass pane at 300 °C: the glass it touches cracks into broken glass.',
+  },
+  'quench-air': {
+    label: 'Quenched glass (air)',
+    group: 'scenarios',
+    family: 'quench',
+    version: 'air',
+    description: 'The same glass pane cooling in still air: no cell cracks.',
   },
   densityColumn: {
     label: 'Density column',

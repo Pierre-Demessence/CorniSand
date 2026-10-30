@@ -109,7 +109,7 @@ describe('scenes', () => {
       expect(name.startsWith(`${info.family}-`), name).toBe(true);
     }
     // The variants AC7 registers.
-    expect(Object.values(SCENE_INFO).filter((info) => info.family !== undefined)).toHaveLength(16);
+    expect(Object.values(SCENE_INFO).filter((info) => info.family !== undefined)).toHaveLength(17);
   });
 
   it('build every scene with consistent sizes and only known particle types', () => {

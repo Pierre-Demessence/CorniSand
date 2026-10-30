@@ -14,20 +14,6 @@ import { describe, it } from 'vitest';
 // game time is 14,400 supersteps.
 
 describe('scenarios to build with M8.1 materials', () => {
-  describe('quench', () => {
-    // Experiment: a glass pane at 300 °C with cold water dripped on it, and the same pane cooling in still air.
-    // Target: the glass cracks where the water touches it, and the pane cooling in still air does not; ice dropped into
-    //   water at 40 °C cracks into snow; metals and diamond never crack (M8.1 AC28).
-    // Calculation: the shock limit of a row is the temperature difference sigma (1 - nu) / (E alpha) it withstands
-    //   (`docs/plans/m8.1-materials.md`, "Thermal shock"), anchored so that soda-lime glass's limit is its measured
-    //   critical quench difference, sourced in M8.1k. Water at 20 °C on glass at 300 °C is a 280 K difference, far above
-    //   that limit; a pane cooling in still air has a difference across its cells of a fraction of a kelvin (its Biot
-    //   number is far below 1, estimate), far below it.
-    // Measure: GLASS cells turned to BROKEN_GLASS within a measured number of supersteps, for the dripped and the cooling pane.
-    // Needs: GLASS and thermal shock (M8.1k; M8.1 AC27 and AC28).
-    it.todo('quench: a glass pane at 300 °C cracks where water at 20 °C drips onto it, while the same pane cooling in still air does not');
-  });
-
   describe('iceOnMetal', () => {
     // Experiment: ice cubes at 0 °C on an aluminium and an acrylic block, both at room temperature.
     // Target: the cube on aluminium melts many times sooner. A melting face stays at 0 °C, so the first heat flows of the

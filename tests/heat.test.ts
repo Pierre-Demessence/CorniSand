@@ -9,6 +9,7 @@ import { TOOLS } from '../src/toolbar';
 import { cell, cellType, countTypes, createSim, device, idleInput, mulberry32, readCells, run, runMany } from './gpu';
 import { heatContent } from './metrics';
 import { GOLD, MOLTEN_TABLE } from './molten-table';
+import { NO_SHOCK_TABLE, withoutShock } from './no-shock-table';
 
 const FIRE_TEMP = 1000;
 
@@ -624,7 +625,8 @@ describe.skipIf(!device)('M5.4c phase changes in scenes', () => {
     const scene = SCENES.iceLava();
     const { ice } = ICE_LAVA;
     const iceCells = (ice.x1 - ice.x0) * (ice.y1 - ice.y0);
-    const sim = createSim(scene.width, scene.height, 1, NO_AIR);
+    // Without thermal shock: the ice beside the lava would crack into snow first (tests/shock.test.ts); this is the melt's timing.
+    const sim = createSim(scene.width, scene.height, 1, { elements: NO_SHOCK_TABLE, ...NO_AIR });
     sim.load(scene.fields);
 
     let firstWater = 0;
@@ -727,7 +729,8 @@ describe.skipIf(!device)('M5.4c phase changes in scenes', () => {
         temps[y * scene.width + x] = elementTemperature(elementByKey(ELEMENTS, 'LAVA'));
       }
     }
-    const sim = createSim(scene.width, scene.height);
+    // Without thermal shock: the basalt the lava sets into would crack against the hot metal (tests/shock.test.ts).
+    const sim = createSim(scene.width, scene.height, 1, { elements: NO_SHOCK_TABLE });
     sim.load(scene.fields);
     const metalBefore = count(await readCells(sim), T.METAL);
     for (let step = 0; step < 30; step++) {
@@ -759,7 +762,8 @@ function packedBox(layers: { type: number; temp: number; rows: number }[]): { si
       }
     }
   }
-  const sim = createSim(width, height);
+  // Without thermal shock: the layers differ by tens of degrees, and a cracked cell is no longer the element the box settles.
+  const sim = createSim(width, height, 1, { elements: NO_SHOCK_TABLE });
   sim.load({ kind, temp });
   return { sim, kind, temp };
 }
@@ -808,7 +812,9 @@ describe.skipIf(!device)('M5.4c total heat', () => {
   it('AC14: a sealed box across all thresholds keeps its total heat, latent heat included, over 2,000 supersteps', async () => {
     const width = 48;
     const height = 40;
-    const sim = createSim(width, height, 14, NO_AIR);
+    // Without thermal shock: the cells start tens to thousands of degrees apart and would crack into gravel and snow (the heat
+    // they keep is tested in tests/shock.test.ts); this box counts the cells that change by temperature.
+    const sim = createSim(width, height, 14, { elements: NO_SHOCK_TABLE, ...NO_AIR });
     const next = mulberry32(14);
     const rand = (): number => next() / 2 ** 32;
     // Start temperatures straddle each element's thresholds (and the latent ends beyond them), so phases change both ways.
@@ -859,7 +865,7 @@ describe.skipIf(!device)('M8.1 AC10: total heat with molten memory', () => {
   it('a sealed box across every transition, molten cells of several ctypes included, keeps its total heat over 2,000 supersteps', async () => {
     const width = 48;
     const height = 40;
-    const sim = createSim(width, height, 10, { elements: MOLTEN_TABLE, ...NO_AIR });
+    const sim = createSim(width, height, 10, { elements: withoutShock(MOLTEN_TABLE), ...NO_AIR });
     const next = mulberry32(10);
     const rand = (): number => next() / 2 ** 32;
     // [element, ctype, lowest and highest start temperature]: the temperatures straddle each threshold and the latent ends

@@ -1,6 +1,6 @@
 import {
   MAX_ELEMENTS, STATES, crushPressure, densityMode, densityProfile, elementByKey, elementConductivity, elementDrag, elementGravity, elementHeatCapacity, elementHoldsHeat, elementInert, elementSlide, elementSpread,
-  elementTemperature, latentWidth, transitionBurst, validateElements, type ElementDef,
+  elementTemperature, latentWidth, shockLimit, transitionBurst, validateElements, type ElementDef,
 } from './elements';
 import { NO_THRESHOLD } from './heat';
 
@@ -43,7 +43,8 @@ export const PROP_FIELDS: readonly PropField[] = [
   { name: 'belowWidth', wgslType: 'f32', value: (e) => (e.below ? latentWidth(e, e.below) : 0) },
   { name: 'aboveTemp', wgslType: 'f32', value: (e) => e.above?.temp ?? NO_THRESHOLD },
   { name: 'aboveWidth', wgslType: 'f32', value: (e) => (e.above ? latentWidth(e, e.above) : 0) },
-  // The ID of the element a cell becomes: below in bits 0-7, above in bits 8-15, the pressure transition in bits 16-23.
+  // The ID of the element a cell becomes: below in bits 0-7, above in bits 8-15, the pressure transition (or, for a row that
+  // only cracks from thermal shock, the element it cracks into) in bits 16-23.
   // 0 (EMPTY) when absent, which no cell reaches since the threshold is out of range. Bits 24-31: the ctype a cell gets
   // when it passes the above into a molten element (its `setsInto`, by default the row itself), 0 for any other above.
   {
@@ -52,7 +53,7 @@ export const PROP_FIELDS: readonly PropField[] = [
     value: (e, all) =>
       (e.below ? elementByKey(all, e.below.becomes).id : 0)
       | ((e.above ? elementByKey(all, e.above.becomes).id : 0) << 8)
-      | ((e.pressureAbove ? elementByKey(all, e.pressureAbove.becomes).id : 0) << 16)
+      | ((e.pressureAbove || e.cracksInto ? elementByKey(all, (e.pressureAbove?.becomes ?? e.cracksInto)!).id : 0) << 16)
       | ((e.above && elementByKey(all, e.above.becomes).molten ? elementByKey(all, e.above.setsInto ?? e.key).id : 0) << 24),
   },
   // The pressure the cell releases into the air as it passes the above threshold, or ignites into FIRE.
@@ -70,8 +71,10 @@ export const PROP_FIELDS: readonly PropField[] = [
   { name: 'slide', wgslType: 'f32', value: (e) => elementSlide(e) },
   // Whether the element is molten: its cells carry a ctype, the element they set into.
   { name: 'molten', wgslType: 'u32', value: (e) => (e.molten ? 1 : 0) },
+  // The temperature difference to a neighbor above which the cell cracks into the element in bits 16-23 of `transitions`
+  // (`shockLimit`); 0 for a row that cannot crack.
+  { name: 'shockLimit', wgslType: 'f32', value: (e) => shockLimit(e) ?? 0 },
   // Padding to a multiple of four words.
-  { name: 'pad2', wgslType: 'u32', value: () => 0 },
   { name: 'pad3', wgslType: 'u32', value: () => 0 },
 ];
 

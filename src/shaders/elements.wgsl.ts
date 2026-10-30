@@ -62,6 +62,9 @@ fn elAboveBecomes(t: u32) -> u32 { return (elements[t].transitions >> 8u) & 0xff
 fn elAboveBurst(t: u32) -> f32 { return elements[t].aboveBurst; }
 fn elPressureAbove(t: u32) -> f32 { return elements[t].pressureAbove; }
 fn elPressureBecomes(t: u32) -> u32 { return (elements[t].transitions >> 16u) & 0xffu; }
+// Thermal shock: the temperature difference to a neighbor above which a cell cracks (0: it cannot), and the element it
+// cracks into, which is its pressure target.
+fn elShockLimit(t: u32) -> f32 { return elements[t].shockLimit; }
 // The ctype a cell gets when it passes its 'above' into a molten element: the element it sets back into; 0 for any other above.
 fn elAboveCtype(t: u32) -> u32 { return (elements[t].transitions >> 24u) & 0xffu; }
 fn elMolten(t: u32) -> bool { return elements[t].molten != 0u; }

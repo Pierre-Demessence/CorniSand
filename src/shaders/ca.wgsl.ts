@@ -1,5 +1,5 @@
 import { AIR, type AirShape } from '../air';
-import type { ElementDef } from '../elements';
+import { shockLimit, type ElementDef } from '../elements';
 import { launchGroups, movementWGSL, wgslFloat } from '../movement';
 import { CONVECTION_GAIN } from '../physics';
 import { NO_PRESSURE } from '../element-table';
@@ -19,7 +19,9 @@ const SLOTS = [0, 1, 2, 3] as const;
 // The phases: gases rise or sink by their density against the air's, falling cells move by velocity, gases and liquids spread sideways, lifetimes, then the optional
 // rules. Ignition is decided between the lifetimes and the rules but applied after them, so a rule never sees a cell
 // that ignites in the same dispatch. Then the four cells of the block exchange heat pairwise, and last a cell whose
-// stored temperature has passed a threshold (and its latent heat) becomes the element beyond it. A cell faster than
+// stored temperature has passed a threshold (and its latent heat) becomes the element beyond it. A solid with a shock limit
+// (thermal shock) is marked before the pairs exchange when a neighbor in its block that holds heat is further from its
+// temperature than the limit, and last in phase 8 becomes its broken form, keeping its heat. A cell faster than
 // LAUNCH_SPEED waits where it is for the flyer passes, which run after the offset-1 dispatch; that dispatch also counts
 // the launching cells of each workgroup (group 3).
 // With `air` (the shape of the air grid) the CA also reads the air state (group 3, binding 1) once per block, at the
@@ -43,7 +45,9 @@ export const caWGSL = (
   const burns = elements.some((e) => e.flammable);
   // A pressure transition needs the air to read; without it the element never changes.
   const pressures = air !== undefined && elements.some((e) => e.pressureAbove !== undefined);
-  const transitions = pressures || elements.some((e) => e.below !== undefined || e.above !== undefined);
+  // A row with a shock limit cracks into its broken form (phase 8) when a neighbor in its block is too far from its temperature.
+  const shocks = elements.some((e) => shockLimit(e) !== undefined);
+  const transitions = pressures || shocks || elements.some((e) => e.below !== undefined || e.above !== undefined);
   const groups = launchGroups(width, height);
 
   // For each cell of the block, whether it ignites: flammable, with a fire cell in the block (after the lifetimes).
@@ -62,6 +66,9 @@ export const caWGSL = (
   const rowPairs = [[0, 1], [2, 3]] as const;
   const columnPairs = [[0, 2], [1, 3]] as const;
   const exchanges = (pairs: readonly (readonly [number, number])[]): string => pairs.map((p) => `      ${exchange(p)}`).join('\n');
+  // Thermal shock, decided before the heat moves: bit k is set when the cell in slot k is a solid with a shock limit and
+  // its row or column neighbor in the block, which holds heat, is further from its temperature than the limit.
+  const shockMask = SLOTS.map((n) => `select(0u, ${1 << n}u, cellCracks(blk${n}, blk${n ^ 1}) || cellCracks(blk${n}, blk${n ^ 2}))`).join(' | ');
   const conduction = `    if (u.offset == 0u) {
 ${exchanges([...rowPairs, ...columnPairs])}
     } else {
@@ -461,6 +468,14 @@ fn igniteBurst(t: u32, x: i32, y: i32) {
   if (elAboveBecomes(t) == EL_FIRE) { releaseBurst(x, y, elAboveBurst(t)); }
 }
 
+` : ''}${shocks ? `// Whether the cell a, a solid with a shock limit, cracks against its block neighbor b: b holds heat and is further from a's
+// temperature than the limit (a cell that holds no heat has no temperature to differ by).
+fn cellCracks(a: Cell, b: Cell) -> bool {
+  let limit = elShockLimit(cellType(a));
+  if (limit <= 0.0 || elConductivity(cellType(b)) <= 0.0) { return false; }
+  return abs(cellTemp(a) - cellTemp(b)) > limit;
+}
+
 ` : ''}${pressures ? `// What an element without a pressure transition packs as its limit (\`NO_PRESSURE\`).
 const NO_PRESSURE: f32 = ${wgslFloat(Math.fround(NO_PRESSURE))};
 
@@ -486,7 +501,7 @@ fn pressureAgainst(i: u32, solid: u32, x: i32, y: i32) -> f32 {
 // the element beyond it. It starts there at the threshold plus the overshoot scaled by the two heat capacities, so the
 // heat it holds is the heat it had; it starts with the new element's life. A large overshoot can carry it through the
 // next change in the same direction on the next dispatch. Cells that hold no heat have thresholds out of reach.
-fn transitionCell(c: Cell, i: u32, solid: u32, x: i32, y: i32) -> Cell {
+fn transitionCell(c: Cell, i: u32, solid: u32, cracked: u32, x: i32, y: i32) -> Cell {
   let t = cellType(c);
   let s = cellStoredTemp(c);
   let upper = elAboveTemp(t) + elAboveWidth(t);
@@ -521,6 +536,13 @@ ${pressures ? `  // Then the pressure against the cell: past the element's limit
   // holds the same heat, as above). No cell outside the block is read, only the air, which does not change during a
   // dispatch. Elements without one skip the air reads.
   if (elPressureAbove(t) < NO_PRESSURE && pressureAgainst(i, solid, x, y) > elPressureAbove(t)) {
+    let next = elPressureBecomes(t);
+    let start = s * elHeatCapacity(t) / elHeatCapacity(next);
+    return retype(withTemp(c, start), next, cellVariant(c), elLifeStart(next));
+  }
+` : ''}${shocks ? `  // Last thermal shock (\`cracked\`, decided in phase 7): the cell becomes its broken form, keeping its heat as a crush does. A
+  // cell that changed above did not get here, so it never melts and cracks in one dispatch.
+  if (((cracked >> i) & 1u) != 0u) {
     let next = elPressureBecomes(t);
     let start = s * elHeatCapacity(t) / elHeatCapacity(next);
     return retype(withTemp(c, start), next, cellVariant(c), elLifeStart(next));
@@ -648,12 +670,13 @@ ${burns ? `
     // Phase 6: Ignition
 ${ignitionApplied}` : ''}
 
-    // Phase 7: Heat conduction
+    // Phase 7: Heat conduction${shocks ? `. First the thermal shock, from the temperatures before the pairs exchange.
+    let cracked = ${shockMask};` : ''}
 ${conduction}
 ${transitions ? `
     // Phase 8: Phase changes. \`solid\`: the slots that hold a solid as it begins (bit k for slot k).
     let solid = ${SLOTS.map((n) => `select(0u, ${1 << n}u, cellState(blk${n}) == ST_SOLID)`).join(' | ')};
-${SLOTS.map((n) => `    blk${n} = transitionCell(blk${n}, ${n}u, solid, ox + ${n & 1}, oy + ${n >> 1});`).join('\n')}` : ''}
+${SLOTS.map((n) => `    blk${n} = transitionCell(blk${n}, ${n}u, solid, ${shocks ? 'cracked' : '0u'}, ox + ${n & 1}, oy + ${n >> 1});`).join('\n')}` : ''}
 
 ${storeBlock}
   }

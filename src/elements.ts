@@ -73,6 +73,18 @@ export interface ElementDef {
    * Required with `pressureAbove`, whose pressure is this times `PRESSURE_PER_TOUGHNESS`; rejected without it.
    */
   toughness?: number;
+  /**
+   * Linear thermal expansion in 1/°C and Young's modulus in GPa: with the `toughness`, they give the row's shock limit
+   * (`shockLimit`), the temperature difference to a neighbor above which a cell cracks. Both or neither; solids only. A row
+   * without them never cracks from the heat (metals are ductile, diamond is left out), and a powder is already broken.
+   */
+  expansion?: number;
+  stiffness?: number;
+  /**
+   * The key of the element a cell that cracks from thermal shock becomes, for a row with no `pressureAbove` (a crush's
+   * target is the broken form for both). Rejected with a `pressureAbove`.
+   */
+  cracksInto?: string;
   /** `life` counts down by `decay` per dispatch from `start` and the cell becomes the element `becomes` (a key) at 0. */
   life?: { start: number; decay: number; becomes: string };
   /** Optional WGSL rule run for cells of this element: the name of a file in `src/shaders/rules/`. */
@@ -154,6 +166,33 @@ export const DEFAULT_DRAG = 1 / 64;
 // the 0.45 that tests/air-crush.test.ts tuned: a gunpowder charge of about 50 cells crushes stone within about 15 cells.
 export const STONE_TOUGHNESS = 1.7;
 export const PRESSURE_PER_TOUGHNESS = 0.45 / STONE_TOUGHNESS;
+
+// Thermal shock: a solid cracks when a neighbor's temperature differs from its own by more than ΔT = σ (1 - ν) / (E α), the
+// difference at which the stress of the unequal expansion (E α ΔT / (1 - ν)) reaches the strength σ = K / √(π a) of a body
+// with a flaw of size a (K the fracture toughness). Every cell is the same size and carries flaws of the same size, so a
+// row's limit is proportional to K (1 - ν) / (E α), and the one scale is anchored on soda-lime glass's measured critical
+// quench (Malou et al. 2011, Ceramics-Silikaty 55(3): bars of soda-lime glass, E 72 GPa, α 9e-6 /°C, quenched in water at 20 °C,
+// critical difference 150 °C), which puts the flaw at about 10 µm. Poisson's ratio varies little between these materials
+// (0.2 to 0.3), so it is a constant.
+export const SHOCK_POISSON = 0.25;
+export const GLASS_TOUGHNESS = 0.74;
+export const GLASS_STIFFNESS = 72;
+export const GLASS_EXPANSION = 9e-6;
+export const GLASS_QUENCH = 150;
+// 1 / √(π a) in 1/√m, the strength per unit of toughness, fitted so that glass's limit is its measured quench (about 175, a
+// flaw of 10 µm). E is in GPa, so E α is in GPa/°C and a stress in MPa is E α ΔT × 1000.
+const SHOCK_SCALE = GLASS_QUENCH / ((GLASS_TOUGHNESS * (1 - SHOCK_POISSON)) / (GLASS_STIFFNESS * GLASS_EXPANSION * 1000));
+
+/** The temperature difference to a neighbor above which a cell of this row cracks, or undefined when the row cannot crack from the heat. */
+export function shockLimit(e: ElementDef): number | undefined {
+  if (e.expansion === undefined || e.stiffness === undefined || e.toughness === undefined) return undefined;
+  return (SHOCK_SCALE * e.toughness * (1 - SHOCK_POISSON)) / (e.stiffness * e.expansion * 1000);
+}
+
+/** The key of the element a cell of this row becomes when it cracks from thermal shock: its crush target, or its `cracksInto`. */
+export function crackTarget(e: ElementDef): string | undefined {
+  return shockLimit(e) === undefined ? undefined : (e.pressureAbove?.becomes ?? e.cracksInto);
+}
 
 /** The pressure above which a cell of this row crushes, or undefined when it has no `pressureAbove`. */
 export function crushPressure(e: ElementDef): number | undefined {
@@ -486,6 +525,10 @@ export const ELEMENTS = [
     // crushes the basalt within about 15 cells.
     toughness: STONE_TOUGHNESS,
     pressureAbove: { becomes: 'GRAVEL' },
+    // Thermal shock: Young's modulus 80 GPa and linear expansion 4.5e-6 per °C, the middles of the ranges listed for basalt
+    // (60 to 100 GPa, 2.5 to 6e-6; spotmaterial.com, an unreferenced database), so basalt cracks at about 620 K against a neighbor.
+    expansion: 4.5e-6,
+    stiffness: 80,
     toolbar: 2,
     category: 'Solids',
     description: 'Heavy volcanic rock that melts into lava when very hot and breaks into gravel in a blast.',
@@ -509,6 +552,11 @@ export const ELEMENTS = [
     // A blast breaks it into snow.
     toughness: 0.1,
     pressureAbove: { becomes: 'SNOW' },
+    // Thermal shock: Young's modulus 9.3 GPa (remembered, not read from a source) and linear expansion 5.5e-5 per °C (a table
+    // of ice's properties; ice Ih expands strongly with temperature), a limit of about 26 K: ice cracks into snow in water
+    // a few tens of degrees warmer, as it does in a drink.
+    expansion: 5.5e-5,
+    stiffness: 9.3,
   },
   // Steam: 0.59 kg/m³ at 100 °C (`densityTemp`; the ideal-gas law gives the rest). A cell is one unit of matter: its capacity is steam's 2.0 kJ/kg·K times the 1,000 kg/m³ of
   // the water it came from, 2.0 MJ/m³·K, and its conductivity keeps steam's real thermal diffusivity at that capacity:
@@ -671,8 +719,12 @@ export const ELEMENTS = [
     conductivity: 1,
     heatCapacity: 2.1,
     above: { temp: 1400, becomes: 'LAVA', latent: GLASS_FUSION },
-    toughness: 0.74,
+    toughness: GLASS_TOUGHNESS,
     pressureAbove: { becomes: 'BROKEN_GLASS' },
+    // Thermal shock: E 72 GPa and linear expansion 9e-6 per °C, and the critical quench of 150 K the shock scale is anchored on
+    // (`GLASS_QUENCH`; all from Malou et al. 2011, Ceramics-Silikaty 55(3)): hot glass splashed with cold water breaks.
+    expansion: GLASS_EXPANSION,
+    stiffness: GLASS_STIFFNESS,
     look: { opacity: 0.4, grain: 0.01 },
     toolbar: 3,
     category: 'Solids',
@@ -692,6 +744,12 @@ export const ELEMENTS = [
     heatCapacity: 1.6,
     toughness: 1,
     pressureAbove: { becomes: 'GRAVEL' },
+    // Thermal shock: Young's modulus 10 GPa (9.3 measured on brick clay fired at 1,100 °C, 10 to 35 for masonry bricks; porosity
+    // lowers it) and linear expansion 5.5e-6 per °C (4.5 to 6.5 for fired clay bricks), which with the shared flaw size give a
+    // limit of about 2,400 K: no temperature the game reaches. The model overstates a brick's strength (a real brick carries far
+    // larger flaws than glass), so the figure is a bound, not a measurement.
+    expansion: 5.5e-6,
+    stiffness: 10,
     toolbar: 4,
     category: 'Solids',
     description: 'Fired clay: it shrugs off lava and breaks into gravel in a blast.',
@@ -780,7 +838,10 @@ export const ELEMENTS = [
   },
   // Ceramic: alumina, the crucible ceramic: 3,950 kg/m³, 30 W/m·K (99.5% alumina at room temperature, 25 to 35; it falls with
   // heat) and 3.48 MJ/m³·K (0.88 kJ/kg·K), melting at 2,072 °C (CRC Handbook) into molten ceramic that sets back, far above steel's
-  // melt. It has no crush: a blast does not break it (its cracking by thermal shock is M8.1k's).
+  // melt. It has no crush: a blast does not break it. It cracks by thermal shock: fracture toughness 4 MPa·√m (99.5% alumina,
+  // CeramTec materials table), Young's modulus 372 GPa and linear expansion 8.1e-6 per °C (NIST ceramics data portal summary), a
+  // limit of about 174 K, a little over glass's: a cold crucible cracks when molten steel is poured in, a preheated one does not.
+  // It breaks into gravel, the nearest loose rubble the table has.
   {
     key: 'CERAMIC',
     id: 24,
@@ -791,6 +852,10 @@ export const ELEMENTS = [
     conductivity: 30,
     heatCapacity: 3.48,
     above: { temp: 2072, becomes: 'LAVA', latent: ALUMINA_FUSION },
+    toughness: 4,
+    expansion: 8.1e-6,
+    stiffness: 372,
+    cracksInto: 'GRAVEL',
     toolbar: 5,
     category: 'Solids',
     description: 'Fired alumina, as in a crucible: it holds molten steel and no blast breaks it.',
@@ -1143,7 +1208,20 @@ function validateTransitions(elements: readonly ElementDef[]): void {
     }
     if (e.molten && !e.below) throw new Error(`element ${e.key}: a molten element needs a below: what a cell with no ctype sets into`);
     if (e.meltLabel !== undefined && e.meltLabel.trim() === '') throw new Error(`element ${e.key}: meltLabel must not be empty`);
-    if (e.toughness !== undefined && !e.pressureAbove) throw new Error(`element ${e.key}: toughness is only for an element with a pressureAbove`);
+    if (e.toughness !== undefined && !e.pressureAbove && e.expansion === undefined) throw new Error(`element ${e.key}: toughness is only for an element with a pressureAbove or an expansion`);
+    if ((e.expansion === undefined) !== (e.stiffness === undefined)) throw new Error(`element ${e.key}: expansion and stiffness go together`);
+    if (e.expansion !== undefined) {
+      if (e.state !== 'solid') throw new Error(`element ${e.key}: expansion and stiffness are only for a solid`);
+      if (!(e.expansion > 0 && e.expansion < Infinity)) throw new Error(`element ${e.key}: expansion must be a finite number above 0`);
+      if (!(e.stiffness! > 0 && e.stiffness! < Infinity)) throw new Error(`element ${e.key}: stiffness must be a finite number above 0`);
+      if (!(e.toughness !== undefined && e.toughness > 0 && e.toughness < Infinity)) throw new Error(`element ${e.key}: toughness must be a finite number above 0 for an element with an expansion`);
+      if (!elementHoldsHeat(e)) throw new Error(`element ${e.key}: an element with an expansion must hold heat (a conductivity above 0)`);
+      const broken = crackTarget(e);
+      if (broken === undefined) throw new Error(`element ${e.key}: an element with an expansion needs a pressureAbove or a cracksInto: what it breaks into`);
+      if (!byKey.has(broken)) throw new Error(`element ${e.key}: the element it cracks into, "${broken}", is not in the table`);
+      if (broken === e.key) throw new Error(`element ${e.key}: it cannot crack into itself`);
+    }
+    if (e.cracksInto !== undefined && (e.pressureAbove || e.expansion === undefined)) throw new Error(`element ${e.key}: cracksInto is only for an element with an expansion and no pressureAbove`);
     if (e.pressureAbove) {
       const p = e.pressureAbove;
       if ('pressure' in p) throw new Error(`element ${e.key}: pressureAbove.pressure is not allowed: the pressure comes from toughness`);
