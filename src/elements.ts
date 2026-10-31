@@ -748,21 +748,25 @@ export const SUBSTANCES = [
         category: 'Powders',
         description: 'Sharp glass shards: a blast leaves them where glass was; they melt into glass.',
       },
-      // Molten glass: lava's values with its density scaled to the solid's 2,500 kg/m³ (and its viscosity with it, so the spread keeps
-      // its pace) and its color pulled toward the solid's and darkened. Glass, broken glass and sand melt into it; it sets into glass at 1,400 °C. No button: painted above its melting point it is what the
-      // solid becomes, at 1,500 °C by default. Estimated, not read from a source: M12.14d gives it its own data.
+      // Molten soda-lime glass, which glass, broken glass and sand melt into and which sets into glass at 1,400 °C. Its figures are
+      // all estimated (backlog D44), none read from a source: about 2,350 kg/m³ at 1,400 °C, falling 0.2 kg/m³ per K (melt densities
+      // of 2.35 to 2.40 g/cm³ near 1,200 °C, remembered); 1.45 kJ/kg·K (2,350 kg/m³ makes 3.4 MJ/m³·K); 2 W/m·K, a melt's phonon
+      // conduction plus the heat its transparency carries by radiation; and 15 Pa·s at 1,400 °C, the table's setting point: glass
+      // is called molten at 10 Pa·s (the "melting point" of the glass-making standards, read in search results), which soda-lime
+      // glass reaches at about 1,450 °C (remembered), and it stiffens quickly as it cools. Its color is the solid's pulled toward
+      // lava's and darkened. No button: painted above its melting point it is what the solid becomes, at 1,500 °C by default.
       {
         key: 'MOLTEN_GLASS',
         id: 41,
         label: 'Molten glass',
         color: [0.454, 0.395, 0.335],
         state: 'liquid',
-        density: 2500,
-        densityKnots: [[1200, 2500], [1500, 2470.37]],
+        density: 2350,
+        densityKnots: [[1400, 2350], [1700, 2290]],
         temperature: 1500,
-        conductivity: 1,
-        heatCapacity: 4,
-        viscosity: 27.7777777778,
+        conductivity: 2,
+        heatCapacity: 3.4,
+        viscosity: 15,
         look: { opacity: 1 },
       },
     ],
@@ -793,17 +797,18 @@ export const SUBSTANCES = [
         category: 'Solids',
         description: 'Fired clay: it shrugs off lava and breaks into brick rubble in a blast.',
       },
-      // Brick rubble: what a blast leaves of brick. Loose crushed brick weighs about 1,200 kg/m³ (1,100 to 1,400, an estimate: the
-      // solid is 1,900). A cell is one unit of matter whatever its form, so it keeps brick's heat capacity, 1.6 MJ/m³·K; a loose bed
-      // conducts about 0.3 W/m·K and stands at about 38° (both estimated, not read from a source; M12.14d sources them). It has no
-      // melting point, as brick has none: fired clay holds past what lava reaches.
+      // Brick rubble: what a blast leaves of brick. Loose crushed brick weighs 1,023 kg/m³ (a lightweight-aggregate study of crushed
+      // brick from two factories, pp.bme.hu, Periodica Polytechnica Civil Engineering; one batch; the solid is 1,900). A cell is one
+      // unit of matter whatever its form, so it keeps brick's heat capacity, 1.6 MJ/m³·K. Estimated, not read from a source
+      // (backlog D44): a loose bed conducts about 0.3 W/m·K and stands at about 38° (angular crushed stone, 35 to 45°). It has
+      // no melting point, as brick has none: fired clay holds past what lava reaches.
       {
         key: 'BRICK_RUBBLE',
         id: 44,
         label: 'Brick rubble',
         color: [0.55, 0.28, 0.2],
         state: 'powder',
-        density: 1200,
+        density: 1023,
         conductivity: 0.3,
         heatCapacity: 1.6,
         repose: 38,
@@ -832,21 +837,25 @@ export const SUBSTANCES = [
         category: 'Metals',
         description: 'Light silvery metal: it carries heat almost as well as copper and melts at 660 °C.',
       },
-      // Molten aluminium: molten steel's values with its density scaled to the solid's 2,700 kg/m³ (and its viscosity with it, so the
-      // spread keeps its pace) and its color pulled toward the solid's and darkened. Sets back into aluminium at 660 °C. No button: aluminium
-      // painted above 660 °C is molten aluminium, at 1,600 °C by default. Estimated, not read from a source: M12.14d gives it its own data.
+      // Molten aluminium: 2,375 kg/m³ at the melting point (Wikipedia "Aluminium", liquid at m.p.), falling about 0.31 kg/m³ per K
+      // (a volumetric expansion of 1.3e-4 per K, estimated); 1.18 kJ/kg·K (31.75 J/mol·K, remembered; a casting-simulation table
+      // lists 1,200 J/kg·K) at 2,375 kg/m³ is 2.8 MJ/m³·K; about 100 W/m·K (that table, jeas.springeropen.com,
+      // 10.1186/s44147-023-00190-z; Leitner et al. 2017 derive it from the electrical resistivity by the Wiedemann-Franz law);
+      // viscosity 1.3 mPa·s (remembered, not read from a source; molecular-dynamics studies give 1.4 to 6.8). Estimates and
+      // remembered figures: backlog D44. Its color is the solid's pulled toward steel's and darkened. Sets back into aluminium at
+      // 660 °C. No button: aluminium painted above 660 °C is molten aluminium, at 1,600 °C by default.
       {
         key: 'MOLTEN_ALUMINIUM',
         id: 36,
         label: 'Molten aluminium',
         color: [0.564, 0.473, 0.397],
         state: 'liquid',
-        density: 2700,
-        densityKnots: [[1538, 2700], [1700, 2648.31]],
+        density: 2375,
+        densityKnots: [[660, 2375], [960, 2282]],
         temperature: 1600,
-        conductivity: 35,
-        heatCapacity: 5.7,
-        viscosity: 0.0023142857,
+        conductivity: 100,
+        heatCapacity: 2.8,
+        viscosity: 0.0013,
         look: { opacity: 1 },
       },
     ],
@@ -869,21 +878,24 @@ export const SUBSTANCES = [
         category: 'Metals',
         description: 'Reddish metal that carries heat about eight times better than steel and melts at 1,085 °C.',
       },
-      // Molten copper: molten steel's values with its density scaled to the solid's 8,960 kg/m³ (and its viscosity with it, so the
-      // spread keeps its pace) and its color pulled toward the solid's and darkened. Sets back into copper at 1,085 °C. No button: copper
-      // painted above 1,085 °C is molten copper, at 1,600 °C by default. Estimated, not read from a source: M12.14d gives it its own data.
+      // Molten copper: 8,020 kg/m³ at the melting point (Wikipedia "Copper", liquid at m.p.), falling about 0.8 kg/m³ per K (a
+      // volumetric expansion of 1.0e-4 per K, estimated); viscosity 4 mPa·s at the melting point (Assael et al. 2010, J. Phys.
+      // Chem. Ref. Data 39, 033105, read through a citing paper); 0.494 kJ/kg·K (31.4 J/mol·K, remembered) at 8,020 kg/m³ is
+      // 3.96 MJ/m³·K; 160 W/m·K from the Wiedemann-Franz law with a liquid resistivity of 21 µΩ·cm at the melting point (remembered).
+      // Remembered figures: backlog D44. Its color is the solid's pulled toward steel's and darkened. Sets back into copper at
+      // 1,085 °C. No button: copper painted above 1,085 °C is molten copper, at 1,600 °C by default.
       {
         key: 'MOLTEN_COPPER',
         id: 37,
         label: 'Molten copper',
         color: [0.572, 0.309, 0.151],
         state: 'liquid',
-        density: 8960,
-        densityKnots: [[1538, 8960], [1700, 8788.48]],
+        density: 8020,
+        densityKnots: [[1085, 8020], [1385, 7780]],
         temperature: 1600,
-        conductivity: 35,
-        heatCapacity: 5.7,
-        viscosity: 0.00768,
+        conductivity: 160,
+        heatCapacity: 3.96,
+        viscosity: 0.004,
         look: { opacity: 1 },
       },
     ],
@@ -907,21 +919,24 @@ export const SUBSTANCES = [
         category: 'Metals',
         description: 'Very heavy yellow metal that carries heat well and melts at 1,064 °C; molten, it sinks under molten steel.',
       },
-      // Molten gold: molten steel's values with its density scaled to the solid's 19,300 kg/m³ (and its viscosity with it, so the
-      // spread keeps its pace) and its color pulled toward the solid's and darkened. Sets back into gold at 1,064 °C. No button: gold
-      // painted above 1,064 °C is molten gold, at 1,600 °C by default. Estimated, not read from a source: M12.14d gives it its own data.
+      // Molten gold: 17,310 kg/m³ at the melting point (Wikipedia "Gold", liquid at m.p.), falling about 1.7 kg/m³ per K (a
+      // volumetric expansion of 1.0e-4 per K, estimated); 0.149 kJ/kg·K (29.3 J/mol·K, remembered) at 17,310 kg/m³ is 2.58
+      // MJ/m³·K; 105 W/m·K from the Wiedemann-Franz law with a liquid resistivity of 31 µΩ·cm (remembered); viscosity 5.4 mPa·s
+      // (remembered, 5 to 6 in the liquid-gold measurements). Remembered figures: backlog D44. Still denser than molten steel, it sinks
+      // under it. Its color is the solid's pulled toward steel's and darkened. Sets back into gold at 1,064 °C.
+      // No button: gold painted above 1,064 °C is molten gold, at 1,600 °C by default.
       {
         key: 'MOLTEN_GOLD',
         id: 38,
         label: 'Molten gold',
         color: [0.63, 0.442, 0.131],
         state: 'liquid',
-        density: 19300,
-        densityKnots: [[1538, 19300], [1700, 18930.54]],
+        density: 17310,
+        densityKnots: [[1064, 17310], [1364, 16800]],
         temperature: 1600,
-        conductivity: 35,
-        heatCapacity: 5.7,
-        viscosity: 0.0165428571,
+        conductivity: 105,
+        heatCapacity: 2.58,
+        viscosity: 0.0054,
         look: { opacity: 1 },
       },
     ],
@@ -944,21 +959,25 @@ export const SUBSTANCES = [
         category: 'Metals',
         description: 'Strong, light metal that carries heat worse than steel and melts at 1,668 °C.',
       },
-      // Molten titanium: molten steel's values with its density scaled to the solid's 4,506 kg/m³ (and its viscosity with it, so the
-      // spread keeps its pace) and its color pulled toward the solid's and darkened. Sets back into titanium at 1,668 °C. No button: titanium
-      // painted above 1,668 °C is molten titanium, at 1,768 °C by default. Estimated, not read from a source: M12.14d gives it its own data.
+      // Molten titanium: 4,110 kg/m³ at the melting point (Wikipedia "Titanium", liquid at m.p.), falling about 0.45 kg/m³ per K
+      // (a volumetric expansion of 1.1e-4 per K, estimated); 33.64 J/mol·K (electromagnetic levitation with drop calorimetry,
+      // 2015, read in a search summary: 0.703 kJ/kg·K) at 4,110 kg/m³ is 2.89 MJ/m³·K. Estimated: 30 W/m·K (the Wiedemann-Franz
+      // law with a resistivity of about 1.7 µΩ·m, remembered, plus a lattice share; the 2024 reference correlation of Ntonti et al.
+      // was not read) and 5 mPa·s (a 2024 review found the measurements too far apart to recommend a value). Backlog D44. Its
+      // color is the solid's pulled toward steel's and darkened. Sets back into titanium at 1,668 °C. No button: titanium painted
+      // above 1,668 °C is molten titanium, at 1,768 °C by default.
       {
         key: 'MOLTEN_TITANIUM',
         id: 39,
         label: 'Molten titanium',
         color: [0.474, 0.384, 0.315],
         state: 'liquid',
-        density: 4506,
-        densityKnots: [[1538, 4506], [1700, 4419.74]],
+        density: 4110,
+        densityKnots: [[1668, 4110], [1968, 3975]],
         temperature: 1768,
-        conductivity: 35,
-        heatCapacity: 5.7,
-        viscosity: 0.0038622857,
+        conductivity: 30,
+        heatCapacity: 2.89,
+        viscosity: 0.005,
         look: { opacity: 1 },
       },
     ],
@@ -981,21 +1000,24 @@ export const SUBSTANCES = [
         category: 'Metals',
         description: 'Dark, very heavy metal that melts only at 3,422 °C, higher than any other metal.',
       },
-      // Molten tungsten: molten steel's values with its density scaled to the solid's 19,300 kg/m³ (and its viscosity with it, so the
-      // spread keeps its pace) and its color pulled toward the solid's and darkened. Sets back into tungsten at 3,422 °C. No button: tungsten
-      // painted above 3,422 °C is molten tungsten, at 3,522 °C by default. Estimated, not read from a source: M12.14d gives it its own data.
+      // Molten tungsten, from the recommended expressions of Tolias (2017, "Analytical expressions for thermophysical properties of
+      // solid and liquid tungsten relevant for fusion applications", Nucl. Mater. Energy 13, arXiv 1703.06302) at the melting point
+      // 3,695 K: 16,267 kg/m³ falling 0.77 kg/m³ per K (Wikipedia's 17.6 g/cm³ is a handbook value; the levitation fit it rests on
+      // gives 16.7), 51.3 J/mol·K is 0.279 kJ/kg·K, 4.54 MJ/m³·K at that density, 66.6 W/m·K and 8.5 mPa·s (the review quotes 7.0
+      // in the literature; extrapolated from supercooled data, about 20% uncertain). Its color is the solid's pulled toward steel's
+      // and darkened. Sets back into tungsten at 3,422 °C. No button: tungsten painted above 3,422 °C is molten tungsten, at 3,522 °C by default.
       {
         key: 'MOLTEN_TUNGSTEN',
         id: 40,
         label: 'Molten tungsten',
         color: [0.4, 0.305, 0.229],
         state: 'liquid',
-        density: 19300,
-        densityKnots: [[1538, 19300], [1700, 18930.54]],
+        density: 16267,
+        densityKnots: [[3422, 16267], [3722, 16036]],
         temperature: 3522,
-        conductivity: 35,
-        heatCapacity: 5.7,
-        viscosity: 0.0165428571,
+        conductivity: 66.6,
+        heatCapacity: 4.54,
+        viscosity: 0.0085,
         look: { opacity: 1 },
       },
     ],
@@ -1026,39 +1048,44 @@ export const SUBSTANCES = [
         category: 'Solids',
         description: 'Fired alumina, as in a crucible: it holds molten steel and no blast breaks it.',
       },
-      // Ceramic shards: what a thermal shock leaves of ceramic. Loose crushed alumina weighs about 2,000 kg/m³ (an estimate: the
-      // solid is 3,950). It keeps ceramic's heat capacity, 3.48 MJ/m³·K, and melts into the same molten ceramic at ceramic's melting
-      // point and latent heat, which sets back into ceramic. A loose bed conducts about 0.5 W/m·K and stands at about 38° (both
-      // estimated, not read from a source; M12.14d sources them).
+      // Ceramic shards: what a thermal shock leaves of ceramic. Loose fused alumina grit weighs 1,650 to 2,000 kg/m³ (the BIMCO
+      // solid bulk cargo entry for brown fused alumina; 1,800 here, the solid is 3,950) and a crushed alumina product stands at 32
+      // to 34° (a supplier's data sheet, read in search results; 34 here). It keeps ceramic's heat capacity, 3.48 MJ/m³·K, and
+      // melts into the same molten ceramic at ceramic's melting point and latent heat, which sets back into ceramic. A loose bed
+      // conducts about 0.5 W/m·K (estimated, not read from a source: backlog D44).
       {
         key: 'CERAMIC_SHARDS',
         id: 45,
         label: 'Ceramic shards',
         color: [0.84, 0.8, 0.72],
         state: 'powder',
-        density: 2000,
+        density: 1800,
         conductivity: 0.5,
         heatCapacity: 3.48,
-        repose: 38,
+        repose: 34,
         toolbar: 7,
         category: 'Powders',
         description: 'Jagged pieces of cracked ceramic: they melt at 2,072 °C, like the ceramic.',
       },
-      // Molten ceramic: lava's values with its density scaled to the solid's 3,950 kg/m³ (and its viscosity with it, so the spread keeps
-      // its pace) and its color pulled toward the solid's and darkened. Ceramic melts into it and it sets back into ceramic at 2,072 °C. No button: painted above its melting point it is what the
-      // solid becomes, at 2,172 °C by default. Estimated, not read from a source: M12.14d gives it its own data.
+      // Molten alumina: density 2.917 g/cm³ at 2,327 K falling 1.228e-4 g/cm³ per K, and viscosity 0.577·exp(9743/T) mPa·s, both
+      // fits of aerodynamic-levitation measurements over 1,978 to 2,789 K and 2,375 to 2,770 K (Int. J. Thermophys. 2023,
+      // 10.1007/s10765-023-03302-2, read in a search summary; the viscosity fit is about ±50% and is used at the table's 2,345 K,
+      // 37 mPa·s: a runny liquid, 800 times thinner than lava). Estimated: 1.89 kJ/kg·K (192.5 J/mol·K, remembered from the JANAF
+      // tables) at 2,915 kg/m³ is 5.5 MJ/m³·K, and 3 W/m·K, a molten oxide's few W/m·K (no source). Backlog D44. Ceramic and
+      // ceramic shards melt into it and it sets back into ceramic at 2,072 °C. Its color is the solid's pulled toward lava's and
+      // darkened. No button: painted above its melting point it is what the solid becomes, at 2,172 °C by default.
       {
         key: 'MOLTEN_CERAMIC',
         id: 42,
         label: 'Molten ceramic',
         color: [0.582, 0.415, 0.32],
         state: 'liquid',
-        density: 3950,
-        densityKnots: [[1200, 3950], [1500, 3903.19]],
+        density: 2915,
+        densityKnots: [[2072, 2915], [2372, 2878]],
         temperature: 2172,
-        conductivity: 1,
-        heatCapacity: 4,
-        viscosity: 43.8888888889,
+        conductivity: 3,
+        heatCapacity: 5.5,
+        viscosity: 0.037,
         look: { opacity: 1 },
       },
     ],
@@ -1106,9 +1133,15 @@ export const SUBSTANCES = [
         category: 'Solids',
         description: 'Aerogel, a silica foam: heat passes through it far worse than through stone, and it melts only above the temperature of lava.',
       },
-      // Molten aerogel: lava's values with its density scaled to the solid's 150 kg/m³ (and its viscosity with it, so the spread keeps
-      // its pace) and its color pulled toward the solid's and darkened. Aerogel melts into it and it sets back into aerogel at 1,713 °C, not into glass. No button: painted above its melting point it is what the
-      // solid becomes, at 1,813 °C by default. Estimated, not read from a source: M12.14d gives it its own data.
+      // Molten aerogel is molten silica, kept at the cell's 150 kg/m³ of matter (a cell is one unit of matter, and the foam's collapse
+      // into a melt 15 times denser waits for M12.5), so its density does not change with temperature (silica melt expands hardly
+      // at all). Viscosity: about 10^6.5 Pa·s at 1,760 °C (the Anton Paar rheometer note "Hot Like Hell", read in a search
+      // summary), about 5e6 Pa·s at 1,713 °C (extrapolated with an activation energy of 500 kJ/mol, estimated): a stiff paste that
+      // hardly spreads. Estimated: 1.38 kJ/kg·K (liquid silica, 82.9 J/mol·K, remembered from the JANAF tables) at 150 kg/m³ is
+      // 0.21 MJ/m³·K; 0.17 W/m·K keeps the real diffusivity of the melt (about 8e-7 m²/s, from 2.5 W/m·K at 2,200 kg/m³,
+      // estimated) at that capacity, as a gas row's does. Backlog D44. Its color is the solid's pulled toward lava's and darkened.
+      // Aerogel melts into it and it sets back into aerogel at 1,713 °C, not into glass. No button: painted above its melting point
+      // it is what the solid becomes, at 1,813 °C by default.
       {
         key: 'MOLTEN_AEROGEL',
         id: 43,
@@ -1116,11 +1149,11 @@ export const SUBSTANCES = [
         color: [0.59, 0.395, 0.179],
         state: 'liquid',
         density: 150,
-        densityKnots: [[1200, 150], [1500, 148.22]],
+        densityKnots: [[1713, 150], [2013, 150]],
         temperature: 1813,
-        conductivity: 1,
-        heatCapacity: 4,
-        viscosity: 1.6666666667,
+        conductivity: 0.17,
+        heatCapacity: 0.21,
+        viscosity: 5e6,
         look: { opacity: 1 },
       },
     ],

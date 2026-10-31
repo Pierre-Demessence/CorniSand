@@ -103,4 +103,21 @@ describe.skipIf(!device)('M8.8 AC14: dam-break fronts', () => {
     expect(lava, 'lava front, cells per dispatch').toBeGreaterThan(predicted / 3);
     expect(lava, 'lava front, cells per dispatch').toBeLessThan(predicted * 3);
   }, 120_000);
+
+  // M12.14d AC9: columns of lava, molten glass and molten ceramic, each released the way the lava above is. The fronts order as
+  // the rows' viscosities (30 Pa·s, 15 Pa·s, 37 mPa·s) and each runs within a factor of 3 of its layer speed, `spreadSpeed`;
+  // measured over supersteps 640 to 2,560: lava 0.0076 cells per dispatch, molten glass 0.0091 (its layer speed is 0.023, as
+  // lava's 0.013 is above its 0.0076), molten ceramic 0.97 (the cap, 1).
+  it('M12.14d AC9: the fronts of lava, molten glass and molten ceramic order as their viscosities', async () => {
+    const lava = await frontSpeed(T.LAVA, 640, 2560);
+    const glass = await frontSpeed(T.MOLTEN_GLASS, 640, 2560);
+    const ceramic = await frontSpeed(T.MOLTEN_CERAMIC, 10, 40);
+    const GLASS = elementByKey(ELEMENTS, 'MOLTEN_GLASS');
+    const predicted = spreadSpeed(GLASS.density, GLASS.viscosity!);
+    expect(glass, 'molten glass front, cells per dispatch').toBeGreaterThan(predicted / 3);
+    expect(glass, 'molten glass front, cells per dispatch').toBeLessThan(predicted * 3);
+    expect(glass, 'molten glass (15 Pa·s) runs ahead of lava (30)').toBeGreaterThan(lava);
+    expect(ceramic, 'molten ceramic front, cells per dispatch').toBeGreaterThan(0.8);
+    expect(ceramic, 'molten ceramic (0.037 Pa·s) runs ahead of molten glass').toBeGreaterThan(glass * 10);
+  }, 240_000);
 });

@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { tempView } from '../src/cell-fields';
 import { PROP_FIELDS, ROW_BYTES, packElements } from '../src/element-table';
-import { ELEMENT as T, ELEMENTS, elementByKey, elementHeatCapacity, validateElements, type ElementDef } from '../src/elements';
+import { ELEMENT as T, ELEMENTS, elementByKey, elementConductivity, elementHeatCapacity, validateElements, type ElementDef } from '../src/elements';
+import { CELL_SIZE, HEAT_UNIT, PAIR_TIME } from '../src/physics';
 import { Canvas, tank } from '../src/scene-canvas';
 import { cell, createSim, device, idleInput, readCells, run, runMany } from './gpu';
 import { MELTS, MOLTEN_LIQUIDS, MOLTEN_TABLE, OTHER_MELTS } from './molten-table';
@@ -242,7 +243,7 @@ describe.skipIf(!device)('M12.14a AC11: a liquid moves by the density of its own
     expect(meanHeight(after, width, T.MOLTEN_METAL)).toBeGreaterThan(meanHeight(after, width, T.MOLTEN_GOLD) + 2);
   }, 60_000);
 
-  it('molten steel over molten aluminium sinks through it (7,000 against 2,700)', async () => {
+  it('molten steel over molten aluminium sinks through it (7,000 against 2,375)', async () => {
     const canvas = twoLayers(T.MOLTEN_METAL, T.MOLTEN_ALUMINIUM);
     const sim = createSim(width, 20, 1, { elements: MOLTEN_TABLE, ...NO_AIR });
     sim.load(canvas.fields);
@@ -308,4 +309,103 @@ describe.skipIf(!device)('M12.14a AC8: a liquid keeps its row', () => {
     const set = await row([{ kind: cell(T.MOLTEN_GOLD, 5), temp: setsBelow(by('MOLTEN_GOLD')) - 10 }, wall]);
     expect(set.kinds[0]).toBe(cell(T.GOLD, 5));
   });
+});
+
+// M12.14d AC9: each liquid carries its own data. The specific heat (kJ/kg·K) the row's capacity per cell was worked out from,
+// at the row's own density (a cell is one unit of matter): a drift of a row's density or capacity from it shows here.
+const SPECIFIC_HEAT: Record<string, number> = {
+  MOLTEN_ALUMINIUM: 1.18,
+  MOLTEN_COPPER: 0.494,
+  MOLTEN_GOLD: 0.149,
+  MOLTEN_TITANIUM: 0.703,
+  MOLTEN_TUNGSTEN: 0.279,
+  MOLTEN_GLASS: 1.45,
+  MOLTEN_CERAMIC: 1.89,
+  MOLTEN_AEROGEL: 1.38,
+};
+
+describe('M12.14d AC9: the data of each melt', () => {
+  it('gives each new liquid the density of the melt, not that of its solid, and a capacity from its own specific heat', () => {
+    for (const [key, cp] of Object.entries(SPECIFIC_HEAT)) {
+      const liquid = by(key);
+      const solid = by(MELTS.find((m) => m.liquid === key && m.solid !== 'SAND' && m.solid !== 'BROKEN_GLASS' && m.solid !== 'CERAMIC_SHARDS' && m.solid !== 'GRAVEL')!.solid);
+      expect(liquid.heatCapacity! / (liquid.density / 1000), `${key} capacity over density, kJ/kg·K`).toBeCloseTo(cp, 1);
+      if (key !== 'MOLTEN_AEROGEL') expect(liquid.density, `${key} against its solid`).toBeLessThan(solid.density);
+      expect(liquid.densityKnots![0][0], `${key} first knot is its melting point`).toBe(liquid.below!.temp);
+      expect(liquid.densityKnots![0][1], `${key} density at the melting point`).toBe(liquid.density);
+    }
+    // The figures of the sources read: Wikipedia's densities of the liquid at the melting point, Tolias's tungsten, the levitation
+    // fit of molten alumina at 2,345 K (2.917 - 1.228e-4 (T - 2,327) g/cm³).
+    expect(by('MOLTEN_ALUMINIUM').density).toBe(2375);
+    expect(by('MOLTEN_COPPER').density).toBe(8020);
+    expect(by('MOLTEN_GOLD').density).toBe(17310);
+    expect(by('MOLTEN_TITANIUM').density).toBe(4110);
+    expect(by('MOLTEN_TUNGSTEN').density).toBe(16267);
+    expect(by('MOLTEN_CERAMIC').density).toBeCloseTo(2917 - 0.1228 * (2345 - 2327), -1);
+    expect(by('MOLTEN_COPPER').viscosity, 'Assael et al. 2010, 4 mPa·s').toBe(0.004);
+    expect(by('MOLTEN_CERAMIC').viscosity, '0.577 exp(9743 / 2345 K) mPa·s').toBeCloseTo(0.577e-3 * Math.exp(9743 / 2345), 3);
+  });
+
+  it('orders the viscosities as the materials are: alumina runs freely, metals thin, glass and lava thick, silica a paste', () => {
+    const v = (key: string): number => by(key).viscosity!;
+    expect(v('MOLTEN_CERAMIC')).toBeLessThan(0.1);
+    expect(v('MOLTEN_ALUMINIUM')).toBeLessThan(v('MOLTEN_COPPER'));
+    expect(v('MOLTEN_TUNGSTEN')).toBeLessThan(0.02);
+    expect(v('MOLTEN_GLASS')).toBeGreaterThan(v('MOLTEN_METAL') * 1000);
+    expect(v('MOLTEN_GLASS')).toBeLessThan(v('LAVA'));
+    expect(v('MOLTEN_AEROGEL')).toBeGreaterThan(v('LAVA') * 1e4);
+  });
+});
+
+// A sealed one-row bar of a liquid, 40 cells, the left half 200 K over its setting point and the right half 100 K: the difference
+// between the halves falls as exp(-t / tau), tau = L² / (pi² alpha) with the row's own conductivity and capacity, sampled half and
+// one and a half expected time constants in, as `metalBars` does for the solids.
+describe.skipIf(!device)('M12.14d AC9: heat crosses a bar of each molten metal at the pace of its own data', () => {
+  const cells = 40;
+  async function tauOverData(key: string, table: readonly ElementDef[] = MOLTEN_TABLE): Promise<number> {
+    const row = by(key);
+    const diffusivity = elementConductivity(row) / (elementHeatCapacity(row) * HEAT_UNIT);
+    const expected = (cells * CELL_SIZE) ** 2 / (Math.PI ** 2 * diffusivity);
+    const canvas = new Canvas(cells, 1);
+    canvas.fill(row.id, 0, cells, 0, 1);
+    canvas.fillTemp(row.below!.temp + 100, 0, cells, 0, 1);
+    canvas.fillTemp(row.below!.temp + 200, 0, cells / 2, 0, 1);
+    const sim = createSim(cells, 1, 1, { elements: table, ...NO_AIR });
+    sim.load(canvas.fields);
+    const difference = async (): Promise<number> => {
+      const t = tempView({ temp: await sim.fields.read('temp') });
+      let left = 0;
+      let right = 0;
+      for (let x = 0; x < cells / 2; x++) {
+        left += t[x];
+        right += t[cells - 1 - x];
+      }
+      return (left - right) / (cells / 2);
+    };
+    const supersteps = (seconds: number): number => Math.round(seconds / PAIR_TIME);
+    await runMany(sim, supersteps(0.5 * expected));
+    const first = await difference();
+    await runMany(sim, supersteps(expected));
+    const second = await difference();
+    // The samples are one expected time constant apart, so the decay between them is exp(-expected / tau).
+    return 1 / Math.log(first / second);
+  }
+
+  // A bar whose pair share (PAIR_TIME alpha / CELL_SIZE²) is over 0.15 relaxes too fast by the two sweeps of a block (backlog D40);
+  // none of the liquids reaches it: aluminium, the best conductor, is at about 0.09.
+  it.each(['MOLTEN_METAL', 'MOLTEN_ALUMINIUM', 'MOLTEN_COPPER', 'MOLTEN_GOLD', 'MOLTEN_TITANIUM', 'MOLTEN_TUNGSTEN'])('%s: the time constant is that of its data within 15%%', async (key) => {
+    const row = by(key);
+    const share = (PAIR_TIME * elementConductivity(row)) / (elementHeatCapacity(row) * HEAT_UNIT * CELL_SIZE ** 2);
+    expect(share, `${key} pair share`).toBeLessThan(0.15);
+    const ratio = await tauOverData(key);
+    expect(ratio, `${key} measured time constant over its data's`).toBeGreaterThan(0.85);
+    expect(ratio).toBeLessThan(1.15);
+  }, 60_000);
+
+  // Control: molten copper at half its conductivity relaxes at about half the speed its data give, outside the 15%.
+  it('control: molten copper at half its conductivity misses the time constant of its data', async () => {
+    const halved = MOLTEN_TABLE.map((e) => (e.key === 'MOLTEN_COPPER' ? { ...e, conductivity: elementConductivity(e) / 2 } : e));
+    const ratio = await tauOverData('MOLTEN_COPPER', halved);
+    expect(ratio).toBeGreaterThan(1.5);
+  }, 60_000);
 });
