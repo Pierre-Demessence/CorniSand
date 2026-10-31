@@ -10,6 +10,7 @@ import { ROOM_TEMP } from './heat';
 import { paintTarget } from './toolbar';
 import { CellFields } from './cell-field-buffers';
 import { FIELD_BYTES, tempView, type CellData } from './cell-fields';
+import { ALL_CLOSED, edgesWord, type Edges } from './edges';
 import { Flyers } from './flyers';
 import type { Vec2 } from './input';
 import { MOVEMENT } from './movement';
@@ -59,6 +60,9 @@ export interface SimulationOptions {
   air?: boolean;
   // Grid cells per air cell along each axis (default 4).
   airCellSize?: AirCellSize;
+  // Which sides of the world are open (matter that crosses one is gone) or closed (an endless wall); `setEdges` changes it.
+  // Default: all closed.
+  edges?: Edges;
 }
 
 // A superstep is two CA dispatches (Margolus offset 0, then 1).
@@ -90,6 +94,9 @@ export class Simulation {
   private readonly slotWords: number;
   private readonly slotData: Uint32Array<ArrayBuffer>;
   private readonly stepUniformBuffer: GPUBuffer;
+  // The edges word in its first word (the rest pads it to 16 bytes), for the flight pass.
+  private readonly edgesBuffer: GPUBuffer;
+  private edges: Edges;
   private readonly caPipeline: GPUComputePipeline;
   private readonly caBindGroup: GPUBindGroup;
 
@@ -112,6 +119,9 @@ export class Simulation {
     this.width = width;
     this.height = height;
     this.seedSource = options.seedSource ?? defaultSeedSource;
+    this.edges = options.edges ?? ALL_CLOSED;
+    this.edgesBuffer = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    device.queue.writeBuffer(this.edgesBuffer, 0, new Uint32Array([edgesWord(this.edges), 0, 0, 0]));
 
     this.fields = new CellFields(device, width, height);
     this.elements = new ElementTable(device, options.elements ?? ELEMENTS);
@@ -143,7 +153,7 @@ export class Simulation {
       this.elements,
     );
 
-    this.flyers = new Flyers(device, width, height, this.fields, this.elements, this.brushUniformBuffer, options.maxFlyers ?? MOVEMENT.maxFlyers, this.air.state && this.air.burst && this.air.shape ? { state: this.air.state, burst: this.air.burst, shape: this.air.shape } : undefined);
+    this.flyers = new Flyers(device, width, height, this.fields, this.elements, this.brushUniformBuffer, this.edgesBuffer, options.maxFlyers ?? MOVEMENT.maxFlyers, this.air.state && this.air.burst && this.air.shape ? { state: this.air.state, burst: this.air.burst, shape: this.air.shape } : undefined);
 
     // -- CA setup --
     this.slotWords = device.limits.minUniformBufferOffsetAlignment / 4;
@@ -164,8 +174,8 @@ export class Simulation {
     });
     this.caBindGroup = device.createBindGroup({
       layout: caLayout,
-      // Step uniforms are { offset, seed }: two u32.
-      entries: [{ binding: 0, resource: { buffer: this.stepUniformBuffer, size: 8 } }],
+      // Step uniforms are { offset, seed, edges }: three u32.
+      entries: [{ binding: 0, resource: { buffer: this.stepUniformBuffer, size: 12 } }],
     });
 
     // -- Particle counter setup --
@@ -233,6 +243,11 @@ export class Simulation {
     return data.temp;
   }
 
+  // Opens or closes the sides of the world from the next `simulate` on; the cells are kept.
+  setEdges(edges: Edges): void {
+    this.edges = edges;
+  }
+
   clear(): void {
     this.fields.clear();
     this.flyers.clear();
@@ -247,10 +262,13 @@ export class Simulation {
     }
     const dispatches = supersteps * 2;
 
+    const edges = edgesWord(this.edges);
     for (let i = 0; i < dispatches; i++) {
       this.slotData[i * this.slotWords] = i % 2;
       this.slotData[i * this.slotWords + 1] = this.seedSource();
+      this.slotData[i * this.slotWords + 2] = edges;
     }
+    this.device.queue.writeBuffer(this.edgesBuffer, 0, new Uint32Array([edges]));
     this.device.queue.writeBuffer(this.stepUniformBuffer, 0, this.slotData, 0, dispatches * this.slotWords);
 
     const passes = new PassRecorder(encoder, timer);

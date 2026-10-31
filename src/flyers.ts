@@ -79,6 +79,8 @@ export class Flyers {
     fields: CellFields,
     elements: ElementTable,
     brushUniforms: GPUBuffer,
+    // The edges word (`edgesWord`) in its first word: which sides of the world are open.
+    edgesUniform: GPUBuffer,
     maxFlyers: number,
     air?: { state: GPUBuffer; burst: GPUBuffer; shape: AirShape },
   ) {
@@ -166,8 +168,8 @@ export class Flyers {
     this.flightFields = fields.subset(FLIGHT_FIELDS);
     this.flight = makePass(
       flightWGSL(table, width, height, maxFlyers, air?.shape),
-      ['storage', 'storage', 'storage'],
-      (live) => [live, claim, this.state],
+      ['storage', 'storage', 'storage', 'uniform'],
+      (live) => [live, claim, this.state, edgesUniform],
       [this.flightFields.layout, elements.layout, ...(air ? [this.launchLayout] : [])],
     );
     this.retry = makePass(

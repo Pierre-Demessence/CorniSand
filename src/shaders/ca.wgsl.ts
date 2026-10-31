@@ -5,6 +5,7 @@ import { CONVECTION_GAIN } from '../physics';
 import { NO_PRESSURE } from '../element-table';
 import { airReadWGSL } from './air.wgsl';
 import { cellWGSL } from './cell.wgsl';
+import { edgesWGSL } from './edges.wgsl';
 import { elementsWGSL } from './elements.wgsl';
 import { heatWGSL } from './heat.wgsl';
 
@@ -13,8 +14,10 @@ const SLOTS = [0, 1, 2, 3] as const;
 
 // Margolus CA for every element, driven by the element table. One thread per 2x2 block reads the four cells, runs all
 // rules on them and writes back the fields that changed, in place: a rule reads and writes only the cells of its own
-// block, so no two threads touch the same cell. Out-of-bounds reads are walls and out-of-bounds writes are skipped, so
-// blocks that stick out of the grid (offset 1, odd sizes) behave like blocks at a wall.
+// block, so no two threads touch the same cell. Out-of-bounds writes are skipped, and an out-of-bounds read is a wall
+// beyond a closed side and empty space beyond an open one (the edges word of the step uniforms): blocks that stick out of
+// the grid (offset 1, odd sizes) behave like blocks at a wall or at open air. What moves into an open side is reset to
+// empty space after the movement phases, so it is gone before lifetimes, rules, heat and phase changes.
 //
 // The phases: gases rise or sink by their density against the air's, falling cells move by velocity, gases and liquids spread sideways, lifetimes, then the optional
 // rules. Ignition is decided between the lifetimes and the rules but applied after them, so a rule never sees a cell
@@ -115,6 +118,7 @@ ${ruleNames.map((n) => rules[n]).join('\n')}
 struct StepUniforms {
   offset: u32,
   seed: u32,
+  edges: u32,
 };
 
 @group(0) @binding(0) var<uniform> u: StepUniforms;
@@ -135,7 +139,7 @@ const BURST_GAIN: f32 = ${wgslFloat((AIR.burstCellSize / air.cellSize) ** 2)};
 ` : ''}
 const W: u32 = ${width}u;
 const H: u32 = ${height}u;
-
+${edgesWGSL}
 // The block being processed (\`blk0\` to \`blk3\`) and the cells as they were loaded (\`orig0\` to \`orig3\`, read by
 // slot number only). \`movedAt(k)\` is true when slot k holds another cell than it started the dispatch with, so a
 // cell that just arrived does not also move sideways in the same step.
@@ -187,7 +191,7 @@ fn inBounds(x: i32, y: i32) -> bool {
 }
 
 fn readCell(x: i32, y: i32) -> Cell {
-  if (!inBounds(x, y)) { return makeCell(EL_WALL, 0u, 0u); }
+  if (!inBounds(x, y)) { return makeCell(select(EL_EMPTY, EL_WALL, outsideIsWall(x, y, u.edges)), 0u, 0u); }
   return loadCell(u32(y) * W + u32(x));
 }
 
@@ -454,6 +458,7 @@ ${air ? `// Adds pressure to the air cell over the grid cell (x, y): \`amount\` 
 // one's area. The amount is rounded to a whole number of 1 / BURST_SCALE: integer additions commute, so the sum does not
 // depend on the order the threads add in.
 fn releaseBurst(x: i32, y: i32, amount: f32) {
+  if (!inBounds(x, y)) { return; }
   let fixed = i32(amount * BURST_GAIN * BURST_SCALE + 0.5);
   if (fixed != 0) { atomicAdd(&airBurst[airIndex(x / AIR_SI + 1, y / AIR_SI + 1)], fixed); }
 }
@@ -640,6 +645,12 @@ ${air ? `    // Gases and fire drift with the air; the slot to start at is rando
     spreadRow(2u, 3u, rnd);
     rnd = pcg(rnd);
     spreadRow(0u, 1u, rnd);
+
+    // What moved into an open side leaves the world: a slot outside the grid holds empty space again (a wall beyond a
+    // closed side never moves, so it is left as it is).
+    if (ox < 0 || oy < 0 || ox + 1 >= i32(W) || oy + 1 >= i32(H)) {
+${SLOTS.map((n) => `      if (!inBounds(ox + ${n & 1}, oy + ${n >> 1}) && !outsideIsWall(ox + ${n & 1}, oy + ${n >> 1}, u.edges)) { blk${n} = makeCell(EL_EMPTY, 0u, 0u); }`).join('\n')}
+    }
 
     // Phase 4: Lifetimes
 ${SLOTS.map((n) => `    blk${n} = ageCell(blk${n});`).join('\n')}

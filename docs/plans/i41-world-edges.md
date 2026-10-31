@@ -1,6 +1,6 @@
 # I41 World edges
 
-Status: written, waiting for approval; runs after M12.14 (roadmap Order line); next I41.1.
+Status: approved; the GPU bench steps are left out at the user's request (no bench before or after, no `Bench pending`); next I41.2.
 
 ## Goal
 
@@ -25,7 +25,6 @@ Each side of the world (left, right, floor, top) is open or closed, and the play
 - AC7: WHEN the player toggles a side in the Edges panel, it applies from the next frame and the world is kept; each side shows its state in text and by line style (solid closed, dashed open); the choice is kept in `?edges=`, so a reload or a scene pick keeps it, and the default writes no parameter. WHEN `?edges=` holds an unknown side name, the game warns in the console and uses the default. Check: unit tests of `parseEdges`/`formatEdges`, a headless browser check.
 - AC8: The block-locality test passes with all sides open and all sides closed. Check: `tests/block-locality.test.ts`.
 - AC9: No scenario's target or tolerance changes. A test whose scene relies on an edge states the edges it runs with; a regression bar that moves under every edge setting is re-measured, before and after logged under I41.2. Check: review of the diff.
-- AC10: The CA, air and flyer GPU times per 1x frame of `npm run bench` (all sides closed) after I41.2 are within the run-to-run spread of the times before I41.1, each measured twice and recorded under I41.2. Check: `npm run bench`.
 - AC11: `npm run lint`, `npm run typecheck`, `npm test` and `npm run build` pass after each item.
 
 ## Design
@@ -44,7 +43,7 @@ Each side of the world (left, right, floor, top) is open or closed, and the play
 
 **UI.** An Edges button in the status bar after Scenes opens a small panel: four toggles around a square (Top above, Left and Right beside, Floor below), each labeled with its side and state ("Floor: closed") and drawn as a solid bar (closed) or a dashed one (open). A click calls `setEdges` and rewrites `?edges=` with `history.replaceState`, so `sceneSearch` keeps it; Escape or a click outside closes the panel. Device re-creation in `main.ts` keeps the current edges. A prototype control (the UI is redesigned once all features exist).
 
-**Tests and bench.** `createSim` uses the `Simulation` default. Migration rule for I41.2: a test that fails under the new default gets the edges its scene relies on, with a comment (conservation and bare-grid scenes with matter at a side: `ALL_CLOSED`; open-air tests such as the open-edge test of `tests/air.test.ts`, `coolingBlock` and the 2×1 grids "alone with the world's edge": `ALL_OPEN`); a bar that moves under every setting is re-measured and logged; a scenario that misses its target under the edges of its experiment blocks the item. Likely candidates (from a survey, not run): `simulation.test.ts` D5, `air-wind`, `air-burst` AC27, `air-heat` AC16, AC17, AC28 and the 16×16 block, `display` edge blending. The bench runs `ALL_CLOSED`, so a full grid keeps its matter and its numbers stay comparable.
+**Tests.** `createSim` uses the `Simulation` default. Migration rule for I41.2: a test that fails under the new default gets the edges its scene relies on, with a comment (conservation and bare-grid scenes with matter at a side: `ALL_CLOSED`; open-air tests such as the open-edge test of `tests/air.test.ts`, `coolingBlock` and the 2×1 grids "alone with the world's edge": `ALL_OPEN`); a bar that moves under every setting is re-measured and logged; a scenario that misses its target under the edges of its experiment blocks the item. Likely candidates (from a survey, not run): `simulation.test.ts` D5, `air-wind`, `air-burst` AC27, `air-heat` AC16, AC17, AC28 and the 16×16 block, `display` edge blending. The bench (`tests/bench.gpu.ts`) is set to `ALL_CLOSED` so a full grid keeps its matter, but is not run in this plan.
 
 **Left out.** The closed floor holds no heat, where real ground takes some. No wrap-around mode (The Powder Toy's third edge mode).
 
@@ -52,21 +51,20 @@ Each side of the world (left, right, floor, top) is open or closed, and the play
 
 ### I41.1 Matter leaves through open sides
 
-- [ ] Run `npm run bench` (GPU idle, `nvidia-smi`) twice and record the CA, air and flyer times per 1x frame here.
-- [ ] `src/edges.ts` without the URL helpers; `Simulation` `edges` option (default `ALL_CLOSED` in this item), `setEdges`, the uniform and the `StepUniforms` word.
-- [ ] CA: `readCell` by side, the out-of-bounds reset after phase 3, the `releaseBurst` guard.
-- [ ] Flyers: the exit through an open side.
-- [ ] `tests/edges.test.ts` for AC1–AC4; `tests/block-locality.test.ts` with `ALL_OPEN` as well (AC8).
-- [ ] `docs/simulation.md` "Boundaries" and "Flyers"; `AGENTS.md` invariants on out-of-bounds reads and flyers, and `src/edges.ts` in Layout.
+- [x] `src/edges.ts` without the URL helpers; `Simulation` `edges` option (default `ALL_CLOSED` in this item), `setEdges`, the uniform and the `StepUniforms` word.
+- [x] CA: `readCell` by side, the out-of-bounds reset after phase 3, the `releaseBurst` guard.
+- [x] Flyers: the exit through an open side.
+- [x] `tests/edges.test.ts` for AC1–AC4; `tests/block-locality.test.ts` with `ALL_OPEN` as well (AC8).
+- [x] `docs/simulation.md` "Boundaries" and "Flyers"; `AGENTS.md` invariants on out-of-bounds reads and flyers, and `src/edges.ts` in Layout.
 
+Decided during the run: `setEdges` only stores the edges and `simulate` writes the edges uniform buffer (with the step slots) each frame, instead of `setEdges` calling `writeBuffer` itself. Why: the change then applies from the next `simulate`, as the plan says, even when `setEdges` is called between recording a frame and submitting it, and one place writes both copies of the word. The alternative is a `writeBuffer` in `setEdges`; to change it, move the 4-byte write from `simulate` into `setEdges`.
 Visible after: nothing: the game still runs with every side closed; only the tests open them.
-Needs you: nothing, unless another program loads the GPU at the bench: then close it (stops the run).
+Needs you: nothing.
 
 ### I41.2 Closed sides seal the air; the floor-only default
 
 - [ ] Mask pass: bind the edges uniform, close a closed side's edge faces; tests for AC5.
 - [ ] `Simulation` default to `DEFAULT_EDGES`; the AC6 test; migrate the suite by the rule above and log every re-measured bar here.
-- [ ] Bench twice (`ALL_CLOSED`), times recorded here against I41.1's (AC10).
 - [ ] `docs/simulation.md` "Walls and edges", the `AGENTS.md` air invariant ("The world's edge is open air…"), `README.md` (the air line).
 
 Visible after: in every scene and on an empty field, smoke, steam and other gases leave through the top, and sand or water that reaches a side leaves through it; things still pile on the floor; heat and pressure still leave through the top and sides, but no longer through the floor.

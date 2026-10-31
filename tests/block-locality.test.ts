@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AirData } from '../src/air-grid';
+import { ALL_CLOSED, ALL_OPEN, edgesWord, type Edges } from '../src/edges';
 import { CELL_FIELDS, emptyCellData, kindWord, type CellData } from '../src/cell-fields';
 import { ELEMENT as T, ELEMENTS, elementByKey, elementHoldsHeat, type ElementDef } from '../src/elements';
 import { packHalf2 } from '../src/half';
@@ -132,6 +133,8 @@ interface Check {
   edit?: (reference: CellData, copy: CellData) => void;
   rounds: number;
   seed: number;
+  // The sides of the world that are open (default: all closed): an open side turns what lies beyond the grid into empty space.
+  edges?: Edges;
 }
 
 interface Result {
@@ -146,13 +149,13 @@ interface Result {
 async function checkLocality(check: Check): Promise<Result> {
   const dev = device!;
   const { width, height, table } = check;
-  const options = { elements: table, rules: check.rules, maxFlyers: 1024 };
+  const options = { elements: table, rules: check.rules, maxFlyers: 1024, edges: check.edges ?? ALL_CLOSED };
   const simA = new Simulation(dev, width, height, { ...options, seedSource: mulberry32(1) });
   const simB = new Simulation(dev, width, height, { ...options, seedSource: mulberry32(1) });
   const generated = caWGSL(width, height, simA.elements.elements, { ...RULES, ...check.rules }, simA.flyers.maxFlyers, simA.air.shape);
   const source = check.patch ? check.patch(generated) : generated;
 
-  const stepBuffer = dev.createBuffer({ size: 8, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  const stepBuffer = dev.createBuffer({ size: 12, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
   const stepLayout = dev.createBindGroupLayout({
     entries: [{ binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } }],
   });
@@ -194,7 +197,7 @@ async function checkLocality(check: Check): Promise<Result> {
       const airSeedB = mulberry32(check.seed + round);
       simB.air.load(randomAir(simB, () => airSeedB() / 2 ** 32));
       await validated(() => {
-        dev.queue.writeBuffer(stepBuffer, 0, new Uint32Array([offset, stepSeed]));
+        dev.queue.writeBuffer(stepBuffer, 0, new Uint32Array([offset, stepSeed, edgesWord(check.edges ?? ALL_CLOSED)]));
         const encoder = dev.createCommandEncoder();
         dispatchA(encoder, offset);
         dispatchB(encoder, offset);
@@ -223,11 +226,13 @@ async function checkLocality(check: Check): Promise<Result> {
 describe.skipIf(!device)('M5 block locality', () => {
   const rounds = 32;
 
-  for (const [width, height] of [[128, 96], [33, 31]]) {
-    it(`AC1: a dispatch changes nothing outside the blocks of the changed cells, on a ${width}x${height} grid`, async () => {
-      const result = await checkLocality({ width, height, table: ELEMENTS, rounds, seed: 1000 });
-      expect(result.violations, result.example).toEqual([0, 0]);
-    }, 120_000);
+  for (const [name, edges] of [['closed', ALL_CLOSED], ['open', ALL_OPEN]] as const) {
+    for (const [width, height] of [[128, 96], [33, 31]]) {
+      it(`AC1: a dispatch changes nothing outside the blocks of the changed cells, on a ${width}x${height} grid with every side ${name}`, async () => {
+        const result = await checkLocality({ width, height, table: ELEMENTS, rounds, seed: 1000, edges });
+        expect(result.violations, result.example).toEqual([0, 0]);
+      }, 120_000);
+    }
   }
 
   it('AC1 control: a rule that reads a far cell fails the check', async () => {

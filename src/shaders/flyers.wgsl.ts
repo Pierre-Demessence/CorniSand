@@ -5,6 +5,7 @@ import { MOVEMENT, launchGroups, movementWGSL } from '../movement';
 import { airReadWGSL } from './air.wgsl';
 import { BRUSH_COMMON_WGSL } from './brush.wgsl';
 import { cellBindingsWGSL, cellTypesWGSL } from './cell.wgsl';
+import { edgesWGSL } from './edges.wgsl';
 import { elementsWGSL } from './elements.wgsl';
 
 // WGSL of the flyer passes. A cell faster than LAUNCH_SPEED leaves the grid and flies as a free particle with a float
@@ -13,7 +14,7 @@ import { elementsWGSL } from './elements.wgsl';
 //   1. launch: a prefix sum over the launching cells, in cell order, gives each a slot after the live flyers
 //   2. flight: two dispatches of gravity and drag (relative to the air, with its pressure gradient pushing, when there
 //      is air), walking the cells crossed (read-only); a flyer that hits something or slows down claims the free cell
-//      it stopped in
+//      it stopped in; one that crosses an open side of the world is gone (marked landed with no cell written)
 //   3. landing, two rounds: the lowest claim of each cell enters the grid; the losers look for a free cell nearby
 //   4. compaction: a stable prefix sum drops the landed flyers
 // Every slot comes from a prefix sum in a fixed order and every conflict is resolved by the slot index, so nothing
@@ -315,14 +316,26 @@ fn claimNearby(fl: ptr<function, Flyer>, slot: u32, salt: u32) -> bool {
 // With \`air\` (the shape of the air grid) a flyer reads the air state (group 3, binding 1) at its position before each
 // dispatch, as a cell in the grid does at its block's center: it loses \`drag\` of its speed relative to the air and the
 // pressure gradient pushes it, lighter matter harder (\`velocityRule\` in \`ca.wgsl.ts\`). In air at rest the flight is the
-// one without air, bit for bit. The air state changes only in the air passes, after the flyer passes.
+// one without air, bit for bit. The air state changes only in the air passes, after the flyer passes. The edges uniform
+// (group 0, binding 3) says which sides are open: a flyer that steps past one exits, past a closed one it hits.
 export const flightWGSL = (elements: readonly ElementDef[], width: number, height: number, maxFlyers: number, air?: AirShape): string => /* wgsl */`
 ${landingCommon(elements, width, height, maxFlyers, 'read')}
 ${elementsWGSL}
+${edgesWGSL}
 ${air ? airReadWGSL(air) : ''}
 
+struct Edges {
+  open: u32,
+};
+@group(0) @binding(3) var<uniform> edges: Edges;
+
+const WALK_CLEAR: i32 = 0;
+const WALK_HIT: i32 = 1;
+const WALK_EXIT: i32 = 2;
+
 // Walks the grid cells from p0 to p1, 4-connected, so a path cannot slip between two diagonal cells. Returns
-// (x, y, hit, cells walked): the last free cell before the first occupied one, or the cell of p1 when nothing is hit.
+// (x, y, outcome, cells walked): the last free cell before the first occupied one (WALK_HIT), the last cell inside when
+// the path leaves through an open side (WALK_EXIT), or the cell of p1 when nothing is in the way (WALK_CLEAR).
 fn walk(p0: vec2f, p1: vec2f) -> vec4i {
   var c = vec2i(floor(p0));
   let end = vec2i(floor(p1));
@@ -343,10 +356,11 @@ fn walk(p0: vec2f, p1: vec2f) -> vec4i {
     if (all(c == end)) { break; }
     var next = c;
     if (tMax.x < tMax.y) { next.x += stepDir.x; tMax.x += tDelta.x; } else { next.y += stepDir.y; tMax.y += tDelta.y; }
-    if (!isFree(next.x, next.y)) { return vec4i(c, 1, n); }
+    if (!inBounds(next.x, next.y) && !outsideIsWall(next.x, next.y, edges.open)) { return vec4i(c, WALK_EXIT, n); }
+    if (!isFree(next.x, next.y)) { return vec4i(c, WALK_HIT, n); }
     c = next;
   }
-  return vec4i(c, 0, n);
+  return vec4i(c, WALK_CLEAR, n);
 }
 
 @compute @workgroup_size(64)
@@ -377,7 +391,13 @@ ${air ? `      let around = airAround(fl.pos.x, fl.pos.y);
       let to = fl.pos + fl.vel;
       let w = walk(fl.pos, to);
       walked += u32(w.w);
-      if (w.z == 1) {
+      if (w.z == WALK_EXIT) {
+        // Gone: no cell is claimed or written, and compaction drops it as it does one the brush removed.
+        fl.status = LANDED;
+        flyers[i] = fl;
+        return;
+      }
+      if (w.z == WALK_HIT) {
         fl.pos = vec2f(w.xy) + 0.5;
         hit = true;
       } else {
