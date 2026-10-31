@@ -8,7 +8,7 @@ Rejected: `THREE.WebGPURenderer` (experimental, and it hides the compute API the
 
 ## Per-cell fields in separate buffers, updated in place
 
-Each per-cell field (`kind` with the element and variant, `life`, `velocity`, `remainder` and `temp`, and later `ctype`…) is one 32-bit word per cell in its own storage buffer, declared once in `src/cell-fields.ts`; the buffers, bind groups and WGSL accessors are generated from that list. A buffer's size limit applies to one field, not to the sum, so the grid size does not shrink as fields are added, and a pass can later bind only the fields it uses (today every pass binds every field). A storage texture limits a cell to one texel format; buffers are read by index in every shader.
+Each per-cell field (`kind` with the element and variant, `life`, `velocity`, `remainder` and `temp`) is one 32-bit word per cell in its own storage buffer, declared once in `src/cell-fields.ts`; the buffers, bind groups and WGSL accessors are generated from that list. A buffer's size limit applies to one field, not to the sum, so the grid size does not shrink as fields are added, and a pass can later bind only the fields it uses (today every pass binds every field). A storage texture limits a cell to one texel format; buffers are read by index in every shader.
 
 The CA updates the buffers in place: a Margolus thread reads and writes only the cells of its own 2×2 block, so threads never race, no second copy of the world is needed (half the memory) and a block that did not change writes nothing.
 
@@ -128,20 +128,16 @@ Scenes are builders in `src/scenes.ts` and `src/scenarios.ts` with named regions
 
 Rejected: scenes as save files. A save would freeze a scene at one cell format, go stale with each field or default change, and make test setups unreviewable (a binary blob instead of a builder a reviewer can read).
 
-## Each state of matter and each broken form is an element of its own; the picker has one button per material
+## A material is a substance with its states; the GPU reads one row per state
 
-Water, ice and steam are three rows, as are wax and molten wax, nitrogen in its three states, mercury in its three, and stone and gravel: each state has its own density, conductivity, heat capacity, viscosity or angle of repose, and its own look, and the CA reads them from the row of the cell's type. The picker has one button per material, with a paint temperature beside it: Water at −10 °C paints ice, Basalt at 1,300 °C lava, Gold at 1,100 °C molten gold (`paintTarget`, `src/toolbar.ts`). A state reached by heating or cooling another paintable row has no button of its own; a broken form (snow, gravel, broken glass) keeps one, since nothing heats a material into it.
+Water, ice, steam and snow are one substance, defined once in `SUBSTANCES` (`src/elements.ts`): its melting and boiling points and latent heats are written once, and `buildElements` makes the flat rows the table, `Simulation` and the tests take. Each state is still a row of its own, with its own density, conductivity, heat capacity, viscosity or angle of repose, and look, and the CA reads it from the row of the cell's type. Each material that melts has a liquid row of its own with its own data (molten gold, molten glass, lava for basalt and gravel), and a broken form (snow, gravel, brick rubble, ceramic shards, broken glass) is a row of its substance that keeps what it is made of: crushed brick stays brick. A cell carries no memory of what it melted from; `kind` bits 16–31 are free. The picker has one button per material, with a paint temperature beside it: Water at −10 °C paints ice, Basalt at 1,300 °C lava, Gold at 1,100 °C molten gold (`paintTarget`, `src/toolbar.ts`). A state reached by heating or cooling another paintable row has no button of its own; a broken form keeps one, since nothing heats a material into it.
 
-Rejected: one element per substance whose state follows its temperature. Every state needs different properties, so the CA would work out the state before every property read, in every phase and every pass, and the table's rows (one place for a material's numbers, validated, packed for the GPU) would turn into functions of temperature.
+The state is stored (a cell's type is its state's row), not worked out from the temperature on every read. Near a threshold the stored value runs past it while a cell takes in its latent heat, so a state derived from the temperature is ambiguous there, and the passes that bind `kind` only (the flight and retry passes) would need the `temp` word too.
+
+Rejected: one element per substance whose state follows its temperature, for the reasons above and because every state needs different properties: the CA would work out the state before every property read, in every phase and every pass, and the table's rows would turn into functions of temperature. Rejected: shared liquid rows (one LAVA, one MOLTEN_METAL) with the material as a per-cell ctype: it made the cell format carry a link back to a solid, gave every metal the same liquid data, and could not say that crushed brick stays brick.
 
 ## Bench runs are compared back to back; the log is history
 
 `npm run bench:compare <base> [<head>]` benches base, head, base, head in one sitting and reports the change against the gap between the two runs of the same code. The bench refuses to start while another program loads the GPU, so a speed check never needs a baseline taken when an item started, and a busy GPU only postpones the check. `bench/results.jsonl` records every clean run with a fingerprint of the code it measured, so a later session can look up what a state of the code measured (`bench:show`).
 
 Rejected: comparing against a logged run. Two runs of the same code minutes apart differ by up to 20 % (backlog D43), and days apart add driver, clock and heat differences; only runs taken back to back tell a change from noise. A fixed pass/fail threshold on one run for the same reason.
-
-## Molten elements remember what they set into
-
-LAVA and MOLTEN_METAL are shared by many materials: lava for rock, glass, ceramic and aerogel, molten metal for the six metals. A cell that melts into one writes the element it melted from, or its `setsInto` (sand sets into glass, not sand), as its ctype in `kind` bits 16–23, and the molten cell sets back into that element, at that element's threshold and latent heat. Its order against other elements by density, its readout name ("Molten gold"; "Lava" for basalt) and its color follow the ctype too, so molten gold sinks under molten steel.
-
-Rejected: one molten element per material, which adds a row for every solid that melts and still needs the link back for materials that set into something else (sand into glass); and one LAVA for rock and metal alike, which would make molten metal flow and conduct like rock and set metal into stone.

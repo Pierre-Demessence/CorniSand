@@ -26,7 +26,7 @@ At this size, what acts on surfaces rivals weight: surface tension (water's capi
 | `life` of gases | all 32 bits | none |
 | `life` of liquids | bits 2–31 (bits 0–1 hold the spread direction) | a dissolved amount (M8.4); age; a depth estimate (Surface tension; the spreading by depth and the convection onset that the `viscousSpread` and `heatedLayer` scenarios wait on, backlog I35 and I29, roadmap M12.6, inferred) |
 | `life` of an element with a lifetime (fire) | the bits above the lifetime | none |
-| `kind` bits 24–31 | 8 bits after M8.1's `ctype` in bits 16–23; I22's research proposes them for an amount of matter, though a thermometer needs about 11 for marks 5 °C apart and 13 to read to the degree (`docs/research/volume-changes.md`, Storage) | peak temperature; the supercooling bit |
+| `kind` bits 16–31 | 16 bits, all free (a cell carries no `ctype`); I22's research proposes them for an amount of matter, though a thermometer needs about 11 for marks 5 °C apart and 13 to read to the degree (`docs/research/volume-changes.md`, Storage) | peak temperature; the supercooling bit |
 | `kind` bits 8–15 (`variant`) | random at paint time, read by no rule; the display draws it as the per-grain shade | the dye view, which would share its bits with the shade |
 
 `withType` (through which `retype` goes) writes the whole `kind` and `life` words, `withLife` the whole `life` word, and `cellLife` returns the whole word to its readers (`spreadRow`, the lifetimes, fire's color), so sharing them needs masked writes and reads. The `velocity` and `remainder` words of a solid are not free: the inert-block skip and the launch count rely on their being 0 (`AGENTS.md`, "Invariants").
