@@ -1,6 +1,6 @@
 # I41 World edges
 
-Status: approved; the GPU bench steps are left out at the user's request (no bench before or after, no `Bench pending`); next I41.4.
+Status: approved; the GPU bench steps are left out at the user's request (no bench before or after, no `Bench pending`); finished, waiting for the user's review.
 
 ## Goal
 
@@ -87,8 +87,8 @@ Needs you: a look at the panel: open the game, paint sand on the floor, click Ed
 
 ### I41.4 Docs and finish
 
-- [ ] `docs/decisions.md`: one switch per side for matter and air together, the floor-only default, no hidden margin.
-- [ ] Delete backlog I41 and I41 from the roadmap's Order line; on "finish", delete this plan.
+- [x] `docs/decisions.md`: one switch per side for matter and air together, the floor-only default, no hidden margin.
+- [x] Delete backlog I41 and I41 from the roadmap's Order line (the plan itself is deleted on "finish"; I42 lost its `(I41)` marker).
 
 Visible after: nothing: docs.
 Needs you: nothing.

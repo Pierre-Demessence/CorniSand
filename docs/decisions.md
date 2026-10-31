@@ -141,3 +141,11 @@ Rejected: one element per substance whose state follows its temperature, for the
 `npm run bench:compare <base> [<head>]` benches base, head, base, head in one sitting and reports the change against the gap between the two runs of the same code. The bench refuses to start while another program loads the GPU, so a speed check never needs a baseline taken when an item started, and a busy GPU only postpones the check. `bench/results.jsonl` records every clean run with a fingerprint of the code it measured, so a later session can look up what a state of the code measured (`bench:show`).
 
 Rejected: comparing against a logged run. Two runs of the same code minutes apart differ by up to 20 % (backlog D43), and days apart add driver, clock and heat differences; only runs taken back to back tell a change from noise. A fixed pass/fail threshold on one run for the same reason.
+
+## One switch per world side for matter and air together; the floor is closed by default
+
+Each side of the world (left, right, floor, top) is open or closed, switched in the game (`src/edges.ts`, the Edges panel, `?edges=`). A closed side is an endless wall for matter, pressure and heat; an open side deletes matter that crosses it and lets pressure and heat pass to the rest of the world at room temperature. The default closes the floor only, so sand piles on an empty screen while smoke and steam leave through the top. One switch per side covers the cells and the air, because a wall for matter that lets pressure through (or the reverse) is a state no one asked for, and a second switch would double the settings for no visible gain. The edges belong to the player, not to a scene: a scene that needs a side closed draws a wall there.
+
+There is no hidden margin of cells beyond the screen: matter is deleted as it crosses an open side, as in The Powder Toy. A margin would cost memory and passes for matter the player cannot see, and what falls back in from it would depend on its size.
+
+Rejected: a separate air switch per side (see above). Rejected: a margin that keeps matter for a while (cost, and size-dependent behavior). Rejected for now: wrap-around sides (backlog I42 covers grains thrown out through an open top falling back in). Left out: the closed floor holds no heat, where real ground takes some.
