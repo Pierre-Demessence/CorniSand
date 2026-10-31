@@ -1,15 +1,18 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   type BenchOutput,
   type RunLine,
+  addBenchOut,
   benchSettings,
   buildRunLine,
   compareTable,
+  describeBlockers,
   describeBusy,
+  findBlockers,
   findRuns,
   fingerprint,
   isBusy,
@@ -18,6 +21,7 @@ import {
   parseEngineUse,
   parseGpuSample,
   parseLog,
+  parseTasklist,
   serializeLine,
   showTable,
 } from '../bench/bench-log.ts';
@@ -43,9 +47,39 @@ describe('GPU check', () => {
   });
 
   it('is busy only above the idle maximum', () => {
-    expect(isBusy([10, 10, 10])).toBe(false);
-    expect(isBusy([11, 11, 11])).toBe(true);
+    expect(isBusy([20, 20, 20])).toBe(false);
+    expect(isBusy([21, 21, 21])).toBe(true);
     expect(isBusy([4, 4, 4], 3)).toBe(true);
+  });
+
+  it('passes Chrome and Discord with their bursts and refuses a game', () => {
+    expect(isBusy([2, 2, 13, 2, 8, 2, 2, 2])).toBe(false);
+    expect(isBusy([62, 80, 71, 66, 75, 60, 78, 70])).toBe(true);
+  });
+
+  it('finds Wallpaper Engine among the running processes, whatever their case', () => {
+    const output = [
+      '"System Idle Process","0","Services","0","8 Ko"',
+      '"chrome.exe","9120","Console","1","210 400 Ko"',
+      '"wallpaper64.exe","5512","Console","1","98 112 Ko"',
+      '"Wallpaper32.EXE","5513","Console","1","40 000 Ko"',
+      '"wallpaper_engine.exe","5514","Console","1","1 000 Ko"',
+      'INFO: not a process line',
+      '',
+    ].join('\r\n');
+    const processes = parseTasklist(output);
+    expect(processes).toContainEqual({ pid: 9120, name: 'chrome' });
+    expect(processes).toHaveLength(5);
+    expect(findBlockers(processes)).toEqual([
+      { pid: 5512, name: 'wallpaper64' },
+      { pid: 5513, name: 'Wallpaper32' },
+    ]);
+    expect(findBlockers(parseTasklist('"chrome.exe","9120","Console","1","210 400 Ko"'))).toEqual([]);
+  });
+
+  it('names the blocking program in the refusal', () => {
+    const text = describeBlockers([{ pid: 5512, name: 'wallpaper64' }]);
+    expect(text).toContain('Wallpaper Engine (wallpaper64, pid 5512)');
   });
 
   it('sums a process\'s 3D engines and lists the busiest first', () => {
@@ -68,6 +102,45 @@ describe('GPU check', () => {
     expect(text).toContain('80 %');
     expect(text).toContain('enshrouded (pid 4120): 67 %');
     expect(describeBusy([80], [])).not.toContain('3D engine');
+  });
+});
+
+describe('harness older than BENCH_OUT', () => {
+  // The shape of every harness since M4.6a around its breakdown table, as plain JavaScript so Node can run it.
+  const harness = [
+    "const description = 'D3D12 driver version 32.0.16.2101';",
+    "const rows = [{ scene: 'tank', speed: '1x', msMedian: 0.85 }];",
+    "const breakdown = { 'tank (air default, finished look)': { sum: 0.86 } };",
+    'if (rows.length > 0) {',
+    '  console.table(breakdown);',
+    '  console.log(rows.length);',
+    '}',
+  ].join('\r\n');
+
+  it('writes the result where BENCH_OUT points once the lines are added', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'bench-harness-test-'));
+    try {
+      const patched = addBenchOut(harness)!;
+      expect(patched.split(/\r?\n/).slice(5, 8)).toEqual([
+        '  console.table(breakdown);',
+        '  if (process.env.BENCH_OUT) writeBenchOut(process.env.BENCH_OUT, JSON.stringify({ adapter: description, rows, breakdown }));',
+        '  console.log(rows.length);',
+      ]);
+      writeFileSync(join(dir, 'harness.mjs'), patched);
+      const out = join(dir, 'out.json');
+      execFileSync(process.execPath, [join(dir, 'harness.mjs')], { env: { ...process.env, BENCH_OUT: out }, stdio: 'ignore' });
+      expect(JSON.parse(readFileSync(out, 'utf8'))).toEqual({
+        adapter: 'D3D12 driver version 32.0.16.2101',
+        rows: [{ scene: 'tank', speed: '1x', msMedian: 0.85 }],
+        breakdown: { 'tank (air default, finished look)': { sum: 0.86 } },
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('gives up on a harness without the breakdown table', () => {
+    expect(addBenchOut("console.table(rows);\n")).toBeUndefined();
   });
 });
 
@@ -173,7 +246,8 @@ describe('run line', () => {
     dirty: true,
     commit: 'abc1234',
     date: '2026-10-30T20:00:00.000Z',
-    adapter: 'vendor="nvidia"',
+    gpu: 'NVIDIA GeForce RTX 4080',
+    adapter: 'D3D12 driver version 32.0.16.2101',
     driver: '621.01',
     settings: { BENCH_SCENES: 'tank' },
     idle: { before: 2, after: 3 },
@@ -183,7 +257,7 @@ describe('run line', () => {
 
   it('holds the plan\'s fields and leaves out a session and role that were not given', () => {
     const line = buildRunLine(parts);
-    expect(Object.keys(line)).toEqual(expect.arrayContaining(['fingerprint', 'dirty', 'commit', 'date', 'adapter', 'driver', 'settings', 'idle', 'rows', 'breakdown']));
+    expect(Object.keys(line)).toEqual(expect.arrayContaining(['fingerprint', 'dirty', 'commit', 'date', 'gpu', 'adapter', 'driver', 'settings', 'idle', 'rows', 'breakdown']));
     expect(line).not.toHaveProperty('session');
     expect(line).not.toHaveProperty('role');
   });
@@ -245,6 +319,7 @@ describe('tables', () => {
       dirty: false,
       commit: 'abcdef0123',
       date: '2026-10-30T20:00:00.000Z',
+      gpu: 'g',
       driver: 'd',
       settings: {},
       idle: { before: 1, after: 1 },

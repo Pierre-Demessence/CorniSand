@@ -5,8 +5,14 @@ import { join } from 'node:path';
 
 // The pure and git-reading parts of the bench CLI (bench.ts), tested by tests/bench-log.test.ts.
 
-// The GPU counts as busy above this utilization (%), as the median of the samples.
-export const IDLE_MAX = 10;
+// The GPU counts as busy above this utilization (%), as the median of the samples: Chrome and Discord idle at 2 % with
+// bursts up to 13 %, a game loads 60 to 80 %.
+export const IDLE_MAX = 20;
+
+// Programs the bench refuses to run beside, by lowercase process name whatever their load, with the name the refusal gives them.
+// Wallpaper Engine loads the GPU about as much as Chrome and Discord do, so no threshold tells them apart, and the user
+// closes it for a bench anyway.
+export const BLOCKING_PROCESSES: Record<string, string> = { wallpaper64: 'Wallpaper Engine', wallpaper32: 'Wallpaper Engine' };
 
 // What the bench measures: the simulation and renderer, the harness and its device setup, the lockfile (a driver of
 // Dawn's version) and the bench config. A change elsewhere does not change a run's numbers.
@@ -22,6 +28,11 @@ export interface EngineUse {
   pid: number;
   name: string;
   percent: number;
+}
+
+export interface ProcessEntry {
+  pid: number;
+  name: string;
 }
 
 export interface Idle {
@@ -43,6 +54,8 @@ export interface RunLine extends BenchOutput {
   dirty: boolean;
   commit: string;
   date: string;
+  // The card's name from nvidia-smi: Dawn's adapter description names only the D3D12 driver.
+  gpu: string;
   driver: string;
   settings: Record<string, string>;
   idle: Idle;
@@ -94,6 +107,44 @@ export function describeBusy(utilizations: number[], uses: EngineUse[]): string 
   return lines.join('\n');
 }
 
+// `tasklist /FO CSV /NH`: one `"<image>","<pid>",...` line per process. Names lose their `.exe`, as Get-Process gives them.
+export function parseTasklist(output: string): ProcessEntry[] {
+  const entries: ProcessEntry[] = [];
+  for (const line of output.split(/\r?\n/)) {
+    const match = /^"([^"]+)","(\d+)"/.exec(line);
+    if (match) entries.push({ pid: Number(match[2]), name: match[1].replace(/\.exe$/i, '') });
+  }
+  return entries;
+}
+
+export function findBlockers(processes: ProcessEntry[], blocking = BLOCKING_PROCESSES): ProcessEntry[] {
+  const names = new Set(Object.keys(blocking).map((name) => name.toLowerCase()));
+  return processes.filter((entry) => names.has(entry.name.toLowerCase()));
+}
+
+export function describeBlockers(blockers: ProcessEntry[], blocking = BLOCKING_PROCESSES): string {
+  const label = (name: string): string => blocking[name.toLowerCase()] ?? name;
+  return [
+    'A program the bench does not run beside is open (whatever its GPU load):',
+    ...blockers.map((entry) => `  ${label(entry.name)} (${entry.name}, pid ${entry.pid})`),
+  ].join('\n');
+}
+
+const BREAKDOWN_TABLE = 'console.table(breakdown);';
+
+// A harness older than BENCH_OUT with the two lines that write it, added after its breakdown table, so each side of a
+// compare runs its own harness, as with a base that has BENCH_OUT (today's harness imports modules an old base lacks).
+// Undefined for a harness without that table (before M4.6a).
+export function addBenchOut(harness: string): string | undefined {
+  const at = harness.indexOf(BREAKDOWN_TABLE);
+  if (at < 0) return undefined;
+  const lineStart = harness.lastIndexOf('\n', at) + 1;
+  const indent = harness.slice(lineStart, at);
+  const end = at + BREAKDOWN_TABLE.length;
+  const write = `${indent}if (process.env.BENCH_OUT) writeBenchOut(process.env.BENCH_OUT, JSON.stringify({ adapter: description, rows, breakdown }));`;
+  return `import { writeFileSync as writeBenchOut } from 'node:fs';\n${harness.slice(0, end)}\n${write}${harness.slice(end)}`;
+}
+
 // The working tree's text with the line endings git would store, so a checkout with CRLF and a blob with LF agree.
 const normalize = (content: Buffer): string => content.toString('utf8').replaceAll('\r\n', '\n');
 
@@ -143,12 +194,13 @@ export function benchSettings(env: Record<string, string | undefined>): Record<s
 }
 
 export function buildRunLine(parts: RunLine): RunLine {
-  const { fingerprint: print, dirty, commit, date, adapter, driver, settings, idle, rows, breakdown, session, role } = parts;
+  const { fingerprint: print, dirty, commit, date, gpu, adapter, driver, settings, idle, rows, breakdown, session, role } = parts;
   return {
     fingerprint: print,
     dirty,
     commit,
     date,
+    gpu,
     adapter,
     driver,
     settings,

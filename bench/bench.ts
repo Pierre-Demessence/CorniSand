@@ -1,15 +1,19 @@
 import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
-import { appendFileSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync } from 'node:fs';
+import { appendFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
   type BenchOutput,
   type EngineUse,
+  type ProcessEntry,
   type RunLine,
+  addBenchOut,
   benchSettings,
   buildRunLine,
   compareTable,
+  describeBlockers,
   describeBusy,
+  findBlockers,
   findRuns,
   fingerprint,
   isBusy,
@@ -18,6 +22,7 @@ import {
   parseEngineUse,
   parseGpuSample,
   parseLog,
+  parseTasklist,
   serializeLine,
   showTable,
 } from './bench-log.ts';
@@ -70,10 +75,30 @@ function engineUse(): EngineUse[] {
   }
 }
 
+// The running programs the bench refuses to run beside. Not best effort: a check that cannot run refuses, as nvidia-smi does.
+function runningBlockers(): ProcessEntry[] {
+  let output: string;
+  try {
+    output = execFileSync('tasklist', ['/FO', 'CSV', '/NH'], { encoding: 'utf8', timeout: 20_000 });
+  } catch (error) {
+    throw new Refusal(`tasklist did not answer (${(error as Error).message}), so the bench cannot tell whether Wallpaper Engine runs.`);
+  }
+  return findBlockers(parseTasklist(output));
+}
+
+// What keeps a reading from counting as idle, named, or undefined when it is idle.
+function busyReason(reading: GpuReading): string | undefined {
+  const blockers = runningBlockers();
+  if (blockers.length > 0) return describeBlockers(blockers);
+  if (isBusy(reading.utilizations)) return describeBusy(reading.utilizations, engineUse());
+  return undefined;
+}
+
 // The idle reading (median utilization), or a refusal that names the load.
 async function requireIdle(): Promise<GpuReading & { idle: number }> {
   const reading = await sampleGpu();
-  if (isBusy(reading.utilizations)) throw new Refusal(`${describeBusy(reading.utilizations, engineUse())}\nClose what uses the GPU and run it again.`);
+  const reason = busyReason(reading);
+  if (reason !== undefined) throw new Refusal(`${reason}\nClose what uses the GPU and run it again.`);
   return { ...reading, idle: median(reading.utilizations) };
 }
 
@@ -96,7 +121,7 @@ function runVitest(cwd: string, outPath: string): Promise<number> {
 
 interface Target {
   dir: string;
-  // Computed before the harness copy, so it names the code under test.
+  // Computed before an old harness is patched, so it names the code under test.
   fingerprint: string;
   dirty: boolean;
   commit: string;
@@ -120,9 +145,8 @@ async function benchRun(at: Target, tag?: { session: string; role: 'base' | 'hea
     const code = await runVitest(at.dir, outPath);
     if (code !== 0) throw new Refusal(`The bench failed (exit code ${code}); nothing was logged.`);
     const after = await sampleGpu();
-    if (isBusy(after.utilizations)) {
-      throw new Refusal(`${describeBusy(after.utilizations, engineUse())}\nThe GPU was busy after the run, so its numbers are void; nothing was logged.`);
-    }
+    const reason = busyReason(after);
+    if (reason !== undefined) throw new Refusal(`${reason}\nThis was found after the run, so its numbers are void; nothing was logged.`);
     if (!existsSync(outPath)) throw new Refusal('The bench wrote no result (no GPU adapter, so its tests were skipped?); nothing was logged.');
     const output = JSON.parse(readFileSync(outPath, 'utf8')) as BenchOutput;
     const line = buildRunLine({
@@ -130,6 +154,7 @@ async function benchRun(at: Target, tag?: { session: string; role: 'base' | 'hea
       dirty: at.dirty,
       commit: at.commit,
       date: new Date().toISOString(),
+      gpu: before.name,
       driver: before.driver,
       settings: benchSettings(process.env),
       idle: { before: before.idle, after: median(after.utilizations) },
@@ -189,12 +214,15 @@ function removeWorktrees(): void {
   }
 }
 
-// A base that predates BENCH_OUT cannot write its result: it gets the current harness.
+// A base that predates BENCH_OUT cannot write its result: its own harness gets the lines that write it.
 function ensureHarness(dir: string, label: string): void {
   const harness = join(dir, 'tests', 'bench.gpu.ts');
-  if (readFileSync(harness, 'utf8').includes('BENCH_OUT')) return;
-  copyFileSync(join(ROOT, 'tests', 'bench.gpu.ts'), harness);
-  console.log(`${label}: its tests/bench.gpu.ts predates BENCH_OUT, so the current harness was copied into the checkout.`);
+  const source = readFileSync(harness, 'utf8');
+  if (source.includes('BENCH_OUT')) return;
+  const patched = addBenchOut(source);
+  if (patched === undefined) throw new Refusal(`${label}: its tests/bench.gpu.ts has no breakdown table (it predates M4.6a), so it cannot be compared.`);
+  writeFileSync(harness, patched);
+  console.log(`${label}: its tests/bench.gpu.ts predates BENCH_OUT, so the lines that write the result were added to it.`);
 }
 
 function requireCommit(ref: string): void {
@@ -229,6 +257,8 @@ async function compare(baseRef: string, headRef: string | undefined): Promise<vo
       lines.filter((line) => line.role === 'base'),
       lines.filter((line) => line.role === 'head'),
     );
+    // A base older than the harness's `air` and `look` columns labels its scenes differently, so no row matches.
+    if (rows.length === 0) throw new Refusal('No scene is in both sides\' results under the same label (an old base names its scenes differently); the four runs are logged.');
     console.log('\nGPU ms per 1x frame, mean of two runs a side. noise %: the larger gap between the two runs of the same code.');
     console.table(
       rows.map(({ scene, metric, base: b, head: h, deltaPct, noisePct }) => ({
