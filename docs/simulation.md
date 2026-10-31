@@ -33,7 +33,7 @@ Intuition for the layout: each field is its own array, like the columns of a tab
 
 ## Element table
 
-Every material is a row of `ELEMENTS` (`src/elements.ts`):
+A material is a substance of `SUBSTANCES` (`src/elements.ts`) with all its states: its melting point, boiling point and latent heats are written once, and `buildElements` turns them into the `above` and `below` of the states on either side. The flat result is `ELEMENTS`, one row per state, which is all the GPU reads: the stored state of a cell is never worked out from its temperature, so a cell exactly at a threshold is not ambiguous and a pass that binds `kind` alone still knows what the cell is. The rows:
 
 | Element | ID | State | Density (kg/m³) | Other |
 | --- | --- | --- | --- | --- |

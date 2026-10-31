@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { NO_PRESSURE, PROP_FIELDS, ROW_BYTES, packElements } from '../src/element-table';
 import {
-  DEFAULT_DRAG, ELEMENT, ELEMENTS, MAX_ELEMENTS, PRESSURE_PER_TOUGHNESS, STATES, STONE_TOUGHNESS, crushPressure, elementByKey, elementConductivity, elementDrag, elementGravity, elementHeatCapacity, elementHoldsHeat, elementInert,
-  elementTemperature, latentWidth, validateElements, type ElementDef,
+  DEFAULT_DRAG, ELEMENT, ELEMENTS, MAX_ELEMENTS, PRESSURE_PER_TOUGHNESS, STATES, STONE_TOUGHNESS, SUBSTANCES, buildElements, crushPressure, elementByKey, elementConductivity, elementDrag, elementGravity, elementHeatCapacity, elementHoldsHeat,
+  elementInert, elementTemperature, latentWidth, substanceOf, validateElements, type ElementDef, type StateDef, type SubstanceDef,
 } from '../src/elements';
 import { DISPLAY_FIELDS, DISPLAY_ROW_BYTES, packDisplay } from '../src/display-table';
 import { LOOK, lookSettings, parseWall } from '../src/look';
@@ -429,6 +429,123 @@ describe('M11.2 look rows and the display table', () => {
 
   it('keeps every row of the default table valid with its look', () => {
     expect(() => validateElements(ELEMENTS)).not.toThrow();
+  });
+});
+
+describe('M12.14c substances', () => {
+  const state = (key: string, id: number, kind: ElementDef['state'], extra: Partial<StateDef> = {}): StateDef => ({
+    key, id, label: key, color: [0.5, 0.5, 0.5], state: kind, density: 1000, ...extra,
+  });
+  const ROCK = state('ROCK', 201, 'solid');
+  const GRIT = state('GRIT', 202, 'powder');
+  const MAGMA = state('MAGMA', 203, 'liquid', { temperature: 700 });
+  const FUME = state('FUME', 204, 'gas', { temperature: 1000 });
+  const [ROCK2, MAGMA2, FUME2] = [state('ROCK2', 211, 'solid'), state('MAGMA2', 212, 'liquid'), state('FUME2', 213, 'gas')];
+  const melt = { temp: 500, latent: 300 };
+  const boil = { temp: 900, latent: 400, burst: 0.5 };
+
+  it('AC6: gives the rows on either side of a melt and a boil their thresholds, once written', () => {
+    const rows = buildElements([{ melt, boil, states: [FUME, MAGMA, GRIT, ROCK] }]);
+    expect(rows.map((r) => r.key), 'in the order of the IDs').toEqual(['ROCK', 'GRIT', 'MAGMA', 'FUME']);
+    const at = (key: string): ElementDef => elementByKey(rows, key);
+    expect(at('ROCK').above).toEqual({ temp: 500, becomes: 'MAGMA', latent: 300 });
+    expect(at('GRIT').above).toEqual({ temp: 500, becomes: 'MAGMA', latent: 300 });
+    expect(at('MAGMA').below).toEqual({ temp: 500, becomes: 'ROCK', latent: 300 });
+    expect(at('MAGMA').above).toEqual({ temp: 900, becomes: 'FUME', latent: 400, burst: 0.5 });
+    expect(at('FUME').below).toEqual({ temp: 900, becomes: 'MAGMA', latent: 400 });
+    expect(at('FUME').above).toBeUndefined();
+    expect(() => validateElements([...ELEMENTS, ...rows])).not.toThrow();
+  });
+
+  it('AC6: a melt `into` another substance\'s liquid sends a powder there and leaves that liquid setting into its own solid', () => {
+    const glassy: SubstanceDef = { melt, states: [ROCK, MAGMA] };
+    const sandy: SubstanceDef = { melt: { temp: 700, latent: 300, into: 'MAGMA' }, states: [state('DUNE', 205, 'powder')] };
+    const rows = buildElements([glassy, sandy]);
+    expect(elementByKey(rows, 'DUNE').above).toEqual({ temp: 700, becomes: 'MAGMA', latent: 300 });
+    expect(elementByKey(rows, 'MAGMA').below?.becomes).toBe('ROCK');
+  });
+
+  it('AC6: keeps an above of its own for a change into another substance, and none of the rows of the default table repeats a melt or a boil', () => {
+    const rows = buildElements([{ states: [state('TAR', 210, 'liquid', { above: { temp: 250, becomes: 'FIRE' } })] }]);
+    expect(rows[0].above).toEqual({ temp: 250, becomes: 'FIRE' });
+    for (const substance of SUBSTANCES as readonly SubstanceDef[]) {
+      const keyOf = (kind: ElementDef['state']): string[] => substance.states.filter((s) => s.state === kind).map((s) => s.key);
+      for (const s of substance.states) {
+        expect('below' in s, `${s.key} writes no below`).toBe(false);
+        const own = s.above !== undefined;
+        if (substance.melt && (s.state === 'solid' || s.state === 'powder')) expect(own, `${s.key} takes its melt`).toBe(false);
+        if (substance.boil && s.state === 'liquid') expect(own, `${s.key} takes its boil`).toBe(false);
+      }
+      for (const key of keyOf('liquid')) {
+        const row = elementByKey(ELEMENTS, key);
+        if (substance.melt) expect(row.below, `${key} sets at the melt`).toMatchObject({ temp: substance.melt.temp, latent: substance.melt.latent });
+        if (substance.boil) expect(row.above, `${key} boils at the boil`).toMatchObject({ temp: substance.boil.temp, latent: substance.boil.latent });
+      }
+      if (substance.melt?.into === undefined) {
+        for (const key of [...keyOf('solid'), ...keyOf('powder')]) {
+          if (substance.melt) expect(elementByKey(ELEMENTS, key).above, `${key} melts at the melt`).toMatchObject({ temp: substance.melt.temp, latent: substance.melt.latent });
+        }
+      }
+    }
+  });
+
+  it('AC6: a substance keeps its crush and crack targets among its own states', () => {
+    for (const substance of SUBSTANCES as readonly SubstanceDef[]) {
+      const keys = substance.states.map((s) => s.key);
+      for (const s of substance.states) {
+        for (const target of [s.pressureAbove?.becomes, s.cracksInto]) if (target !== undefined) expect(keys, `${s.key} breaks into ${target}`).toContain(target);
+      }
+    }
+  });
+
+  it('AC6: throws, naming the first row, for a melt or a boil without a state on each side', () => {
+    expect(() => buildElements([{ melt, states: [ROCK] }])).toThrow(/substance ROCK.*liquid/);
+    expect(() => buildElements([{ melt, states: [MAGMA] }])).toThrow(/substance MAGMA.*solid or powder/);
+    expect(() => buildElements([{ melt, states: [ROCK, MAGMA, MAGMA2] }])).toThrow(/substance ROCK.*exactly one liquid/);
+    expect(() => buildElements([{ boil, states: [MAGMA] }])).toThrow(/substance MAGMA.*one liquid state and one gas/);
+    expect(() => buildElements([{ boil, states: [MAGMA, FUME, FUME2] }])).toThrow(/substance MAGMA.*one liquid state and one gas/);
+    expect(() => buildElements([{ melt: { temp: 900, latent: 300 }, boil, states: [ROCK, MAGMA, FUME] }])).toThrow(/substance ROCK.*must be under boil/);
+  });
+
+  it('AC6: throws for a liquid with no single solid to set into', () => {
+    expect(() => buildElements([{ melt, states: [GRIT, MAGMA] }])).toThrow(/substance GRIT.*MAGMA.*exactly one solid.*found 0/);
+    expect(() => buildElements([{ melt, states: [ROCK, ROCK2, MAGMA] }])).toThrow(/substance ROCK.*MAGMA.*exactly one solid.*found 2/);
+  });
+
+  it('AC6: throws for a crush or crack target outside the substance', () => {
+    const crush = state('SLAB', 220, 'solid', { toughness: 1, pressureAbove: { becomes: 'ROCK' } });
+    expect(() => buildElements([{ states: [crush] }, { states: [ROCK] }])).toThrow(/substance SLAB.*SLAB breaks into "ROCK"/);
+    const crack = state('PANE', 221, 'solid', { cracksInto: 'GRIT' });
+    expect(() => buildElements([{ states: [crack] }, { states: [GRIT] }])).toThrow(/substance PANE.*PANE breaks into "GRIT"/);
+    expect(() => buildElements([{ states: [crack, GRIT] }])).not.toThrow();
+  });
+
+  it('AC6: throws for a melt `into` a liquid that is not another substance\'s, sets at another latent heat or sets above the melt', () => {
+    const glassy: SubstanceDef = { melt, states: [ROCK, MAGMA] };
+    const dune = (into: Partial<NonNullable<SubstanceDef['melt']>>): SubstanceDef => ({ melt: { temp: 700, latent: 300, into: 'MAGMA', ...into }, states: [state('DUNE', 205, 'powder')] });
+    expect(() => buildElements([glassy, dune({ latent: 100 })])).toThrow(/substance DUNE.*latent heat 300/);
+    expect(() => buildElements([glassy, dune({ temp: 400 })])).toThrow(/substance DUNE.*below 500/);
+    expect(() => buildElements([glassy, dune({ into: 'ROCK' })])).toThrow(/substance DUNE.*not the liquid state of another substance/);
+    expect(() => buildElements([glassy, dune({ into: 'NOWHERE' })])).toThrow(/substance DUNE.*not the liquid state of another substance/);
+    expect(() => buildElements([{ states: [MAGMA] }, dune({})])).toThrow(/substance DUNE.*never sets/);
+    expect(() => buildElements([{ melt: { temp: 700, latent: 300, into: 'MAGMA' }, states: [GRIT, MAGMA] }])).toThrow(/substance GRIT.*no liquid of its own/);
+    expect(() => buildElements([glassy, dune({})])).not.toThrow();
+  });
+
+  it('AC6: throws for a state with an above of its own that also melts or boils, and for a state in two substances', () => {
+    const ignites = { above: { temp: 250, becomes: 'FIRE' } };
+    expect(() => buildElements([{ melt, states: [state('WAXY', 230, 'solid', ignites), MAGMA] }])).toThrow(/substance WAXY.*WAXY has an above of its own and also melts/);
+    expect(() => buildElements([{ boil, states: [state('OILY', 231, 'liquid', ignites), FUME] }])).toThrow(/substance OILY.*OILY has an above of its own and also boils/);
+    expect(() => buildElements([{ states: [ROCK] }, { states: [GRIT, ROCK] }])).toThrow(/substance GRIT.*ROCK is in two substances/);
+  });
+
+  it('names a substance with no states, and finds the substance of a default row by any of its IDs', () => {
+    expect(() => buildElements([{ melt, states: [] }])).toThrow(/substance \(no states\)/);
+    expect(substanceOf(ELEMENT.SNOW)?.states.map((s) => s.key)).toEqual(expect.arrayContaining(['WATER', 'ICE', 'STEAM', 'SNOW']));
+    expect(substanceOf(ELEMENT.SNOW)).toBe(substanceOf(ELEMENT.STEAM));
+    expect(substanceOf(ELEMENT.MOLTEN_GLASS)?.states.map((s) => s.key)).toEqual(expect.arrayContaining(['GLASS', 'BROKEN_GLASS']));
+    expect(substanceOf(ELEMENT.SAND)?.melt?.into).toBe('MOLTEN_GLASS');
+    expect(substanceOf(999)).toBeUndefined();
   });
 });
 

@@ -2,8 +2,9 @@ import { ABSOLUTE_ZERO, MAX_TEMP, ROOM_TEMP } from './heat';
 import { CELL_SIZE, DEFAULT_GRAVITY, MAX_REPOSE, MIN_REPOSE, slideSpeed, spreadSpeed } from './physics';
 import { CATEGORIES, type Category } from './toolbar';
 
-// The element table: one row per material, the single source of the IDs, colors, movement class, density, lifetimes
-// and toolbar entries that the shaders, the brush, the display and the toolbar are generated from.
+// The element table: one row per state of matter, flattened from the substances (`SUBSTANCES`, `buildElements`) and the
+// single source of the IDs, colors, movement class, density, lifetimes and toolbar entries that the shaders, the brush,
+// the display and the toolbar are generated from.
 
 // How an element moves and what moves through it. Empty is air. A solid never moves and nothing passes through it;
 // powders and liquids fall; liquids also spread sideways; gases rise; plasma (fire) stays put but a gas rises through it.
@@ -143,6 +144,29 @@ export interface Transition {
 export interface PressureTransition {
   /** The key of the element the cell becomes. */
   becomes: string;
+}
+
+/**
+ * A state of a substance: a row without the `below` and `above` that the substance's melt and boil give it. It keeps an
+ * `above` only for a change into another substance (oil and gunpowder igniting into fire).
+ */
+export type StateDef = Omit<ElementDef, 'below' | 'above'> & { above?: Transition };
+
+/**
+ * A material with all its states and broken forms. The melt and the boil are written once here and become the thresholds
+ * of the rows on either side (`buildElements`); the GPU keeps one row per state.
+ */
+export interface SubstanceDef {
+  /**
+   * Every solid and powder state turns into the liquid at `temp` (°C), taking in `latent` (MJ/m³), and the liquid sets
+   * into the substance's one solid state at the same temperature. `into` is the key of another substance's liquid row
+   * (sand melts into glass's), which must set at a `temp` no higher than this one and with the same `latent`.
+   */
+  melt?: { temp: number; latent: number; into?: string };
+  /** The liquid turns into the gas at `temp` (°C), taking in `latent` (MJ/m³), releasing `burst` into the air cell as `Transition.burst` says; the gas condenses at the same `temp`. */
+  boil?: { temp: number; latent: number; burst?: number };
+  /** The rows of the substance's states, broken forms included (ice, snow, steam and water are water's). The first one names the substance in errors. */
+  states: readonly StateDef[];
 }
 
 export const DEFAULT_DRAG = 1 / 64;
@@ -352,861 +376,1033 @@ const WATER_TURBIDITY = 0.085;
 // row's capacity is its specific heat times its liquid's density, and a latent heat is per kilogram times the density of the
 // denser phase. Empty space holds no heat itself: its temperature is its air cell's. Every row trades heat with its air cell at the
 // air's surface coefficient (`AIR.surfaceCoefficient`), whatever the material.
-export const ELEMENTS = [
-  // Empty space is air: 1.2 kg/m³ at 20 °C, and its density at its air cell's temperature follows the ideal-gas law.
-  { key: 'EMPTY', id: 0, label: 'Air', color: [0.06, 0.06, 0.08], state: 'empty', density: 1.2 },
-  // Dry sand: 0.27 W/m·K (0.25 to 0.35 for dry quartz sand) and 1.3 MJ/m³·K (1,600 kg/m³ at 0.8 kJ/kg·K).
-  // Angle of repose 34° (dry sand 30 to 35°: Wikipedia's table 34°, Dartmouth's engineering notes 35° for dry irregular sand).
-  // Quartz melts at 1,713 °C (cristobalite's melting point) into molten glass, which sets into glass.
-  { key: 'SAND', id: 1, label: 'Sand', color: [0.80, 0.70, 0.48], state: 'powder', density: 1600, conductivity: 0.27, heatCapacity: 1.3, repose: 34,
-    above: { temp: 1713, becomes: 'MOLTEN_GLASS', latent: GLASS_FUSION },
-    toolbar: 1, category: 'Powders', description: 'Dry grains that fall and pile up into a slope.' },
-  // The engine's invincible wall and the world's edge, not a real material: it never conducts, so heat never leaves the world.
-  { key: 'WALL', id: 2, label: 'Wall', color: [0.43, 0.45, 0.47], state: 'solid', density: 2500,
-    toolbar: 1, category: 'Solids', description: 'An indestructible barrier: it never moves and holds no heat.' },
-  // Water: 0.6 W/m·K and 4.18 MJ/m³·K (4.18 kJ/kg·K at 1,000 kg/m³). Freezes and boils at the physical 0 and 100 °C, with the
-  // latent heats above. Its density by temperature is the handbook's (999.84 kg/m³ at 0 °C, 999.97 at 4, 992.2 at 40, 958.4
-  // at 100) at four points: densest at 4 °C, so a pond under a freezing ceiling stirs until it is 4 °C throughout. Viscosity
-  // 1.0 mPa·s at 20 °C (1.002, handbook).
+// A substance is one material with all its states (water, ice, snow and steam are one): its melting point, boiling point and
+// latent heats are written once, and `buildElements` gives the rows on either side their thresholds.
+export const SUBSTANCES = [
   {
-    key: 'WATER',
-    id: 3,
-    label: 'Water',
-    color: [0.18, 0.42, 0.72],
-    state: 'liquid',
-    density: 1000,
-    densityKnots: [[0, 999.8], [4, 1000], [40, 992.2], [100, 958.4]],
-    conductivity: 0.6,
-    heatCapacity: 4.18,
-    viscosity: 0.001,
-    // Its absorption of red, green and blue light (650, 550 and 450 nm) is Pope and Fry's (1997, pure water): 0.340, 0.0565 and
-    // 0.00922 per metre, per cell of CELL_SIZE, plus `WATER_TURBIDITY` on every channel for the particles of natural water
-    // (estimated and chosen by sight: pure water alone only loses its red and green and stays bright blue however deep, while
-    // this turns deep water dark navy). Real water tints a pool a metre deep and barely 17 cm (128 cells), so the finished
-    // look exaggerates the depth by `LOOK.depthScale`.
-    look: {
-      absorption: [(0.340 + WATER_TURBIDITY) * CELL_SIZE, (0.0565 + WATER_TURBIDITY) * CELL_SIZE, (0.00922 + WATER_TURBIDITY) * CELL_SIZE],
-    },
-    below: { temp: 0, becomes: 'ICE', latent: WATER_FUSION },
+    states: [
+      // Empty space is air: 1.2 kg/m³ at 20 °C, and its density at its air cell's temperature follows the ideal-gas law.
+      { key: 'EMPTY', id: 0, label: 'Air', color: [0.06, 0.06, 0.08], state: 'empty', density: 1.2 },
+    ],
+  },
+  {
+    melt: { temp: 1713, latent: GLASS_FUSION, into: 'MOLTEN_GLASS' },
+    states: [
+      // Dry sand: 0.27 W/m·K (0.25 to 0.35 for dry quartz sand) and 1.3 MJ/m³·K (1,600 kg/m³ at 0.8 kJ/kg·K).
+      // Angle of repose 34° (dry sand 30 to 35°: Wikipedia's table 34°, Dartmouth's engineering notes 35° for dry irregular sand).
+      // Quartz melts at 1,713 °C (cristobalite's melting point) into molten glass, which sets into glass.
+      { key: 'SAND', id: 1, label: 'Sand', color: [0.80, 0.70, 0.48], state: 'powder', density: 1600, conductivity: 0.27, heatCapacity: 1.3, repose: 34,
+        toolbar: 1, category: 'Powders', description: 'Dry grains that fall and pile up into a slope.' },
+    ],
+  },
+  {
+    states: [
+      // The engine's invincible wall and the world's edge, not a real material: it never conducts, so heat never leaves the world.
+      { key: 'WALL', id: 2, label: 'Wall', color: [0.43, 0.45, 0.47], state: 'solid', density: 2500,
+        toolbar: 1, category: 'Solids', description: 'An indestructible barrier: it never moves and holds no heat.' },
+    ],
+  },
+  {
+    melt: { temp: 0, latent: WATER_FUSION },
     // The burst is a flash into steam pushing the air out; tuned in the M6.3c tests (tests/air-burst.test.ts): one cell
     // flashing barely stirs the air, a layer poured onto lava visibly pushes it.
-    above: { temp: 100, becomes: 'STEAM', latent: WATER_VAPORIZATION, burst: WATER_BURST },
-    toolbar: 1,
-    category: 'Liquids',
-    description: 'Flows and levels out; freezes at 0 °C and boils at 100 °C.',
+    boil: { temp: 100, latent: WATER_VAPORIZATION, burst: WATER_BURST },
+    states: [
+      // Water: 0.6 W/m·K and 4.18 MJ/m³·K (4.18 kJ/kg·K at 1,000 kg/m³). Freezes and boils at the physical 0 and 100 °C, with the
+      // latent heats above. Its density by temperature is the handbook's (999.84 kg/m³ at 0 °C, 999.97 at 4, 992.2 at 40, 958.4
+      // at 100) at four points: densest at 4 °C, so a pond under a freezing ceiling stirs until it is 4 °C throughout. Viscosity
+      // 1.0 mPa·s at 20 °C (1.002, handbook).
+      {
+        key: 'WATER',
+        id: 3,
+        label: 'Water',
+        color: [0.18, 0.42, 0.72],
+        state: 'liquid',
+        density: 1000,
+        densityKnots: [[0, 999.8], [4, 1000], [40, 992.2], [100, 958.4]],
+        conductivity: 0.6,
+        heatCapacity: 4.18,
+        viscosity: 0.001,
+        // Its absorption of red, green and blue light (650, 550 and 450 nm) is Pope and Fry's (1997, pure water): 0.340, 0.0565 and
+        // 0.00922 per metre, per cell of CELL_SIZE, plus `WATER_TURBIDITY` on every channel for the particles of natural water
+        // (estimated and chosen by sight: pure water alone only loses its red and green and stays bright blue however deep, while
+        // this turns deep water dark navy). Real water tints a pool a metre deep and barely 17 cm (128 cells), so the finished
+        // look exaggerates the depth by `LOOK.depthScale`.
+        look: {
+          absorption: [(0.340 + WATER_TURBIDITY) * CELL_SIZE, (0.0565 + WATER_TURBIDITY) * CELL_SIZE, (0.00922 + WATER_TURBIDITY) * CELL_SIZE],
+        },
+        toolbar: 1,
+        category: 'Liquids',
+        description: 'Flows and levels out; freezes at 0 °C and boils at 100 °C.',
+      },
+      // Ice: 917 kg/m³, 2.2 W/m·K and 1.9 MJ/m³·K (2.05 kJ/kg·K). No button: Water painted below 0 °C is ice (`paintTarget`), at -20 °C by default. It does not float: a solid never moves.
+      {
+        key: 'ICE',
+        id: 9,
+        label: 'Ice',
+        color: [0.68, 0.86, 0.96],
+        state: 'solid',
+        density: 917,
+        temperature: -20,
+        conductivity: 2.2,
+        heatCapacity: 1.9,
+        // Ice is brittle: 0.1 MPa·√m, the low end of the range measured on ice (0.1 to 0.3 for shelf ice below freezing, Rist et al.
+        // 2002; 0.155 at zero porosity, Rist et al. 1999; read from search abstracts, not the papers), a seventh of glass's. Low
+        // enough that a steam burst or boiling pressure breaks ice into snow, on purpose: ice is the most brittle solid of the table.
+        // A blast breaks it into snow.
+        toughness: 0.1,
+        pressureAbove: { becomes: 'SNOW' },
+        // Thermal shock: Young's modulus 9.3 GPa (remembered, not read from a source) and linear expansion 5.5e-5 per °C (a table
+        // of ice's properties; ice Ih expands strongly with temperature), a limit of about 26 K: ice cracks into snow in water
+        // a few tens of degrees warmer, as it does in a drink.
+        expansion: 5.5e-5,
+        stiffness: 9.3,
+      },
+      // Steam: 0.59 kg/m³ at 100 °C (`densityTemp`; the ideal-gas law gives the rest). A cell is one unit of matter: its capacity is steam's 2.0 kJ/kg·K times the 1,000 kg/m³ of
+      // the water it came from, 2.0 MJ/m³·K, and its conductivity keeps steam's real thermal diffusivity at that capacity:
+      // 0.025 W/m·K / (0.59 kg/m³ × 2.0 kJ/kg·K) = 2.1e-5 m²/s, times 2.0 MJ/m³·K is 42 W/m·K. (Steam's own 0.025 would let
+      // a cell of the water's mass out-stay a cold plate for minutes, where real steam gives its heat up within a second.)
+      // No button: Water painted above 100 °C is steam, at 110 °C by default, just past its condensing point.
+      {
+        key: 'STEAM',
+        id: 10,
+        label: 'Steam',
+        color: [0.84, 0.90, 0.97],
+        state: 'gas',
+        density: 0.59,
+        densityTemp: 100,
+        temperature: 110,
+        conductivity: 42,
+        heatCapacity: 2,
+      },
+      // Snow: what a blast leaves of ice. Settled snow weighs 200 to 500 kg/m³ (300 here); a cell is one unit of matter, so it keeps
+      // ice's heat capacity, 1.9 MJ/m³·K; the bed conducts only about 0.15 W/m·K (0.1 to 0.5 for settled snow, Sturm et al. 1997). It melts at 0 °C into water, with water's
+      // latent heat. Painted at -10 °C, the cold it was made at.
+      {
+        key: 'SNOW',
+        id: 15,
+        label: 'Snow',
+        color: [0.82, 0.86, 0.90],
+        state: 'powder',
+        density: 300,
+        temperature: -10,
+        conductivity: 0.15,
+        heatCapacity: 1.9,
+        repose: 40,
+        toolbar: 3,
+        category: 'Powders',
+        description: 'Light ice crystals: they pile up, and melt into water at 0 °C.',
+      },
+    ],
   },
-  // Combustion gas, the smoke of every fire (backlog I16 keeps what burns and what it leaves). Air-like: the products of a
-  // flame (nitrogen, carbon dioxide, steam) weigh about what air does at the same temperature, 1.2 kg/m³ at 20 °C, so it
-  // rises only while it is hotter than the air around it (`densityAt`, the ideal-gas law) and spreads out once it has
-  // cooled to it. Painted at 150 °C, a warm plume leaving a flame. Heat values are placeholders: 0.04 W/m·K (hot gas) and a
-  // capacity of 1.0 MJ/m³·K as a stand-in per cell (1.1 kJ/kg·K times the ~900 kg/m³ of the oil it mostly comes from).
-  { key: 'SMOKE', id: 4, label: 'Smoke', color: [0.72, 0.72, 0.74], state: 'gas', density: 1.2, temperature: 150, conductivity: 0.04, heatCapacity: 1,
-    toolbar: 1, category: 'Gases', description: 'Gas from fires: it rises while it is warmer than the air, then spreads out.' },
-  // Oil: 0.14 W/m·K (mineral oil 0.13 to 0.15) and 1.7 MJ/m³·K (1.9 kJ/kg·K at 900 kg/m³). It expands by about 7e-4 per K
-  // (mineral oil 6.4e-4 to 7.5e-4): 900 kg/m³ at 20 °C, 775 at 250. Viscosity 0.2 Pa·s at 20 °C (motor oil SAE 10
-  // to 30: 0.1 to 0.3; vegetable oil about 0.06). Catches fire at 250 °C, which is
-  // a stand-in for the flash point of a lamp oil, and burns on its own from there (no latent heat: the fire rule heats the
-  // cell the next dispatch).
   {
-    key: 'OIL',
-    id: 5,
-    label: 'Oil',
-    color: [0.22, 0.16, 0.10],
-    state: 'liquid',
-    density: 900,
-    densityKnots: [[20, 900], [250, 775]],
-    flammable: true,
-    conductivity: 0.14,
-    heatCapacity: 1.7,
-    viscosity: 0.2,
-    // Estimated, not read from a source: a brown oil absorbs blue most and red least, and is nearly opaque (it hides the wall
-    // behind it at 0.9, against water's 0.35).
-    look: { opacity: 0.9, absorption: [0.0001, 0.0002, 0.0004] },
-    above: { temp: 250, becomes: 'FIRE' },
-    toolbar: 2,
-    category: 'Liquids',
-    description: 'A thick liquid that floats on water and catches fire when hot.',
+    states: [
+      // Combustion gas, the smoke of every fire (backlog I16 keeps what burns and what it leaves). Air-like: the products of a
+      // flame (nitrogen, carbon dioxide, steam) weigh about what air does at the same temperature, 1.2 kg/m³ at 20 °C, so it
+      // rises only while it is hotter than the air around it (`densityAt`, the ideal-gas law) and spreads out once it has
+      // cooled to it. Painted at 150 °C, a warm plume leaving a flame. Heat values are placeholders: 0.04 W/m·K (hot gas) and a
+      // capacity of 1.0 MJ/m³·K as a stand-in per cell (1.1 kJ/kg·K times the ~900 kg/m³ of the oil it mostly comes from).
+      { key: 'SMOKE', id: 4, label: 'Smoke', color: [0.72, 0.72, 0.74], state: 'gas', density: 1.2, temperature: 150, conductivity: 0.04, heatCapacity: 1,
+        toolbar: 1, category: 'Gases', description: 'Gas from fires: it rises while it is warmer than the air, then spreads out.' },
+    ],
   },
   {
-    key: 'FIRE',
-    id: 6,
-    label: 'Fire',
-    color: [1.0, 0.72, 0.12],
-    state: 'plasma',
-    density: 0.3,
-    life: { start: 200, decay: 4, becomes: 'SMOKE' },
-    // About the temperature of an open flame.
-    temperature: 1000,
-    // A placeholder, not a material: the gas of a flame conducts about 0.1 W/m·K (air at 1,000 °C: 0.07), and the fire rule
-    // keeps the cell at the flame temperature whatever it gives away, so its capacity (1 as a stand-in per cell) only
-    // sets how fast it heats a neighbor. It lights what it touches through `flammable`, not through this.
-    conductivity: 0.1,
-    heatCapacity: 1,
-   
-    rule: 'fire',
-    graphics: 'fire',
-    toolbar: 1,
-    category: 'Explosives',
-    description: 'A flame: it lights what is flammable beside it, then fades into smoke.',
+    states: [
+      // Oil: 0.14 W/m·K (mineral oil 0.13 to 0.15) and 1.7 MJ/m³·K (1.9 kJ/kg·K at 900 kg/m³). It expands by about 7e-4 per K
+      // (mineral oil 6.4e-4 to 7.5e-4): 900 kg/m³ at 20 °C, 775 at 250. Viscosity 0.2 Pa·s at 20 °C (motor oil SAE 10
+      // to 30: 0.1 to 0.3; vegetable oil about 0.06). Catches fire at 250 °C, which is
+      // a stand-in for the flash point of a lamp oil, and burns on its own from there (no latent heat: the fire rule heats the
+      // cell the next dispatch).
+      {
+        key: 'OIL',
+        id: 5,
+        label: 'Oil',
+        color: [0.22, 0.16, 0.10],
+        state: 'liquid',
+        density: 900,
+        densityKnots: [[20, 900], [250, 775]],
+        flammable: true,
+        conductivity: 0.14,
+        heatCapacity: 1.7,
+        viscosity: 0.2,
+        // Estimated, not read from a source: a brown oil absorbs blue most and red least, and is nearly opaque (it hides the wall
+        // behind it at 0.9, against water's 0.35).
+        look: { opacity: 0.9, absorption: [0.0001, 0.0002, 0.0004] },
+        above: { temp: 250, becomes: 'FIRE' },
+        toolbar: 2,
+        category: 'Liquids',
+        description: 'A thick liquid that floats on water and catches fire when hot.',
+      },
+    ],
   },
-  // Steel-like metal (the key stays METAL): 50 W/m·K (carbon steel 45 to 60; copper's 400 is eight times it) and
-  // 3.5 MJ/m³·K (iron's 0.449 kJ/kg·K at 7,870 kg/m³). Melts at iron's 1,538 °C.
   {
-    key: 'METAL',
-    id: 7,
-    label: 'Steel',
-    color: [0.70, 0.74, 0.80],
-    state: 'solid',
-    density: 7870,
-    conductivity: 50,
-    heatCapacity: 3.5,
-   
-    above: { temp: 1538, becomes: 'MOLTEN_METAL', latent: IRON_FUSION },
-    // A bright, smooth metal: a fainter grain than the solids' default (chosen so its luminance varies by 3 to 12 steps).
-    look: { grain: 0.02 },
-    toolbar: 1,
-    category: 'Metals',
-    description: 'Steel: it carries heat well and melts only at very high temperatures.',
+    states: [
+      {
+        key: 'FIRE',
+        id: 6,
+        label: 'Fire',
+        color: [1.0, 0.72, 0.12],
+        state: 'plasma',
+        density: 0.3,
+        life: { start: 200, decay: 4, becomes: 'SMOKE' },
+        // About the temperature of an open flame.
+        temperature: 1000,
+        // A placeholder, not a material: the gas of a flame conducts about 0.1 W/m·K (air at 1,000 °C: 0.07), and the fire rule
+        // keeps the cell at the flame temperature whatever it gives away, so its capacity (1 as a stand-in per cell) only
+        // sets how fast it heats a neighbor. It lights what it touches through `flammable`, not through this.
+        conductivity: 0.1,
+        heatCapacity: 1,
+        rule: 'fire',
+        graphics: 'fire',
+        toolbar: 1,
+        category: 'Explosives',
+        description: 'A flame: it lights what is flammable beside it, then fades into smoke.',
+      },
+    ],
   },
-  // Basalt, the rock lava really cools into (and the one LAVA's numbers describe): 2,900 kg/m³ (the average of basalt,
-  // 2.9 g/cm³, Wikipedia "Basalt"; granite's 2.7), 2.0 W/m·K (the mean of the 1962 to 1986 measurements, 1.96, Natural Resources
-  // Canada's geothermal service report) and 2.4 MJ/m³·K (0.82 kJ/kg·K, measured on basalt glass at 40 °C, Wang et al., PMC7409246,
-  // rising with temperature: the table keeps one value). Melts into lava at 1,200 °C, the liquidus of basalt ("near or above
-  // 1200 °C", Wikipedia "Basalt") and LAVA's setting point, taking rock's physical latent heat (see LAVA).
   {
-    key: 'STONE',
-    id: 8,
-    label: 'Basalt',
-    color: [0.52, 0.46, 0.40],
-    state: 'solid',
-    density: 2900,
-    conductivity: 2,
-    heatCapacity: 2.4,
-    above: { temp: 1200, becomes: 'LAVA', latent: LAVA_LATENT },
-    // Crushed rock: a blast turns basalt into gravel above the pressure its fracture toughness gives. 1.7 MPa·√m is the scale's
-    // anchor (`PRESSURE_PER_TOUGHNESS`), inside the 1.4 to 3.8 measured on igneous rocks at pressure (basalt in the open air
-    // reads 0.6 to 1.3, porosity lowering it); tuned in tests/air-crush.test.ts so that a gunpowder charge of about 50 cells
-    // crushes the basalt within about 15 cells.
-    toughness: STONE_TOUGHNESS,
-    pressureAbove: { becomes: 'GRAVEL' },
-    // Thermal shock: Young's modulus 80 GPa and linear expansion 4.5e-6 per °C, the middles of the ranges listed for basalt
-    // (60 to 100 GPa, 2.5 to 6e-6; spotmaterial.com, an unreferenced database), so basalt cracks at about 620 K against a neighbor.
-    expansion: 4.5e-6,
-    stiffness: 80,
-    toolbar: 2,
-    category: 'Solids',
-    description: 'Heavy volcanic rock that melts into lava when very hot and breaks into gravel in a blast.',
+    melt: { temp: 1538, latent: IRON_FUSION },
+    states: [
+      // Steel-like metal (the key stays METAL): 50 W/m·K (carbon steel 45 to 60; copper's 400 is eight times it) and
+      // 3.5 MJ/m³·K (iron's 0.449 kJ/kg·K at 7,870 kg/m³). Melts at iron's 1,538 °C.
+      {
+        key: 'METAL',
+        id: 7,
+        label: 'Steel',
+        color: [0.70, 0.74, 0.80],
+        state: 'solid',
+        density: 7870,
+        conductivity: 50,
+        heatCapacity: 3.5,
+        // A bright, smooth metal: a fainter grain than the solids' default (chosen so its luminance varies by 3 to 12 steps).
+        look: { grain: 0.02 },
+        toolbar: 1,
+        category: 'Metals',
+        description: 'Steel: it carries heat well and melts only at very high temperatures.',
+      },
+      // Molten steel: 7,000 kg/m³, painted at 1,600 °C, sets back into METAL at 1,538. Liquid iron conducts about 35 W/m·K and
+      // holds 5.7 MJ/m³·K (0.82 kJ/kg·K). Its density falls by about 0.83 kg/m³ per K from 7,000 at the melting point. Viscosity
+      // 6 mPa·s (liquid iron, 5 to 7 mPa·s near its melting point). No button: Metal painted above 1,538 °C is molten steel, at 1,600 °C by default.
+      // Its color is orange pulled toward steel's and darkened, as lava's is (see LAVA).
+      {
+        key: 'MOLTEN_METAL',
+        id: 12,
+        label: 'Molten steel',
+        color: [0.533, 0.45, 0.385],
+        state: 'liquid',
+        density: 7000,
+        densityKnots: [[1538, 7000], [1700, 6866]],
+        temperature: 1600,
+        conductivity: 35,
+        heatCapacity: 5.7,
+        viscosity: 0.006,
+        look: { opacity: 1 },
+      },
+    ],
   },
-  // Ice: 917 kg/m³, 2.2 W/m·K and 1.9 MJ/m³·K (2.05 kJ/kg·K). No button: Water painted below 0 °C is ice (`paintTarget`), at -20 °C by default. It does not float: a solid never moves.
   {
-    key: 'ICE',
-    id: 9,
-    label: 'Ice',
-    color: [0.68, 0.86, 0.96],
-    state: 'solid',
-    density: 917,
-    temperature: -20,
-    conductivity: 2.2,
-    heatCapacity: 1.9,
-   
-    above: { temp: 0, becomes: 'WATER', latent: WATER_FUSION },
-    // Ice is brittle: 0.1 MPa·√m, the low end of the range measured on ice (0.1 to 0.3 for shelf ice below freezing, Rist et al.
-    // 2002; 0.155 at zero porosity, Rist et al. 1999; read from search abstracts, not the papers), a seventh of glass's. Low
-    // enough that a steam burst or boiling pressure breaks ice into snow, on purpose: ice is the most brittle solid of the table.
-    // A blast breaks it into snow.
-    toughness: 0.1,
-    pressureAbove: { becomes: 'SNOW' },
-    // Thermal shock: Young's modulus 9.3 GPa (remembered, not read from a source) and linear expansion 5.5e-5 per °C (a table
-    // of ice's properties; ice Ih expands strongly with temperature), a limit of about 26 K: ice cracks into snow in water
-    // a few tens of degrees warmer, as it does in a drink.
-    expansion: 5.5e-5,
-    stiffness: 9.3,
+    melt: { temp: 1200, latent: LAVA_LATENT },
+    states: [
+      // Basalt, the rock lava really cools into (and the one LAVA's numbers describe): 2,900 kg/m³ (the average of basalt,
+      // 2.9 g/cm³, Wikipedia "Basalt"; granite's 2.7), 2.0 W/m·K (the mean of the 1962 to 1986 measurements, 1.96, Natural Resources
+      // Canada's geothermal service report) and 2.4 MJ/m³·K (0.82 kJ/kg·K, measured on basalt glass at 40 °C, Wang et al., PMC7409246,
+      // rising with temperature: the table keeps one value). Melts into lava at 1,200 °C, the liquidus of basalt ("near or above
+      // 1200 °C", Wikipedia "Basalt") and LAVA's setting point, taking rock's physical latent heat (see LAVA).
+      {
+        key: 'STONE',
+        id: 8,
+        label: 'Basalt',
+        color: [0.52, 0.46, 0.40],
+        state: 'solid',
+        density: 2900,
+        conductivity: 2,
+        heatCapacity: 2.4,
+        // Crushed rock: a blast turns basalt into gravel above the pressure its fracture toughness gives. 1.7 MPa·√m is the scale's
+        // anchor (`PRESSURE_PER_TOUGHNESS`), inside the 1.4 to 3.8 measured on igneous rocks at pressure (basalt in the open air
+        // reads 0.6 to 1.3, porosity lowering it); tuned in tests/air-crush.test.ts so that a gunpowder charge of about 50 cells
+        // crushes the basalt within about 15 cells.
+        toughness: STONE_TOUGHNESS,
+        pressureAbove: { becomes: 'GRAVEL' },
+        // Thermal shock: Young's modulus 80 GPa and linear expansion 4.5e-6 per °C, the middles of the ranges listed for basalt
+        // (60 to 100 GPa, 2.5 to 6e-6; spotmaterial.com, an unreferenced database), so basalt cracks at about 620 K against a neighbor.
+        expansion: 4.5e-6,
+        stiffness: 80,
+        toolbar: 2,
+        category: 'Solids',
+        description: 'Heavy volcanic rock that melts into lava when very hot and breaks into gravel in a blast.',
+      },
+      // Gravel: crushed basalt (what a blast leaves of basalt). Loose dry gravel weighs 1,500 to 1,900 kg/m³ (1,800 here).
+      // A cell is one unit of matter whatever its form, so a crushed cell keeps its parent's heat capacity, basalt's 2.4 MJ/m³·K
+      // (a crush then keeps the temperature and the latent heats match); a loose dry bed of coarse stones conducts only about 0.4 W/m·K
+      // (estimated, not read from a source). Angle of repose 38°: estimated, angular crushed stone stands at 35 to 45°. It melts into the same lava as basalt,
+      // which sets into basalt, with basalt's melting point and latent heat.
+      {
+        key: 'GRAVEL',
+        id: 14,
+        label: 'Gravel',
+        color: [0.45, 0.43, 0.41],
+        state: 'powder',
+        density: 1800,
+        conductivity: 0.4,
+        heatCapacity: 2.4,
+        repose: 38,
+        toolbar: 2,
+        category: 'Powders',
+        description: 'Loose broken rock: a blast leaves it where basalt was; it melts into lava.',
+      },
+      // Lava is molten stone: liquid stone at 2,700 kg/m³, painted at 1,300 °C and setting at 1,200. Its latent heat is rock's
+      // physical one: about 450 kJ/kg (basalt) at 2,700 kg/m³ is 1,200 MJ/m³. It is what keeps a pile of lava flowing in open
+      // air for a while. Molten basalt conducts about 1 W/m·K and holds 4.0 MJ/m³·K (1.5 kJ/kg·K). It is basalt's and gravel's
+      // liquid. Molten silicate expands by about 4e-5 per K: 2,700 kg/m³ at 1,200 °C, 2,668 at 1,500.
+      // Viscosity 30 Pa·s, the middle of basaltic lava at eruption temperatures (10 to 100 Pa·s). No button: Stone painted above 1,200 °C
+      // is lava, at 1,300 °C by default. Its color is a red-orange pulled toward basalt's and darkened (mix 0.6, times 0.65), like
+      // the liquids of the other materials, so the solid it came from shows through and the glow of its temperature, added after, makes it brighter as it heats.
+      {
+        key: 'LAVA',
+        id: 11,
+        label: 'Lava',
+        color: [0.442, 0.263, 0.172],
+        state: 'liquid',
+        density: 2700,
+        densityKnots: [[1200, 2700], [1500, 2668]],
+        temperature: 1300,
+        conductivity: 1,
+        heatCapacity: 4,
+        viscosity: 30,
+        // Opaque: it hides the wall and casts a shadow like rock, and it shines on its own, so it takes no depth tint.
+        look: { opacity: 1 },
+      },
+    ],
   },
-  // Steam: 0.59 kg/m³ at 100 °C (`densityTemp`; the ideal-gas law gives the rest). A cell is one unit of matter: its capacity is steam's 2.0 kJ/kg·K times the 1,000 kg/m³ of
-  // the water it came from, 2.0 MJ/m³·K, and its conductivity keeps steam's real thermal diffusivity at that capacity:
-  // 0.025 W/m·K / (0.59 kg/m³ × 2.0 kJ/kg·K) = 2.1e-5 m²/s, times 2.0 MJ/m³·K is 42 W/m·K. (Steam's own 0.025 would let
-  // a cell of the water's mass out-stay a cold plate for minutes, where real steam gives its heat up within a second.)
-  // No button: Water painted above 100 °C is steam, at 110 °C by default, just past its condensing point.
   {
-    key: 'STEAM',
-    id: 10,
-    label: 'Steam',
-    color: [0.84, 0.90, 0.97],
-    state: 'gas',
-    density: 0.59,
-    densityTemp: 100,
-    temperature: 110,
-    conductivity: 42,
-    heatCapacity: 2,
-   
-    below: { temp: 100, becomes: 'WATER', latent: WATER_VAPORIZATION },
+    states: [
+      // Black powder: grains of 1.7 to 1.82 g/cm³ (safety data sheets; 1,700 kg/m³ here, so it sinks through sand and water),
+      // catches fire at about 427 °C (the safety data sheets give 200 to 464 °C, ignition in 5 s at 427). Its conductivity and
+      // capacity are estimates, not read from a source: a loose powder conducts like dry sand or a little less (0.2 W/m·K), and
+      // a capacity of about 0.8 kJ/kg·K at 1,700 kg/m³ gives 1.4 MJ/m³·K. It burns into FIRE, by heat or by touching fire
+      // (flammable), and releases `burst` into the air as each cell goes: a charge of about 50 cells is a blast that throws the
+      // sand over it (tuned against the `explosion` scene, tests/air-burst.test.ts).
+      // Angle of repose 30°: an estimate, not read from a source (glazed, rounded grains flow freely, like dry sand's 30 to 35°).
+      {
+        key: 'GUNPOWDER',
+        id: 13,
+        label: 'Gunpowder',
+        color: [0.24, 0.24, 0.27],
+        state: 'powder',
+        density: 1700,
+        flammable: true,
+        conductivity: 0.2,
+        heatCapacity: 1.4,
+        repose: 30,
+        above: { temp: 427, becomes: 'FIRE', burst: GUNPOWDER_BURST },
+        // A dark powder: the same share of a dark color is too few steps to see, so its grain is stronger than the powders' default.
+        look: { grain: 0.25 },
+        toolbar: 2,
+        category: 'Explosives',
+        description: 'Black powder: it catches fire when hot and goes off with a blast.',
+      },
+    ],
   },
-  // Lava is molten stone: liquid stone at 2,700 kg/m³, painted at 1,300 °C and setting at 1,200. Its latent heat is rock's
-  // physical one: about 450 kJ/kg (basalt) at 2,700 kg/m³ is 1,200 MJ/m³. It is what keeps a pile of lava flowing in open
-  // air for a while. Molten basalt conducts about 1 W/m·K and holds 4.0 MJ/m³·K (1.5 kJ/kg·K). It is basalt's and gravel's
-  // liquid. Molten silicate expands by about 4e-5 per K: 2,700 kg/m³ at 1,200 °C, 2,668 at 1,500.
-  // Viscosity 30 Pa·s, the middle of basaltic lava at eruption temperatures (10 to 100 Pa·s). No button: Stone painted above 1,200 °C
-  // is lava, at 1,300 °C by default. Its color is a red-orange pulled toward basalt's and darkened (mix 0.6, times 0.65), like
-  // the liquids of the other materials, so the solid it came from shows through and the glow of its temperature, added after, makes it brighter as it heats.
   {
-    key: 'LAVA',
-    id: 11,
-    label: 'Lava',
-    color: [0.442, 0.263, 0.172],
-    state: 'liquid',
-    density: 2700,
-    densityKnots: [[1200, 2700], [1500, 2668]],
-    temperature: 1300,
-    conductivity: 1,
-    heatCapacity: 4,
-    viscosity: 30,
-    // Opaque: it hides the wall and casts a shadow like rock, and it shines on its own, so it takes no depth tint.
-    look: { opacity: 1 },
-    below: { temp: 1200, becomes: 'STONE', latent: LAVA_LATENT },
+    melt: { temp: 1400, latent: GLASS_FUSION },
+    states: [
+      // Soda-lime glass: 2,500 kg/m³, 1.0 W/m·K (window glass 0.8 to 1.0) and 2.1 MJ/m³·K (0.84 kJ/kg·K). Fracture toughness 0.74
+      // MPa·√m (soda-lime-silica glass in mode I), so a blast breaks it a good deal farther out than basalt. Real glass softens
+      // over a range with no sharp melting point; the table melts it at 1,400 °C, the melting range of a furnace (1,400 to 1,500),
+      // into the molten glass that sand makes at 1,713 °C, and takes silica's latent heat. Transparent: the finished look draws it over the wall behind it at opacity 0.4 (a lighter shadow too) and it has hardly any grain.
+      {
+        key: 'GLASS',
+        id: 17,
+        label: 'Glass',
+        color: [0.55, 0.80, 0.82],
+        state: 'solid',
+        density: 2500,
+        conductivity: 1,
+        heatCapacity: 2.1,
+        toughness: GLASS_TOUGHNESS,
+        pressureAbove: { becomes: 'BROKEN_GLASS' },
+        // Thermal shock: E 72 GPa and linear expansion 9e-6 per °C, and the critical quench of 150 K the shock scale is anchored on
+        // (`GLASS_QUENCH`; all from Malou et al. 2011, Ceramics-Silikaty 55(3)): hot glass splashed with cold water breaks.
+        expansion: GLASS_EXPANSION,
+        stiffness: GLASS_STIFFNESS,
+        look: { opacity: 0.4, grain: 0.01 },
+        toolbar: 3,
+        category: 'Solids',
+        description: 'Clear, brittle and hard: a blast shatters it; it melts into glass when very hot, and sand does too.',
+      },
+      // Broken glass (cullet): what a blast leaves of glass. Loose cullet weighs about 1,400 kg/m³ and, a cell being one unit of matter,
+      // keeps glass's heat capacity, 2.1 MJ/m³·K; a loose bed of shards conducts about 0.3 W/m·K and stands at about 38° (both estimated,
+      // not read from a source).
+      // It melts into the molten glass that glass does, at glass's temperature and latent heat.
+      {
+        key: 'BROKEN_GLASS',
+        id: 16,
+        label: 'Broken glass',
+        color: [0.62, 0.82, 0.84],
+        state: 'powder',
+        density: 1400,
+        conductivity: 0.3,
+        heatCapacity: 2.1,
+        repose: 38,
+        toolbar: 4,
+        category: 'Powders',
+        description: 'Sharp glass shards: a blast leaves them where glass was; they melt into glass.',
+      },
+      // Molten glass: lava's values with its density scaled to the solid's 2,500 kg/m³ (and its viscosity with it, so the spread keeps
+      // its pace) and its color pulled toward the solid's and darkened. Glass, broken glass and sand melt into it; it sets into glass at 1,400 °C. No button: painted above its melting point it is what the
+      // solid becomes, at 1,500 °C by default. Estimated, not read from a source: M12.14d gives it its own data.
+      {
+        key: 'MOLTEN_GLASS',
+        id: 41,
+        label: 'Molten glass',
+        color: [0.454, 0.395, 0.335],
+        state: 'liquid',
+        density: 2500,
+        densityKnots: [[1200, 2500], [1500, 2470.37]],
+        temperature: 1500,
+        conductivity: 1,
+        heatCapacity: 4,
+        viscosity: 27.7777777778,
+        look: { opacity: 1 },
+      },
+    ],
   },
-  // Molten steel: 7,000 kg/m³, painted at 1,600 °C, sets back into METAL at 1,538. Liquid iron conducts about 35 W/m·K and
-  // holds 5.7 MJ/m³·K (0.82 kJ/kg·K). Its density falls by about 0.83 kg/m³ per K from 7,000 at the melting point. Viscosity
-  // 6 mPa·s (liquid iron, 5 to 7 mPa·s near its melting point). No button: Metal painted above 1,538 °C is molten steel, at 1,600 °C by default.
-  // Its color is orange pulled toward steel's and darkened, as lava's is (see LAVA).
   {
-    key: 'MOLTEN_METAL',
-    id: 12,
-    label: 'Molten steel',
-    color: [0.533, 0.45, 0.385],
-    state: 'liquid',
-    density: 7000,
-    densityKnots: [[1538, 7000], [1700, 6866]],
-    temperature: 1600,
-    conductivity: 35,
-    heatCapacity: 5.7,
-    viscosity: 0.006,
-    look: { opacity: 1 },
-    below: { temp: 1538, becomes: 'METAL', latent: IRON_FUSION },
+    states: [
+      // Fired clay brick: 1,900 kg/m³ (common brick 1,800 to 2,000), 0.7 W/m·K (0.6 to 1.0) and 1.6 MJ/m³·K (0.84 kJ/kg·K). Its
+      // toughness is 1.0 MPa·√m, estimated (not read from a source: fired clay is brittle, concrete reads 0.2 to 1.4). It has no melting
+      // point in the table: fired clay holds past 1,600 °C, beyond what lava reaches.
+      {
+        key: 'BRICK',
+        id: 18,
+        label: 'Brick',
+        color: [0.62, 0.27, 0.18],
+        state: 'solid',
+        density: 1900,
+        conductivity: 0.7,
+        heatCapacity: 1.6,
+        toughness: 1,
+        pressureAbove: { becomes: 'BRICK_RUBBLE' },
+        // Thermal shock: Young's modulus 10 GPa (9.3 measured on brick clay fired at 1,100 °C, 10 to 35 for masonry bricks; porosity
+        // lowers it) and linear expansion 5.5e-6 per °C (4.5 to 6.5 for fired clay bricks), which with the shared flaw size give a
+        // limit of about 2,400 K: no temperature the game reaches. The model overstates a brick's strength (a real brick carries far
+        // larger flaws than glass), so the figure is a bound, not a measurement.
+        expansion: 5.5e-6,
+        stiffness: 10,
+        toolbar: 4,
+        category: 'Solids',
+        description: 'Fired clay: it shrugs off lava and breaks into brick rubble in a blast.',
+      },
+      // Brick rubble: what a blast leaves of brick. Loose crushed brick weighs about 1,200 kg/m³ (1,100 to 1,400, an estimate: the
+      // solid is 1,900). A cell is one unit of matter whatever its form, so it keeps brick's heat capacity, 1.6 MJ/m³·K; a loose bed
+      // conducts about 0.3 W/m·K and stands at about 38° (both estimated, not read from a source; M12.14d sources them). It has no
+      // melting point, as brick has none: fired clay holds past what lava reaches.
+      {
+        key: 'BRICK_RUBBLE',
+        id: 44,
+        label: 'Brick rubble',
+        color: [0.55, 0.28, 0.2],
+        state: 'powder',
+        density: 1200,
+        conductivity: 0.3,
+        heatCapacity: 1.6,
+        repose: 38,
+        toolbar: 6,
+        category: 'Powders',
+        description: 'Crushed brick: a blast leaves it where brick was; it never melts.',
+      },
+    ],
   },
-  // Black powder: grains of 1.7 to 1.82 g/cm³ (safety data sheets; 1,700 kg/m³ here, so it sinks through sand and water),
-  // catches fire at about 427 °C (the safety data sheets give 200 to 464 °C, ignition in 5 s at 427). Its conductivity and
-  // capacity are estimates, not read from a source: a loose powder conducts like dry sand or a little less (0.2 W/m·K), and
-  // a capacity of about 0.8 kJ/kg·K at 1,700 kg/m³ gives 1.4 MJ/m³·K. It burns into FIRE, by heat or by touching fire
-  // (flammable), and releases `burst` into the air as each cell goes: a charge of about 50 cells is a blast that throws the
-  // sand over it (tuned against the `explosion` scene, tests/air-burst.test.ts).
-  // Angle of repose 30°: an estimate, not read from a source (glazed, rounded grains flow freely, like dry sand's 30 to 35°).
   {
-    key: 'GUNPOWDER',
-    id: 13,
-    label: 'Gunpowder',
-    color: [0.24, 0.24, 0.27],
-    state: 'powder',
-    density: 1700,
-    flammable: true,
-    conductivity: 0.2,
-    heatCapacity: 1.4,
-    repose: 30,
-   
-    above: { temp: 427, becomes: 'FIRE', burst: GUNPOWDER_BURST },
-    // A dark powder: the same share of a dark color is too few steps to see, so its grain is stronger than the powders' default.
-    look: { grain: 0.25 },
-    toolbar: 2,
-    category: 'Explosives',
-    description: 'Black powder: it catches fire when hot and goes off with a blast.',
+    melt: { temp: 660, latent: ALUMINIUM_FUSION },
+    states: [
+      // Aluminium: 2,700 kg/m³, 237 W/m·K and 2.42 MJ/m³·K (0.897 kJ/kg·K), melting at 660.3 °C (CRC Handbook; Wikipedia, List of
+      // thermal conductivities). Melts into molten aluminium that sets back, far below steel's 1,538 °C.
+      {
+        key: 'ALUMINIUM',
+        id: 19,
+        label: 'Aluminium',
+        color: [0.78, 0.80, 0.83],
+        state: 'solid',
+        density: 2700,
+        conductivity: 237,
+        heatCapacity: 2.42,
+        look: { grain: 0.02 },
+        toolbar: 2,
+        category: 'Metals',
+        description: 'Light silvery metal: it carries heat almost as well as copper and melts at 660 °C.',
+      },
+      // Molten aluminium: molten steel's values with its density scaled to the solid's 2,700 kg/m³ (and its viscosity with it, so the
+      // spread keeps its pace) and its color pulled toward the solid's and darkened. Sets back into aluminium at 660 °C. No button: aluminium
+      // painted above 660 °C is molten aluminium, at 1,600 °C by default. Estimated, not read from a source: M12.14d gives it its own data.
+      {
+        key: 'MOLTEN_ALUMINIUM',
+        id: 36,
+        label: 'Molten aluminium',
+        color: [0.564, 0.473, 0.397],
+        state: 'liquid',
+        density: 2700,
+        densityKnots: [[1538, 2700], [1700, 2648.31]],
+        temperature: 1600,
+        conductivity: 35,
+        heatCapacity: 5.7,
+        viscosity: 0.0023142857,
+        look: { opacity: 1 },
+      },
+    ],
   },
-  // Gravel: crushed basalt (what a blast leaves of basalt). Loose dry gravel weighs 1,500 to 1,900 kg/m³ (1,800 here).
-  // A cell is one unit of matter whatever its form, so a crushed cell keeps its parent's heat capacity, basalt's 2.4 MJ/m³·K
-  // (a crush then keeps the temperature and the latent heats match); a loose dry bed of coarse stones conducts only about 0.4 W/m·K
-  // (estimated, not read from a source). Angle of repose 38°: estimated, angular crushed stone stands at 35 to 45°. It melts into the same lava as basalt,
-  // which sets into basalt, with basalt's melting point and latent heat.
   {
-    key: 'GRAVEL',
-    id: 14,
-    label: 'Gravel',
-    color: [0.45, 0.43, 0.41],
-    state: 'powder',
-    density: 1800,
-    conductivity: 0.4,
-    heatCapacity: 2.4,
-    repose: 38,
-    above: { temp: 1200, becomes: 'LAVA', latent: LAVA_LATENT },
-    toolbar: 2,
-    category: 'Powders',
-    description: 'Loose broken rock: a blast leaves it where basalt was; it melts into lava.',
+    melt: { temp: 1085, latent: COPPER_FUSION },
+    states: [
+      // Copper: 8,960 kg/m³, 401 W/m·K and 3.45 MJ/m³·K (0.385 kJ/kg·K), melting at 1,084.6 °C (CRC Handbook).
+      {
+        key: 'COPPER',
+        id: 20,
+        label: 'Copper',
+        color: [0.80, 0.38, 0.20],
+        state: 'solid',
+        density: 8960,
+        conductivity: 401,
+        heatCapacity: 3.45,
+        look: { grain: 0.02 },
+        toolbar: 3,
+        category: 'Metals',
+        description: 'Reddish metal that carries heat about eight times better than steel and melts at 1,085 °C.',
+      },
+      // Molten copper: molten steel's values with its density scaled to the solid's 8,960 kg/m³ (and its viscosity with it, so the
+      // spread keeps its pace) and its color pulled toward the solid's and darkened. Sets back into copper at 1,085 °C. No button: copper
+      // painted above 1,085 °C is molten copper, at 1,600 °C by default. Estimated, not read from a source: M12.14d gives it its own data.
+      {
+        key: 'MOLTEN_COPPER',
+        id: 37,
+        label: 'Molten copper',
+        color: [0.572, 0.309, 0.151],
+        state: 'liquid',
+        density: 8960,
+        densityKnots: [[1538, 8960], [1700, 8788.48]],
+        temperature: 1600,
+        conductivity: 35,
+        heatCapacity: 5.7,
+        viscosity: 0.00768,
+        look: { opacity: 1 },
+      },
+    ],
   },
-  // Snow: what a blast leaves of ice. Settled snow weighs 200 to 500 kg/m³ (300 here); a cell is one unit of matter, so it keeps
-  // ice's heat capacity, 1.9 MJ/m³·K; the bed conducts only about 0.15 W/m·K (0.1 to 0.5 for settled snow, Sturm et al. 1997). It melts at 0 °C into water, with water's
-  // latent heat. Painted at -10 °C, the cold it was made at.
   {
-    key: 'SNOW',
-    id: 15,
-    label: 'Snow',
-    color: [0.82, 0.86, 0.90],
-    state: 'powder',
-    density: 300,
-    temperature: -10,
-    conductivity: 0.15,
-    heatCapacity: 1.9,
-    repose: 40,
-    above: { temp: 0, becomes: 'WATER', latent: WATER_FUSION },
-    toolbar: 3,
-    category: 'Powders',
-    description: 'Light ice crystals: they pile up, and melt into water at 0 °C.',
+    melt: { temp: 1064, latent: GOLD_FUSION },
+    states: [
+      // Gold: 19,300 kg/m³, 318 W/m·K and 2.49 MJ/m³·K (0.129 kJ/kg·K), melting at 1,064.2 °C (CRC Handbook). As dense as tungsten, nearly
+      // three times as dense as steel: a molten cell of it sinks under molten steel.
+      {
+        key: 'GOLD',
+        id: 21,
+        label: 'Gold',
+        color: [0.95, 0.72, 0.15],
+        state: 'solid',
+        density: 19300,
+        conductivity: 318,
+        heatCapacity: 2.49,
+        look: { grain: 0.02 },
+        toolbar: 4,
+        category: 'Metals',
+        description: 'Very heavy yellow metal that carries heat well and melts at 1,064 °C; molten, it sinks under molten steel.',
+      },
+      // Molten gold: molten steel's values with its density scaled to the solid's 19,300 kg/m³ (and its viscosity with it, so the
+      // spread keeps its pace) and its color pulled toward the solid's and darkened. Sets back into gold at 1,064 °C. No button: gold
+      // painted above 1,064 °C is molten gold, at 1,600 °C by default. Estimated, not read from a source: M12.14d gives it its own data.
+      {
+        key: 'MOLTEN_GOLD',
+        id: 38,
+        label: 'Molten gold',
+        color: [0.63, 0.442, 0.131],
+        state: 'liquid',
+        density: 19300,
+        densityKnots: [[1538, 19300], [1700, 18930.54]],
+        temperature: 1600,
+        conductivity: 35,
+        heatCapacity: 5.7,
+        viscosity: 0.0165428571,
+        look: { opacity: 1 },
+      },
+    ],
   },
-  // Broken glass (cullet): what a blast leaves of glass. Loose cullet weighs about 1,400 kg/m³ and, a cell being one unit of matter,
-  // keeps glass's heat capacity, 2.1 MJ/m³·K; a loose bed of shards conducts about 0.3 W/m·K and stands at about 38° (both estimated,
-  // not read from a source).
-  // It melts into the molten glass that glass does, at glass's temperature and latent heat.
   {
-    key: 'BROKEN_GLASS',
-    id: 16,
-    label: 'Broken glass',
-    color: [0.62, 0.82, 0.84],
-    state: 'powder',
-    density: 1400,
-    conductivity: 0.3,
-    heatCapacity: 2.1,
-    repose: 38,
-    above: { temp: 1400, becomes: 'MOLTEN_GLASS', latent: GLASS_FUSION },
-    toolbar: 4,
-    category: 'Powders',
-    description: 'Sharp glass shards: a blast leaves them where glass was; they melt into glass.',
+    melt: { temp: 1668, latent: TITANIUM_FUSION },
+    states: [
+      // Titanium: 4,506 kg/m³, 21.9 W/m·K and 2.36 MJ/m³·K (0.523 kJ/kg·K), melting at 1,668 °C (CRC Handbook; a poorer conductor than steel).
+      {
+        key: 'TITANIUM',
+        id: 22,
+        label: 'Titanium',
+        color: [0.55, 0.57, 0.62],
+        state: 'solid',
+        density: 4506,
+        conductivity: 21.9,
+        heatCapacity: 2.36,
+        look: { grain: 0.02 },
+        toolbar: 5,
+        category: 'Metals',
+        description: 'Strong, light metal that carries heat worse than steel and melts at 1,668 °C.',
+      },
+      // Molten titanium: molten steel's values with its density scaled to the solid's 4,506 kg/m³ (and its viscosity with it, so the
+      // spread keeps its pace) and its color pulled toward the solid's and darkened. Sets back into titanium at 1,668 °C. No button: titanium
+      // painted above 1,668 °C is molten titanium, at 1,768 °C by default. Estimated, not read from a source: M12.14d gives it its own data.
+      {
+        key: 'MOLTEN_TITANIUM',
+        id: 39,
+        label: 'Molten titanium',
+        color: [0.474, 0.384, 0.315],
+        state: 'liquid',
+        density: 4506,
+        densityKnots: [[1538, 4506], [1700, 4419.74]],
+        temperature: 1768,
+        conductivity: 35,
+        heatCapacity: 5.7,
+        viscosity: 0.0038622857,
+        look: { opacity: 1 },
+      },
+    ],
   },
-  // Soda-lime glass: 2,500 kg/m³, 1.0 W/m·K (window glass 0.8 to 1.0) and 2.1 MJ/m³·K (0.84 kJ/kg·K). Fracture toughness 0.74
-  // MPa·√m (soda-lime-silica glass in mode I), so a blast breaks it a good deal farther out than basalt. Real glass softens
-  // over a range with no sharp melting point; the table melts it at 1,400 °C, the melting range of a furnace (1,400 to 1,500),
-  // into the molten glass that sand makes at 1,713 °C, and takes silica's latent heat. Transparent: the finished look draws it over the wall behind it at opacity 0.4 (a lighter shadow too) and it has hardly any grain.
   {
-    key: 'GLASS',
-    id: 17,
-    label: 'Glass',
-    color: [0.55, 0.80, 0.82],
-    state: 'solid',
-    density: 2500,
-    conductivity: 1,
-    heatCapacity: 2.1,
-    above: { temp: 1400, becomes: 'MOLTEN_GLASS', latent: GLASS_FUSION },
-    toughness: GLASS_TOUGHNESS,
-    pressureAbove: { becomes: 'BROKEN_GLASS' },
-    // Thermal shock: E 72 GPa and linear expansion 9e-6 per °C, and the critical quench of 150 K the shock scale is anchored on
-    // (`GLASS_QUENCH`; all from Malou et al. 2011, Ceramics-Silikaty 55(3)): hot glass splashed with cold water breaks.
-    expansion: GLASS_EXPANSION,
-    stiffness: GLASS_STIFFNESS,
-    look: { opacity: 0.4, grain: 0.01 },
-    toolbar: 3,
-    category: 'Solids',
-    description: 'Clear, brittle and hard: a blast shatters it; it melts into glass when very hot, and sand does too.',
+    melt: { temp: 3422, latent: TUNGSTEN_FUSION },
+    states: [
+      // Tungsten: 19,300 kg/m³, 173 W/m·K and 2.55 MJ/m³·K (0.132 kJ/kg·K), melting at 3,422 °C (CRC Handbook), the highest of any metal.
+      {
+        key: 'TUNGSTEN',
+        id: 23,
+        label: 'Tungsten',
+        color: [0.36, 0.37, 0.40],
+        state: 'solid',
+        density: 19300,
+        conductivity: 173,
+        heatCapacity: 2.55,
+        look: { grain: 0.02 },
+        toolbar: 6,
+        category: 'Metals',
+        description: 'Dark, very heavy metal that melts only at 3,422 °C, higher than any other metal.',
+      },
+      // Molten tungsten: molten steel's values with its density scaled to the solid's 19,300 kg/m³ (and its viscosity with it, so the
+      // spread keeps its pace) and its color pulled toward the solid's and darkened. Sets back into tungsten at 3,422 °C. No button: tungsten
+      // painted above 3,422 °C is molten tungsten, at 3,522 °C by default. Estimated, not read from a source: M12.14d gives it its own data.
+      {
+        key: 'MOLTEN_TUNGSTEN',
+        id: 40,
+        label: 'Molten tungsten',
+        color: [0.4, 0.305, 0.229],
+        state: 'liquid',
+        density: 19300,
+        densityKnots: [[1538, 19300], [1700, 18930.54]],
+        temperature: 3522,
+        conductivity: 35,
+        heatCapacity: 5.7,
+        viscosity: 0.0165428571,
+        look: { opacity: 1 },
+      },
+    ],
   },
-  // Fired clay brick: 1,900 kg/m³ (common brick 1,800 to 2,000), 0.7 W/m·K (0.6 to 1.0) and 1.6 MJ/m³·K (0.84 kJ/kg·K). Its
-  // toughness is 1.0 MPa·√m, estimated (not read from a source: fired clay is brittle, concrete reads 0.2 to 1.4). It has no melting
-  // point in the table: fired clay holds past 1,600 °C, beyond what lava reaches.
   {
-    key: 'BRICK',
-    id: 18,
-    label: 'Brick',
-    color: [0.62, 0.27, 0.18],
-    state: 'solid',
-    density: 1900,
-    conductivity: 0.7,
-    heatCapacity: 1.6,
-    toughness: 1,
-    pressureAbove: { becomes: 'BRICK_RUBBLE' },
-    // Thermal shock: Young's modulus 10 GPa (9.3 measured on brick clay fired at 1,100 °C, 10 to 35 for masonry bricks; porosity
-    // lowers it) and linear expansion 5.5e-6 per °C (4.5 to 6.5 for fired clay bricks), which with the shared flaw size give a
-    // limit of about 2,400 K: no temperature the game reaches. The model overstates a brick's strength (a real brick carries far
-    // larger flaws than glass), so the figure is a bound, not a measurement.
-    expansion: 5.5e-6,
-    stiffness: 10,
-    toolbar: 4,
-    category: 'Solids',
-    description: 'Fired clay: it shrugs off lava and breaks into brick rubble in a blast.',
+    melt: { temp: 2072, latent: ALUMINA_FUSION },
+    states: [
+      // Ceramic: alumina, the crucible ceramic: 3,950 kg/m³, 30 W/m·K (99.5% alumina at room temperature, 25 to 35; it falls with
+      // heat) and 3.48 MJ/m³·K (0.88 kJ/kg·K), melting at 2,072 °C (CRC Handbook) into molten ceramic that sets back, far above steel's
+      // melt. It has no crush: a blast does not break it. It cracks by thermal shock: fracture toughness 4 MPa·√m (99.5% alumina,
+      // CeramTec materials table), Young's modulus 372 GPa and linear expansion 8.1e-6 per °C (NIST ceramics data portal summary), a
+      // limit of about 174 K, a little over glass's: a cold crucible cracks when molten steel is poured in, a preheated one does not.
+      // It cracks into ceramic shards, which melt with it.
+      {
+        key: 'CERAMIC',
+        id: 24,
+        label: 'Ceramic',
+        color: [0.88, 0.85, 0.78],
+        state: 'solid',
+        density: 3950,
+        conductivity: 30,
+        heatCapacity: 3.48,
+        toughness: 4,
+        expansion: 8.1e-6,
+        stiffness: 372,
+        cracksInto: 'CERAMIC_SHARDS',
+        toolbar: 5,
+        category: 'Solids',
+        description: 'Fired alumina, as in a crucible: it holds molten steel and no blast breaks it.',
+      },
+      // Ceramic shards: what a thermal shock leaves of ceramic. Loose crushed alumina weighs about 2,000 kg/m³ (an estimate: the
+      // solid is 3,950). It keeps ceramic's heat capacity, 3.48 MJ/m³·K, and melts into the same molten ceramic at ceramic's melting
+      // point and latent heat, which sets back into ceramic. A loose bed conducts about 0.5 W/m·K and stands at about 38° (both
+      // estimated, not read from a source; M12.14d sources them).
+      {
+        key: 'CERAMIC_SHARDS',
+        id: 45,
+        label: 'Ceramic shards',
+        color: [0.84, 0.8, 0.72],
+        state: 'powder',
+        density: 2000,
+        conductivity: 0.5,
+        heatCapacity: 3.48,
+        repose: 38,
+        toolbar: 7,
+        category: 'Powders',
+        description: 'Jagged pieces of cracked ceramic: they melt at 2,072 °C, like the ceramic.',
+      },
+      // Molten ceramic: lava's values with its density scaled to the solid's 3,950 kg/m³ (and its viscosity with it, so the spread keeps
+      // its pace) and its color pulled toward the solid's and darkened. Ceramic melts into it and it sets back into ceramic at 2,072 °C. No button: painted above its melting point it is what the
+      // solid becomes, at 2,172 °C by default. Estimated, not read from a source: M12.14d gives it its own data.
+      {
+        key: 'MOLTEN_CERAMIC',
+        id: 42,
+        label: 'Molten ceramic',
+        color: [0.582, 0.415, 0.32],
+        state: 'liquid',
+        density: 3950,
+        densityKnots: [[1200, 3950], [1500, 3903.19]],
+        temperature: 2172,
+        conductivity: 1,
+        heatCapacity: 4,
+        viscosity: 43.8888888889,
+        look: { opacity: 1 },
+      },
+    ],
   },
-  // Aluminium: 2,700 kg/m³, 237 W/m·K and 2.42 MJ/m³·K (0.897 kJ/kg·K), melting at 660.3 °C (CRC Handbook; Wikipedia, List of
-  // thermal conductivities). Melts into molten aluminium that sets back, far below steel's 1,538 °C.
   {
-    key: 'ALUMINIUM',
-    id: 19,
-    label: 'Aluminium',
-    color: [0.78, 0.80, 0.83],
-    state: 'solid',
-    density: 2700,
-    conductivity: 237,
-    heatCapacity: 2.42,
-    above: { temp: 660, becomes: 'MOLTEN_ALUMINIUM', latent: ALUMINIUM_FUSION },
-    look: { grain: 0.02 },
-    toolbar: 2,
-    category: 'Metals',
-    description: 'Light silvery metal: it carries heat almost as well as copper and melts at 660 °C.',
+    states: [
+      // Diamond: 3,510 kg/m³, 2,200 W/m·K (type IIa; 1,000 to 2,200) and 1.79 MJ/m³·K (0.509 kJ/kg·K): the best conductor there is. The
+      // game's conduction caps a pair's exchange at their mean (`heatShare`), which this row reaches: heat crosses it as fast as the
+      // grid allows, about four times copper's pace. It mimics no real material in never melting or crushing (the real one turns to
+      // graphite or burns at 700 to 1,500 °C in air and melts only under pressure).
+      {
+        key: 'DIAMOND',
+        id: 25,
+        label: 'Diamond',
+        color: [0.74, 0.92, 0.98],
+        state: 'solid',
+        density: 3510,
+        conductivity: 2200,
+        heatCapacity: 1.79,
+        toolbar: 6,
+        category: 'Solids',
+        description: 'The hardest and best heat-conducting solid: it never melts or breaks here.',
+      },
+    ],
   },
-  // Copper: 8,960 kg/m³, 401 W/m·K and 3.45 MJ/m³·K (0.385 kJ/kg·K), melting at 1,084.6 °C (CRC Handbook).
   {
-    key: 'COPPER',
-    id: 20,
-    label: 'Copper',
-    color: [0.80, 0.38, 0.20],
-    state: 'solid',
-    density: 8960,
-    conductivity: 401,
-    heatCapacity: 3.45,
-    above: { temp: 1085, becomes: 'MOLTEN_COPPER', latent: COPPER_FUSION },
-    look: { grain: 0.02 },
-    toolbar: 3,
-    category: 'Metals',
-    description: 'Reddish metal that carries heat about eight times better than steel and melts at 1,085 °C.',
+    melt: { temp: 1713, latent: AEROGEL_FUSION },
+    states: [
+      // Silica aerogel, the best insulator that lasts at lava's temperature: 150 kg/m³ (blankets 120 to 200, an estimate), 0.015 W/m·K
+      // (0.013 to 0.020 at room temperature, handbook; mineral wool's 0.04 is too poor a barrier for one cell between lava and water,
+      // see the insulationWall scenario) and 0.15 MJ/m³·K (about 1.0 kJ/kg·K at that density, an estimate), the bulk of the blanket as one
+      // solid. It is amorphous silica: it melts at quartz's 1,713 °C, well over lava's temperature, taking silica's 145 kJ/kg (see
+      // `GLASS_FUSION`) times its own 150 kg/m³, 22 MJ/m³ (`AEROGEL_FUSION`), not the glass row's. Its liquid
+      // sets back into aerogel, giving out the latent heat it took in (setting into glass would give out glass's 362).
+      {
+        key: 'INSULATION',
+        id: 26,
+        label: 'Aerogel',
+        color: [0.90, 0.80, 0.42],
+        state: 'solid',
+        density: 150,
+        conductivity: 0.015,
+        heatCapacity: 0.15,
+        toolbar: 7,
+        category: 'Solids',
+        description: 'Aerogel, a silica foam: heat passes through it far worse than through stone, and it melts only above the temperature of lava.',
+      },
+      // Molten aerogel: lava's values with its density scaled to the solid's 150 kg/m³ (and its viscosity with it, so the spread keeps
+      // its pace) and its color pulled toward the solid's and darkened. Aerogel melts into it and it sets back into aerogel at 1,713 °C, not into glass. No button: painted above its melting point it is what the
+      // solid becomes, at 1,813 °C by default. Estimated, not read from a source: M12.14d gives it its own data.
+      {
+        key: 'MOLTEN_AEROGEL',
+        id: 43,
+        label: 'Molten aerogel',
+        color: [0.59, 0.395, 0.179],
+        state: 'liquid',
+        density: 150,
+        densityKnots: [[1200, 150], [1500, 148.22]],
+        temperature: 1813,
+        conductivity: 1,
+        heatCapacity: 4,
+        viscosity: 1.6666666667,
+        look: { opacity: 1 },
+      },
+    ],
   },
-  // Gold: 19,300 kg/m³, 318 W/m·K and 2.49 MJ/m³·K (0.129 kJ/kg·K), melting at 1,064.2 °C (CRC Handbook). As dense as tungsten, nearly
-  // three times as dense as steel: a molten cell of it sinks under molten steel.
   {
-    key: 'GOLD',
-    id: 21,
-    label: 'Gold',
-    color: [0.95, 0.72, 0.15],
-    state: 'solid',
-    density: 19300,
-    conductivity: 318,
-    heatCapacity: 2.49,
-    above: { temp: 1064, becomes: 'MOLTEN_GOLD', latent: GOLD_FUSION },
-    look: { grain: 0.02 },
-    toolbar: 4,
-    category: 'Metals',
-    description: 'Very heavy yellow metal that carries heat well and melts at 1,064 °C; molten, it sinks under molten steel.',
+    states: [
+      // Sawdust: loose wood dust, 210 kg/m³ (bulk 130 to 250, an estimate; the wood itself is 500 to 700), so it floats on water and oil. A powder of
+      // its own takes the bulk value of its own density, as sand and gunpowder do: wood's 1.7 kJ/kg·K at 210 kg/m³ is 0.36 MJ/m³·K. A loose bed
+      // conducts like an insulator, 0.06 W/m·K (0.05 to 0.07, estimated). Angle of repose 40°: estimated, fibrous dust piles steeply (35 to 45°).
+      // Flammable by fire; its ignition by heat belongs to M8.2.
+      {
+        key: 'SAWDUST',
+        id: 27,
+        label: 'Sawdust',
+        color: [0.78, 0.62, 0.38],
+        state: 'powder',
+        density: 210,
+        flammable: true,
+        conductivity: 0.06,
+        heatCapacity: 0.36,
+        repose: 40,
+        toolbar: 5,
+        category: 'Powders',
+        description: 'Light wood dust: it floats on water and oil, and catches fire.',
+      },
+    ],
   },
-  // Titanium: 4,506 kg/m³, 21.9 W/m·K and 2.36 MJ/m³·K (0.523 kJ/kg·K), melting at 1,668 °C (CRC Handbook; a poorer conductor than steel).
   {
-    key: 'TITANIUM',
-    id: 22,
-    label: 'Titanium',
-    color: [0.55, 0.57, 0.62],
-    state: 'solid',
-    density: 4506,
-    conductivity: 21.9,
-    heatCapacity: 2.36,
-    above: { temp: 1668, becomes: 'MOLTEN_TITANIUM', latent: TITANIUM_FUSION },
-    look: { grain: 0.02 },
-    toolbar: 5,
-    category: 'Metals',
-    description: 'Strong, light metal that carries heat worse than steel and melts at 1,668 °C.',
+    melt: { temp: 60, latent: WAX_FUSION },
+    states: [
+      // Paraffin wax: 900 kg/m³ (Wikipedia "Paraffin wax"), 0.25 W/m·K (estimated, solid paraffin 0.2 to 0.3) and 2.25 MJ/m³·K (2.5 kJ/kg·K,
+      // inside the 2.14 to 2.9 listed). It melts over 46 to 68 °C depending on the wax; the table melts it at 60 °C with the listed 200 kJ/kg.
+      // Flammable by fire; its ignition by heat belongs to M8.2.
+      {
+        key: 'WAX',
+        id: 28,
+        label: 'Wax',
+        color: [0.93, 0.90, 0.78],
+        state: 'solid',
+        density: 900,
+        flammable: true,
+        conductivity: 0.25,
+        heatCapacity: 2.25,
+        toolbar: 8,
+        category: 'Solids',
+        description: 'Paraffin wax: it melts into a runny liquid at 60 °C, sets again when it cools, and burns.',
+      },
+      // Molten paraffin: about 770 kg/m³ (it floats on water; estimated, liquid paraffin is 0.75 to 0.78 g/cm³), 0.16 W/m·K and 1.9 MJ/m³·K
+      // (2.5 kJ/kg·K at 770 kg/m³), viscosity 4 mPa·s (3 to 5 near 80 °C, estimated), which spreads at the cap, like water. It expands by about 7e-4
+      // per K, as mineral oil does (estimated): 785 kg/m³ at 60 °C, 763 at 100. No button: Wax painted above 60 °C is molten wax, at 80 °C by default.
+      {
+        key: 'MOLTEN_WAX',
+        id: 29,
+        label: 'Molten wax',
+        color: [0.95, 0.88, 0.62],
+        state: 'liquid',
+        density: 770,
+        densityKnots: [[60, 785], [100, 763]],
+        temperature: 80,
+        flammable: true,
+        conductivity: 0.16,
+        heatCapacity: 1.93,
+        viscosity: 0.004,
+      },
+    ],
   },
-  // Tungsten: 19,300 kg/m³, 173 W/m·K and 2.55 MJ/m³·K (0.132 kJ/kg·K), melting at 3,422 °C (CRC Handbook), the highest of any metal.
   {
-    key: 'TUNGSTEN',
-    id: 23,
-    label: 'Tungsten',
-    color: [0.36, 0.37, 0.40],
-    state: 'solid',
-    density: 19300,
-    conductivity: 173,
-    heatCapacity: 2.55,
-    above: { temp: 3422, becomes: 'MOLTEN_TUNGSTEN', latent: TUNGSTEN_FUSION },
-    look: { grain: 0.02 },
-    toolbar: 6,
-    category: 'Metals',
-    description: 'Dark, very heavy metal that melts only at 3,422 °C, higher than any other metal.',
+    melt: { temp: -210, latent: NITROGEN_FUSION },
+    boil: { temp: -195.8, latent: NITROGEN_VAPORIZATION },
+    states: [
+      // Nitrogen gas: 1.165 kg/m³ at 20 °C (the ideal-gas law, 28.01 g/mol), a little lighter than air. A cell is one unit of matter: its capacity is
+      // 1.04 kJ/kg·K (Wikipedia "Liquid nitrogen") times the 807 kg/m³ of the liquid it came from, 0.84 MJ/m³·K, and its conductivity keeps the real
+      // thermal diffusivity of the gas at that capacity: 0.026 W/m·K / (1.165 kg/m³ × 1.04 kJ/kg·K) = 2.1e-5 m²/s, times 0.84 MJ/m³·K is 18 W/m·K.
+      // It condenses at 77.36 K (-195.8 °C), taking the latent heat above. Cold, it is far denser than air (4.6 kg/m³ at -196 °C) and sinks.
+      {
+        key: 'NITROGEN',
+        id: 30,
+        label: 'Nitrogen',
+        color: [0.70, 0.80, 0.92],
+        state: 'gas',
+        density: 1.165,
+        conductivity: 18,
+        heatCapacity: 0.84,
+        toolbar: 2,
+        category: 'Gases',
+        description: "The air's main gas: cooled to -196 °C it becomes liquid nitrogen, which boils away and freezes what it touches.",
+      },
+      // Solid nitrogen: about 1,026 kg/m³, 0.3 W/m·K and 1.7 MJ/m³·K (1.64 kJ/kg·K), all three estimated from memory of cryogenic data. Melts at -210 °C
+      // (63 K, Wikipedia "Liquid nitrogen"). No button: Nitrogen painted below -210 °C is solid nitrogen, at -220 °C by default.
+      {
+        key: 'SOLID_NITROGEN',
+        id: 32,
+        label: 'Solid nitrogen',
+        color: [0.84, 0.90, 0.97],
+        state: 'solid',
+        density: 1026,
+        temperature: -220,
+        conductivity: 0.3,
+        heatCapacity: 1.68,
+      },
+      // Liquid nitrogen: 807 kg/m³ at its boiling point and about 868 at its melting point (NIST, from memory), 0.14 W/m·K (at 77 K, from memory),
+      // 1.65 MJ/m³·K (2.04 kJ/kg·K at 807 kg/m³) and a viscosity of 0.16 mPa·s (a sixth of water's, Wikipedia "Liquid nitrogen"). Boils at -195.8 °C
+      // and freezes at -210 °C. No button: Nitrogen painted below -195.8 °C is liquid nitrogen, at -196 °C by default.
+      {
+        key: 'LIQUID_NITROGEN',
+        id: 31,
+        label: 'Liquid nitrogen',
+        color: [0.62, 0.78, 0.92],
+        state: 'liquid',
+        density: 807,
+        densityKnots: [[-210, 868], [-195.8, 807]],
+        temperature: -196,
+        conductivity: 0.14,
+        heatCapacity: 1.65,
+        viscosity: 0.00016,
+      },
+    ],
   },
-  // Ceramic: alumina, the crucible ceramic: 3,950 kg/m³, 30 W/m·K (99.5% alumina at room temperature, 25 to 35; it falls with
-  // heat) and 3.48 MJ/m³·K (0.88 kJ/kg·K), melting at 2,072 °C (CRC Handbook) into molten ceramic that sets back, far above steel's
-  // melt. It has no crush: a blast does not break it. It cracks by thermal shock: fracture toughness 4 MPa·√m (99.5% alumina,
-  // CeramTec materials table), Young's modulus 372 GPa and linear expansion 8.1e-6 per °C (NIST ceramics data portal summary), a
-  // limit of about 174 K, a little over glass's: a cold crucible cracks when molten steel is poured in, a preheated one does not.
-  // It cracks into ceramic shards, which melt with it.
   {
-    key: 'CERAMIC',
-    id: 24,
-    label: 'Ceramic',
-    color: [0.88, 0.85, 0.78],
-    state: 'solid',
-    density: 3950,
-    conductivity: 30,
-    heatCapacity: 3.48,
-    above: { temp: 2072, becomes: 'MOLTEN_CERAMIC', latent: ALUMINA_FUSION },
-    toughness: 4,
-    expansion: 8.1e-6,
-    stiffness: 372,
-    cracksInto: 'CERAMIC_SHARDS',
-    toolbar: 5,
-    category: 'Solids',
-    description: 'Fired alumina, as in a crucible: it holds molten steel and no blast breaks it.',
+    melt: { temp: -38.83, latent: MERCURY_FUSION },
+    boil: { temp: 356.73, latent: MERCURY_VAPORIZATION },
+    states: [
+      // Mercury: 13,546 kg/m³ at 20 °C, the densest liquid there is, 8.30 W/m·K and 1.89 MJ/m³·K (27.983 J/mol·K is 139.5 J/kg·K), melting at -38.83 °C
+      // and boiling at 356.73 °C (Wikipedia "Mercury (element)"). Its density follows the expansion coefficient listed there (1.82e-4 per K): 13,690 at
+      // the melting point (listed), 13,351 at 100 °C and about 12,750 at the boiling point (the coefficient grows a little; estimated). Viscosity
+      // 1.53 mPa·s at 20 °C (handbook, from memory). Its swelling with heat is not modeled (one unit of matter per cell, backlog I22). An opaque,
+      // shiny liquid: it hides the wall behind it.
+      {
+        key: 'MERCURY',
+        id: 33,
+        label: 'Mercury',
+        color: [0.78, 0.80, 0.84],
+        state: 'liquid',
+        density: 13546,
+        densityKnots: [[-38.83, 13690], [20, 13546], [100, 13351], [356.73, 12750]],
+        conductivity: 8.3,
+        heatCapacity: 1.89,
+        viscosity: 0.00153,
+        look: { opacity: 1 },
+        toolbar: 3,
+        category: 'Liquids',
+        description: 'The heaviest liquid: it sinks under water and oil, freezes at -39 °C and boils at 357 °C.',
+      },
+      // Solid mercury: 14,184 kg/m³ (Wikipedia "Mercury (element)"), 30 W/m·K (estimated: it conducts about four times as well as the liquid, whose
+      // resistivity it divides by about four) and 1.98 MJ/m³·K (the liquid's 139.5 J/kg·K, assumed, at the solid's density). No button: Mercury painted
+      // below -38.83 °C is solid mercury, at -50 °C by default.
+      {
+        key: 'SOLID_MERCURY',
+        id: 34,
+        label: 'Solid mercury',
+        color: [0.70, 0.72, 0.76],
+        state: 'solid',
+        density: 14184,
+        temperature: -50,
+        conductivity: 30,
+        heatCapacity: 1.98,
+        look: { grain: 0.02 },
+      },
+      // Mercury vapor: 3.88 kg/m³ at its boiling point (the ideal-gas law, 200.59 g/mol). A cell is one unit of matter: its capacity is the monatomic gas's
+      // 20.79 J/mol·K (103.6 J/kg·K) times the liquid's 13,546 kg/m³, 1.4 MJ/m³·K, and its conductivity keeps the diffusivity of the vapor at that capacity:
+      // about 0.009 W/m·K (kinetic theory, estimated) / (3.88 kg/m³ × 103.6 J/kg·K) = 2.2e-5 m²/s, times 1.4 MJ/m³·K is 31 W/m·K. No button: Mercury
+      // painted above 356.73 °C is vapor, at 400 °C by default.
+      {
+        key: 'MERCURY_VAPOR',
+        id: 35,
+        label: 'Mercury vapor',
+        color: [0.80, 0.82, 0.86],
+        state: 'gas',
+        density: 3.88,
+        densityTemp: 356.73,
+        temperature: 400,
+        conductivity: 31,
+        heatCapacity: 1.4,
+      },
+    ],
   },
-  // Diamond: 3,510 kg/m³, 2,200 W/m·K (type IIa; 1,000 to 2,200) and 1.79 MJ/m³·K (0.509 kJ/kg·K): the best conductor there is. The
-  // game's conduction caps a pair's exchange at their mean (`heatShare`), which this row reaches: heat crosses it as fast as the
-  // grid allows, about four times copper's pace. It mimics no real material in never melting or crushing (the real one turns to
-  // graphite or burns at 700 to 1,500 °C in air and melts only under pressure).
-  {
-    key: 'DIAMOND',
-    id: 25,
-    label: 'Diamond',
-    color: [0.74, 0.92, 0.98],
-    state: 'solid',
-    density: 3510,
-    conductivity: 2200,
-    heatCapacity: 1.79,
-    toolbar: 6,
-    category: 'Solids',
-    description: 'The hardest and best heat-conducting solid: it never melts or breaks here.',
-  },
-  // Silica aerogel, the best insulator that lasts at lava's temperature: 150 kg/m³ (blankets 120 to 200, an estimate), 0.015 W/m·K
-  // (0.013 to 0.020 at room temperature, handbook; mineral wool's 0.04 is too poor a barrier for one cell between lava and water,
-  // see the insulationWall scenario) and 0.15 MJ/m³·K (about 1.0 kJ/kg·K at that density, an estimate), the bulk of the blanket as one
-  // solid. It is amorphous silica: it melts at quartz's 1,713 °C, well over lava's temperature, taking silica's 145 kJ/kg (see
-  // `GLASS_FUSION`) times its own 150 kg/m³, 22 MJ/m³ (`AEROGEL_FUSION`), not the glass row's. Its liquid
-  // sets back into aerogel, giving out the latent heat it took in (setting into glass would give out glass's 362).
-  {
-    key: 'INSULATION',
-    id: 26,
-    label: 'Aerogel',
-    color: [0.90, 0.80, 0.42],
-    state: 'solid',
-    density: 150,
-    conductivity: 0.015,
-    heatCapacity: 0.15,
-    above: { temp: 1713, becomes: 'MOLTEN_AEROGEL', latent: AEROGEL_FUSION },
-    toolbar: 7,
-    category: 'Solids',
-    description: 'Aerogel, a silica foam: heat passes through it far worse than through stone, and it melts only above the temperature of lava.',
-  },
-  // Sawdust: loose wood dust, 210 kg/m³ (bulk 130 to 250, an estimate; the wood itself is 500 to 700), so it floats on water and oil. A powder of
-  // its own takes the bulk value of its own density, as sand and gunpowder do: wood's 1.7 kJ/kg·K at 210 kg/m³ is 0.36 MJ/m³·K. A loose bed
-  // conducts like an insulator, 0.06 W/m·K (0.05 to 0.07, estimated). Angle of repose 40°: estimated, fibrous dust piles steeply (35 to 45°).
-  // Flammable by fire; its ignition by heat belongs to M8.2.
-  {
-    key: 'SAWDUST',
-    id: 27,
-    label: 'Sawdust',
-    color: [0.78, 0.62, 0.38],
-    state: 'powder',
-    density: 210,
-    flammable: true,
-    conductivity: 0.06,
-    heatCapacity: 0.36,
-    repose: 40,
-    toolbar: 5,
-    category: 'Powders',
-    description: 'Light wood dust: it floats on water and oil, and catches fire.',
-  },
-  // Paraffin wax: 900 kg/m³ (Wikipedia "Paraffin wax"), 0.25 W/m·K (estimated, solid paraffin 0.2 to 0.3) and 2.25 MJ/m³·K (2.5 kJ/kg·K,
-  // inside the 2.14 to 2.9 listed). It melts over 46 to 68 °C depending on the wax; the table melts it at 60 °C with the listed 200 kJ/kg.
-  // Flammable by fire; its ignition by heat belongs to M8.2.
-  {
-    key: 'WAX',
-    id: 28,
-    label: 'Wax',
-    color: [0.93, 0.90, 0.78],
-    state: 'solid',
-    density: 900,
-    flammable: true,
-    conductivity: 0.25,
-    heatCapacity: 2.25,
-    above: { temp: 60, becomes: 'MOLTEN_WAX', latent: WAX_FUSION },
-    toolbar: 8,
-    category: 'Solids',
-    description: 'Paraffin wax: it melts into a runny liquid at 60 °C, sets again when it cools, and burns.',
-  },
-  // Molten paraffin: about 770 kg/m³ (it floats on water; estimated, liquid paraffin is 0.75 to 0.78 g/cm³), 0.16 W/m·K and 1.9 MJ/m³·K
-  // (2.5 kJ/kg·K at 770 kg/m³), viscosity 4 mPa·s (3 to 5 near 80 °C, estimated), which spreads at the cap, like water. It expands by about 7e-4
-  // per K, as mineral oil does (estimated): 785 kg/m³ at 60 °C, 763 at 100. No button: Wax painted above 60 °C is molten wax, at 80 °C by default.
-  {
-    key: 'MOLTEN_WAX',
-    id: 29,
-    label: 'Molten wax',
-    color: [0.95, 0.88, 0.62],
-    state: 'liquid',
-    density: 770,
-    densityKnots: [[60, 785], [100, 763]],
-    temperature: 80,
-    flammable: true,
-    conductivity: 0.16,
-    heatCapacity: 1.93,
-    viscosity: 0.004,
-    below: { temp: 60, becomes: 'WAX', latent: WAX_FUSION },
-  },
-  // Nitrogen gas: 1.165 kg/m³ at 20 °C (the ideal-gas law, 28.01 g/mol), a little lighter than air. A cell is one unit of matter: its capacity is
-  // 1.04 kJ/kg·K (Wikipedia "Liquid nitrogen") times the 807 kg/m³ of the liquid it came from, 0.84 MJ/m³·K, and its conductivity keeps the real
-  // thermal diffusivity of the gas at that capacity: 0.026 W/m·K / (1.165 kg/m³ × 1.04 kJ/kg·K) = 2.1e-5 m²/s, times 0.84 MJ/m³·K is 18 W/m·K.
-  // It condenses at 77.36 K (-195.8 °C), taking the latent heat above. Cold, it is far denser than air (4.6 kg/m³ at -196 °C) and sinks.
-  {
-    key: 'NITROGEN',
-    id: 30,
-    label: 'Nitrogen',
-    color: [0.70, 0.80, 0.92],
-    state: 'gas',
-    density: 1.165,
-    conductivity: 18,
-    heatCapacity: 0.84,
-    below: { temp: -195.8, becomes: 'LIQUID_NITROGEN', latent: NITROGEN_VAPORIZATION },
-    toolbar: 2,
-    category: 'Gases',
-    description: "The air's main gas: cooled to -196 °C it becomes liquid nitrogen, which boils away and freezes what it touches.",
-  },
-  // Liquid nitrogen: 807 kg/m³ at its boiling point and about 868 at its melting point (NIST, from memory), 0.14 W/m·K (at 77 K, from memory),
-  // 1.65 MJ/m³·K (2.04 kJ/kg·K at 807 kg/m³) and a viscosity of 0.16 mPa·s (a sixth of water's, Wikipedia "Liquid nitrogen"). Boils at -195.8 °C
-  // and freezes at -210 °C. No button: Nitrogen painted below -195.8 °C is liquid nitrogen, at -196 °C by default.
-  {
-    key: 'LIQUID_NITROGEN',
-    id: 31,
-    label: 'Liquid nitrogen',
-    color: [0.62, 0.78, 0.92],
-    state: 'liquid',
-    density: 807,
-    densityKnots: [[-210, 868], [-195.8, 807]],
-    temperature: -196,
-    conductivity: 0.14,
-    heatCapacity: 1.65,
-    viscosity: 0.00016,
-    below: { temp: -210, becomes: 'SOLID_NITROGEN', latent: NITROGEN_FUSION },
-    above: { temp: -195.8, becomes: 'NITROGEN', latent: NITROGEN_VAPORIZATION },
-  },
-  // Solid nitrogen: about 1,026 kg/m³, 0.3 W/m·K and 1.7 MJ/m³·K (1.64 kJ/kg·K), all three estimated from memory of cryogenic data. Melts at -210 °C
-  // (63 K, Wikipedia "Liquid nitrogen"). No button: Nitrogen painted below -210 °C is solid nitrogen, at -220 °C by default.
-  {
-    key: 'SOLID_NITROGEN',
-    id: 32,
-    label: 'Solid nitrogen',
-    color: [0.84, 0.90, 0.97],
-    state: 'solid',
-    density: 1026,
-    temperature: -220,
-    conductivity: 0.3,
-    heatCapacity: 1.68,
-    above: { temp: -210, becomes: 'LIQUID_NITROGEN', latent: NITROGEN_FUSION },
-  },
-  // Mercury: 13,546 kg/m³ at 20 °C, the densest liquid there is, 8.30 W/m·K and 1.89 MJ/m³·K (27.983 J/mol·K is 139.5 J/kg·K), melting at -38.83 °C
-  // and boiling at 356.73 °C (Wikipedia "Mercury (element)"). Its density follows the expansion coefficient listed there (1.82e-4 per K): 13,690 at
-  // the melting point (listed), 13,351 at 100 °C and about 12,750 at the boiling point (the coefficient grows a little; estimated). Viscosity
-  // 1.53 mPa·s at 20 °C (handbook, from memory). Its swelling with heat is not modeled (one unit of matter per cell, backlog I22). An opaque,
-  // shiny liquid: it hides the wall behind it.
-  {
-    key: 'MERCURY',
-    id: 33,
-    label: 'Mercury',
-    color: [0.78, 0.80, 0.84],
-    state: 'liquid',
-    density: 13546,
-    densityKnots: [[-38.83, 13690], [20, 13546], [100, 13351], [356.73, 12750]],
-    conductivity: 8.3,
-    heatCapacity: 1.89,
-    viscosity: 0.00153,
-    look: { opacity: 1 },
-    below: { temp: -38.83, becomes: 'SOLID_MERCURY', latent: MERCURY_FUSION },
-    above: { temp: 356.73, becomes: 'MERCURY_VAPOR', latent: MERCURY_VAPORIZATION },
-    toolbar: 3,
-    category: 'Liquids',
-    description: 'The heaviest liquid: it sinks under water and oil, freezes at -39 °C and boils at 357 °C.',
-  },
-  // Solid mercury: 14,184 kg/m³ (Wikipedia "Mercury (element)"), 30 W/m·K (estimated: it conducts about four times as well as the liquid, whose
-  // resistivity it divides by about four) and 1.98 MJ/m³·K (the liquid's 139.5 J/kg·K, assumed, at the solid's density). No button: Mercury painted
-  // below -38.83 °C is solid mercury, at -50 °C by default.
-  {
-    key: 'SOLID_MERCURY',
-    id: 34,
-    label: 'Solid mercury',
-    color: [0.70, 0.72, 0.76],
-    state: 'solid',
-    density: 14184,
-    temperature: -50,
-    conductivity: 30,
-    heatCapacity: 1.98,
-    look: { grain: 0.02 },
-    above: { temp: -38.83, becomes: 'MERCURY', latent: MERCURY_FUSION },
-  },
-  // Mercury vapor: 3.88 kg/m³ at its boiling point (the ideal-gas law, 200.59 g/mol). A cell is one unit of matter: its capacity is the monatomic gas's
-  // 20.79 J/mol·K (103.6 J/kg·K) times the liquid's 13,546 kg/m³, 1.4 MJ/m³·K, and its conductivity keeps the diffusivity of the vapor at that capacity:
-  // about 0.009 W/m·K (kinetic theory, estimated) / (3.88 kg/m³ × 103.6 J/kg·K) = 2.2e-5 m²/s, times 1.4 MJ/m³·K is 31 W/m·K. No button: Mercury
-  // painted above 356.73 °C is vapor, at 400 °C by default.
-  {
-    key: 'MERCURY_VAPOR',
-    id: 35,
-    label: 'Mercury vapor',
-    color: [0.80, 0.82, 0.86],
-    state: 'gas',
-    density: 3.88,
-    densityTemp: 356.73,
-    temperature: 400,
-    conductivity: 31,
-    heatCapacity: 1.4,
-    below: { temp: 356.73, becomes: 'MERCURY', latent: MERCURY_VAPORIZATION },
-  },
-  // Molten aluminium: molten steel's values with its density scaled to the solid's 2,700 kg/m³ (and its viscosity with it, so the
-  // spread keeps its pace) and its color pulled toward the solid's and darkened. Sets back into aluminium at 660 °C. No button: aluminium
-  // painted above 660 °C is molten aluminium, at 1,600 °C by default. Estimated, not read from a source: M12.14d gives it its own data.
-  {
-    key: 'MOLTEN_ALUMINIUM',
-    id: 36,
-    label: 'Molten aluminium',
-    color: [0.564, 0.473, 0.397],
-    state: 'liquid',
-    density: 2700,
-    densityKnots: [[1538, 2700], [1700, 2648.31]],
-    temperature: 1600,
-    conductivity: 35,
-    heatCapacity: 5.7,
-    viscosity: 0.0023142857,
-    look: { opacity: 1 },
-    below: { temp: 660, becomes: 'ALUMINIUM', latent: ALUMINIUM_FUSION },
-  },
-  // Molten copper: molten steel's values with its density scaled to the solid's 8,960 kg/m³ (and its viscosity with it, so the
-  // spread keeps its pace) and its color pulled toward the solid's and darkened. Sets back into copper at 1,085 °C. No button: copper
-  // painted above 1,085 °C is molten copper, at 1,600 °C by default. Estimated, not read from a source: M12.14d gives it its own data.
-  {
-    key: 'MOLTEN_COPPER',
-    id: 37,
-    label: 'Molten copper',
-    color: [0.572, 0.309, 0.151],
-    state: 'liquid',
-    density: 8960,
-    densityKnots: [[1538, 8960], [1700, 8788.48]],
-    temperature: 1600,
-    conductivity: 35,
-    heatCapacity: 5.7,
-    viscosity: 0.00768,
-    look: { opacity: 1 },
-    below: { temp: 1085, becomes: 'COPPER', latent: COPPER_FUSION },
-  },
-  // Molten gold: molten steel's values with its density scaled to the solid's 19,300 kg/m³ (and its viscosity with it, so the
-  // spread keeps its pace) and its color pulled toward the solid's and darkened. Sets back into gold at 1,064 °C. No button: gold
-  // painted above 1,064 °C is molten gold, at 1,600 °C by default. Estimated, not read from a source: M12.14d gives it its own data.
-  {
-    key: 'MOLTEN_GOLD',
-    id: 38,
-    label: 'Molten gold',
-    color: [0.63, 0.442, 0.131],
-    state: 'liquid',
-    density: 19300,
-    densityKnots: [[1538, 19300], [1700, 18930.54]],
-    temperature: 1600,
-    conductivity: 35,
-    heatCapacity: 5.7,
-    viscosity: 0.0165428571,
-    look: { opacity: 1 },
-    below: { temp: 1064, becomes: 'GOLD', latent: GOLD_FUSION },
-  },
-  // Molten titanium: molten steel's values with its density scaled to the solid's 4,506 kg/m³ (and its viscosity with it, so the
-  // spread keeps its pace) and its color pulled toward the solid's and darkened. Sets back into titanium at 1,668 °C. No button: titanium
-  // painted above 1,668 °C is molten titanium, at 1,768 °C by default. Estimated, not read from a source: M12.14d gives it its own data.
-  {
-    key: 'MOLTEN_TITANIUM',
-    id: 39,
-    label: 'Molten titanium',
-    color: [0.474, 0.384, 0.315],
-    state: 'liquid',
-    density: 4506,
-    densityKnots: [[1538, 4506], [1700, 4419.74]],
-    temperature: 1768,
-    conductivity: 35,
-    heatCapacity: 5.7,
-    viscosity: 0.0038622857,
-    look: { opacity: 1 },
-    below: { temp: 1668, becomes: 'TITANIUM', latent: TITANIUM_FUSION },
-  },
-  // Molten tungsten: molten steel's values with its density scaled to the solid's 19,300 kg/m³ (and its viscosity with it, so the
-  // spread keeps its pace) and its color pulled toward the solid's and darkened. Sets back into tungsten at 3,422 °C. No button: tungsten
-  // painted above 3,422 °C is molten tungsten, at 3,522 °C by default. Estimated, not read from a source: M12.14d gives it its own data.
-  {
-    key: 'MOLTEN_TUNGSTEN',
-    id: 40,
-    label: 'Molten tungsten',
-    color: [0.4, 0.305, 0.229],
-    state: 'liquid',
-    density: 19300,
-    densityKnots: [[1538, 19300], [1700, 18930.54]],
-    temperature: 3522,
-    conductivity: 35,
-    heatCapacity: 5.7,
-    viscosity: 0.0165428571,
-    look: { opacity: 1 },
-    below: { temp: 3422, becomes: 'TUNGSTEN', latent: TUNGSTEN_FUSION },
-  },
-  // Molten glass: lava's values with its density scaled to the solid's 2,500 kg/m³ (and its viscosity with it, so the spread keeps
-  // its pace) and its color pulled toward the solid's and darkened. Glass, broken glass and sand melt into it; it sets into glass at 1,400 °C. No button: painted above its melting point it is what the
-  // solid becomes, at 1,500 °C by default. Estimated, not read from a source: M12.14d gives it its own data.
-  {
-    key: 'MOLTEN_GLASS',
-    id: 41,
-    label: 'Molten glass',
-    color: [0.454, 0.395, 0.335],
-    state: 'liquid',
-    density: 2500,
-    densityKnots: [[1200, 2500], [1500, 2470.37]],
-    temperature: 1500,
-    conductivity: 1,
-    heatCapacity: 4,
-    viscosity: 27.7777777778,
-    look: { opacity: 1 },
-    below: { temp: 1400, becomes: 'GLASS', latent: GLASS_FUSION },
-  },
-  // Molten ceramic: lava's values with its density scaled to the solid's 3,950 kg/m³ (and its viscosity with it, so the spread keeps
-  // its pace) and its color pulled toward the solid's and darkened. Ceramic melts into it and it sets back into ceramic at 2,072 °C. No button: painted above its melting point it is what the
-  // solid becomes, at 2,172 °C by default. Estimated, not read from a source: M12.14d gives it its own data.
-  {
-    key: 'MOLTEN_CERAMIC',
-    id: 42,
-    label: 'Molten ceramic',
-    color: [0.582, 0.415, 0.32],
-    state: 'liquid',
-    density: 3950,
-    densityKnots: [[1200, 3950], [1500, 3903.19]],
-    temperature: 2172,
-    conductivity: 1,
-    heatCapacity: 4,
-    viscosity: 43.8888888889,
-    look: { opacity: 1 },
-    below: { temp: 2072, becomes: 'CERAMIC', latent: ALUMINA_FUSION },
-  },
-  // Molten aerogel: lava's values with its density scaled to the solid's 150 kg/m³ (and its viscosity with it, so the spread keeps
-  // its pace) and its color pulled toward the solid's and darkened. Aerogel melts into it and it sets back into aerogel at 1,713 °C, not into glass. No button: painted above its melting point it is what the
-  // solid becomes, at 1,813 °C by default. Estimated, not read from a source: M12.14d gives it its own data.
-  {
-    key: 'MOLTEN_AEROGEL',
-    id: 43,
-    label: 'Molten aerogel',
-    color: [0.59, 0.395, 0.179],
-    state: 'liquid',
-    density: 150,
-    densityKnots: [[1200, 150], [1500, 148.22]],
-    temperature: 1813,
-    conductivity: 1,
-    heatCapacity: 4,
-    viscosity: 1.6666666667,
-    look: { opacity: 1 },
-    below: { temp: 1713, becomes: 'INSULATION', latent: AEROGEL_FUSION },
-  },
-  // Brick rubble: what a blast leaves of brick. Loose crushed brick weighs about 1,200 kg/m³ (1,100 to 1,400, an estimate: the
-  // solid is 1,900). A cell is one unit of matter whatever its form, so it keeps brick's heat capacity, 1.6 MJ/m³·K; a loose bed
-  // conducts about 0.3 W/m·K and stands at about 38° (both estimated, not read from a source; M12.14d sources them). It has no
-  // melting point, as brick has none: fired clay holds past what lava reaches.
-  {
-    key: 'BRICK_RUBBLE',
-    id: 44,
-    label: 'Brick rubble',
-    color: [0.55, 0.28, 0.2],
-    state: 'powder',
-    density: 1200,
-    conductivity: 0.3,
-    heatCapacity: 1.6,
-    repose: 38,
-    toolbar: 6,
-    category: 'Powders',
-    description: 'Crushed brick: a blast leaves it where brick was; it never melts.',
-  },
-  // Ceramic shards: what a thermal shock leaves of ceramic. Loose crushed alumina weighs about 2,000 kg/m³ (an estimate: the
-  // solid is 3,950). It keeps ceramic's heat capacity, 3.48 MJ/m³·K, and melts into the same molten ceramic at ceramic's melting
-  // point and latent heat, which sets back into ceramic. A loose bed conducts about 0.5 W/m·K and stands at about 38° (both
-  // estimated, not read from a source; M12.14d sources them).
-  {
-    key: 'CERAMIC_SHARDS',
-    id: 45,
-    label: 'Ceramic shards',
-    color: [0.84, 0.8, 0.72],
-    state: 'powder',
-    density: 2000,
-    conductivity: 0.5,
-    heatCapacity: 3.48,
-    repose: 38,
-    above: { temp: 2072, becomes: 'MOLTEN_CERAMIC', latent: ALUMINA_FUSION },
-    toolbar: 7,
-    category: 'Powders',
-    description: 'Jagged pieces of cracked ceramic: they melt at 2,072 °C, like the ceramic.',
-  },
-] as const satisfies readonly ElementDef[];
+] as const satisfies readonly SubstanceDef[];
+
+/**
+ * The substances' rows flattened into the table the GPU, `Simulation` and the tests take: one `ElementDef` per state, in
+ * the order of their IDs, with each melt and boil turned into the `above` and `below` of the states on either side of it.
+ * Throws, naming the substance by its first row, when a substance cannot be flattened; the flat rows are checked on
+ * their own by `validateElements`.
+ */
+export function buildElements(substances: readonly SubstanceDef[]): ElementDef[] {
+  const stateByKey = new Map<string, { substance: SubstanceDef; state: StateDef }>();
+  for (const substance of substances) {
+    for (const state of substance.states) {
+      if (stateByKey.has(state.key)) throw new Error(`${substanceName(substance)}: the state ${state.key} is in two substances`);
+      stateByKey.set(state.key, { substance, state });
+    }
+  }
+  const rows: ElementDef[] = [];
+  for (const substance of substances) {
+    const name = substanceName(substance);
+    const { melt, boil } = substance;
+    const statesOf = (kind: ElementState) => substance.states.filter((s) => s.state === kind);
+    const [solids, powders, liquids, gases] = [statesOf('solid'), statesOf('powder'), statesOf('liquid'), statesOf('gas')];
+    const keys = new Set(substance.states.map((s) => s.key));
+    for (const state of substance.states) {
+      for (const target of [state.pressureAbove?.becomes, state.cracksInto]) {
+        if (target !== undefined && !keys.has(target)) throw new Error(`${name}: ${state.key} breaks into "${target}", which is not a state of the substance`);
+      }
+    }
+    if (melt) {
+      if (solids.length + powders.length === 0) throw new Error(`${name}: a melt needs a solid or powder state to melt`);
+      if (melt.into === undefined) {
+        if (liquids.length !== 1) throw new Error(`${name}: a melt needs exactly one liquid state to melt into (or a melt.into), found ${liquids.length}`);
+        if (solids.length !== 1) throw new Error(`${name}: its liquid ${liquids[0].key} needs exactly one solid state to set into, found ${solids.length}`);
+      } else {
+        if (liquids.length > 0) throw new Error(`${name}: melt.into is for a substance with no liquid of its own, this one has ${liquids[0].key}`);
+        const target = stateByKey.get(melt.into);
+        if (!target || target.state.state !== 'liquid' || target.substance === substance) {
+          throw new Error(`${name}: melt.into "${melt.into}" is not the liquid state of another substance`);
+        }
+        const setting = target.substance.melt;
+        if (!setting) throw new Error(`${name}: melt.into ${melt.into} is a liquid that never sets`);
+        if (melt.latent !== setting.latent) throw new Error(`${name}: melt.into ${melt.into} needs the latent heat ${setting.latent} of that liquid, not ${melt.latent}`);
+        if (melt.temp < setting.temp) throw new Error(`${name}: melt.temp ${melt.temp} is below ${setting.temp}, where ${melt.into} sets`);
+      }
+    }
+    if (boil) {
+      if (liquids.length !== 1 || gases.length !== 1) {
+        throw new Error(`${name}: a boil needs exactly one liquid state and one gas state, found ${liquids.length} and ${gases.length}`);
+      }
+      if (melt && !(melt.temp < boil.temp)) throw new Error(`${name}: melt.temp ${melt.temp} must be under boil.temp ${boil.temp}`);
+    }
+    for (const state of substance.states) {
+      const row: ElementDef = { ...state };
+      const own = state.above !== undefined;
+      const change = (to: string, at: { temp: number; latent: number; burst?: number }): Transition => ({
+        temp: at.temp,
+        becomes: to,
+        latent: at.latent,
+        ...(at.burst === undefined ? {} : { burst: at.burst }),
+      });
+      if (melt && (state.state === 'solid' || state.state === 'powder')) {
+        if (own) throw new Error(`${name}: ${state.key} has an above of its own and also melts`);
+        row.above = change(melt.into ?? liquids[0].key, melt);
+      }
+      if (state.state === 'liquid' && melt && melt.into === undefined) row.below = change(solids[0].key, melt);
+      if (state.state === 'liquid' && boil) {
+        if (own) throw new Error(`${name}: ${state.key} has an above of its own and also boils`);
+        row.above = change(gases[0].key, boil);
+      }
+      if (state.state === 'gas' && boil) row.below = change(liquids[0].key, { temp: boil.temp, latent: boil.latent });
+      rows.push(row);
+    }
+  }
+  return rows.sort((a, b) => a.id - b.id);
+}
+
+// What a substance is called in an error: its first row.
+function substanceName(substance: SubstanceDef): string {
+  return `substance ${substance.states[0]?.key ?? '(no states)'}`;
+}
+
+// The literal type of a flat row: the state's own literal type, plus the `above` and `below` that its substance's melt and
+// boil give it (always with a latent heat), so code that picks a row by key sees which of its fields exist.
+type Link = Transition & { latent: number };
+type FlatRow<Sub, St> = Omit<St, 'above'>
+  & (St extends { above: infer A } ? { above: A }
+    : St extends { state: 'solid' | 'powder' } ? (Sub extends { melt: object } ? { above: Link } : unknown)
+      : St extends { state: 'liquid' } ? (Sub extends { boil: object } ? { above: Link } : unknown)
+        : unknown)
+  & (St extends { state: 'liquid' } ? (Sub extends { melt: object } ? { below: Link } : unknown)
+    : St extends { state: 'gas' } ? (Sub extends { boil: object } ? { below: Link } : unknown)
+      : unknown);
+type FlatOf<Sub> = Sub extends { states: readonly (infer St)[] } ? (St extends unknown ? FlatRow<Sub, St> : never) : never;
+
+/** The default table: `SUBSTANCES` flattened, one row per state, in the order of their IDs. */
+export const ELEMENTS = buildElements(SUBSTANCES) as readonly FlatOf<(typeof SUBSTANCES)[number]>[];
 
 /** The IDs of the default table by key: the only way code outside the table names an element. */
 export const ELEMENT = Object.fromEntries(ELEMENTS.map((e) => [e.key, e.id])) as {
   readonly [E in (typeof ELEMENTS)[number] as E['key']]: E['id'];
 };
+
+/** The substance of the default table that has the state `id` (CPU only: the GPU keeps one row per state), or undefined for an ID it does not have. */
+export function substanceOf(id: number): SubstanceDef | undefined {
+  return SUBSTANCES.find((s) => s.states.some((state) => state.id === id));
+}
 
 // The generated shaders refer to these two by name (out-of-bounds cells are walls, the brush erases to empty).
 const REQUIRED_KEYS = ['EMPTY', 'WALL'];

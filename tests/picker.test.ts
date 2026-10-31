@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ELEMENT, ELEMENTS, elementTemperature, type ElementDef } from '../src/elements';
+import { ELEMENT, ELEMENTS, elementTemperature, substanceOf, type ElementDef } from '../src/elements';
 import { ABSOLUTE_ZERO, MAX_TEMP } from '../src/heat';
 import {
   CATEGORIES, TOOLS, TOOLS_TAB, buttonRow, clampPaintTemp, entryForKey, entryKey, paintPreview, paintTarget, pickerTabs, searchEntries, stepPaintTemp, swatchColor,
@@ -148,6 +148,42 @@ describe('M8.1 AC31 paintTarget', () => {
     expect(target('CERAMIC_SHARDS', 3000), 'ceramic shards melt with ceramic').toEqual({ id: ELEMENT.MOLTEN_CERAMIC, ignites: false });
     expect(target('SAND', 2000), 'sand past its melting point is molten glass').toEqual({ id: ELEMENT.MOLTEN_GLASS, ignites: false });
     expect(target('FIRE', 1000)).toEqual({ id: ELEMENT.FIRE, ignites: false });
+  });
+
+  it('M12.14c AC7: writes the state its substance has at the temperature, for every row', () => {
+    const byKey = (k: string): ElementDef => ELEMENTS.find((e) => e.key === k)!;
+    // The state of the substance by its melt and boil alone, without following the table's thresholds.
+    const stateAt = (row: ElementDef, temp: number): number => {
+      const substance = substanceOf(row.id)!;
+      const { melt, boil } = substance;
+      const of = (kind: ElementDef['state']) => substance.states.find((s) => s.state === kind)!;
+      if (row.state === 'plasma' || row.id === ELEMENT.EMPTY) return row.id;
+      if (boil && temp > boil.temp) return of('gas').id;
+      if (melt && temp > melt.temp) return melt.into === undefined ? of('liquid').id : ELEMENT[melt.into as keyof typeof ELEMENT];
+      if (melt && temp < melt.temp) return row.state === 'solid' || row.state === 'powder' ? row.id : of('solid').id;
+      return boil && row.state === 'gas' ? of('liquid').id : row.id;
+    };
+    for (const row of ELEMENTS) {
+      const substance = substanceOf(row.id)!;
+      const edges = [substance.melt?.temp, substance.boil?.temp, byKey(row.key).above?.temp];
+      for (const temp of [-250, -220, -200, -100, -45, -10, 5, 20, 80, 120, 250, 300, 400, 700, 1100, 1300, 1450, 1650, 1800, 2000, 2500, 3500, 5000]) {
+        if (edges.includes(temp)) continue;
+        const target = paintTarget(ELEMENTS, row.id, temp);
+        const own = (substance.states.find((s) => s.key === row.key)!).above;
+        const ignites = own !== undefined && ELEMENTS.find((e) => e.key === own.becomes)!.state === 'plasma' && temp > own.temp;
+        expect(target, `${row.key} painted at ${temp} °C`).toEqual({ id: ignites ? row.id : stateAt(row, temp), ignites });
+      }
+    }
+  });
+
+  it('M12.14c AC7: names the substance\'s state for the examples of the plan', () => {
+    const name = (key: keyof typeof ELEMENT, temp: number) => paintPreview(ELEMENTS, ELEMENT[key], temp);
+    expect(name('WATER', -10)).toBe('→ Ice');
+    expect(name('SNOW', 10)).toBe('→ Water');
+    expect(name('SAND', 1800)).toBe('→ Molten glass');
+    expect(name('GRAVEL', 1300)).toBe('→ Lava');
+    expect(name('BRICK_RUBBLE', 3000)).toBe('→ Brick rubble');
+    expect(name('OIL', 300)).toBe('→ Oil (ignites)');
   });
 
   it('paints every row except EMPTY: it has a button, or a button row at its own temperature makes it', () => {
