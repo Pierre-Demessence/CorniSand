@@ -3,6 +3,7 @@ import { ROOM_TEMP } from '../heat';
 import type { ElementDef } from '../elements';
 import { wgslFloat } from '../movement';
 import { cellBindingsWGSL, cellTypesWGSL } from './cell.wgsl';
+import { edgesWGSL } from './edges.wgsl';
 import { elementsWGSL } from './elements.wgsl';
 
 // The air passes (`docs/simulation.md`, "Air"). The air is a staggered grid of `S x S` cells: per air cell, one
@@ -176,12 +177,23 @@ fn heatAt(a: i32, b: i32) -> f32 { if (!inArray(a, b)) { return 0.0; } return ai
 const GROUP = 'let a = i32(gid.x);\n  let b = i32(gid.y);\n  if (a >= AW || b >= AH) { return; }';
 const ENTRY = '@compute @workgroup_size(8, 8)\nfn main(@builtin(global_invocation_id) gid: vec3u)';
 
-/** The mask pass: openness of each face, matter share and heat holders of each air cell, from the cells' kinds. */
+/**
+ * The mask pass: openness of each face, matter share and heat holders of each air cell, from the cells' kinds. The edges
+ * uniform (group 3, binding 0: the edges word in its first word, `edgesWord`) closes the faces on a closed side of the
+ * world: the left faces of the ghost column, the bottom faces of the ghost row, and the right and top faces of the last
+ * air column and row (at `NX * S` and `NY * S`, so an air cell that hangs over the grid's edge counts as inside).
+ */
 export const airMaskWGSL = (elements: readonly ElementDef[], width: number, height: number, cellSize: number, substeps: number, nx: number, ny: number): string => /* wgsl */`
 ${cellTypesWGSL(elements)}
 ${cellBindingsWGSL('read', ['kind'])}
 ${elementsWGSL}
 ${prelude(width, height, cellSize, substeps, nx, ny)}
+${edgesWGSL}
+
+struct Edges {
+  open: u32,
+};
+@group(3) @binding(0) var<uniform> edges: Edges;
 
 fn solidAt(x: i32, y: i32) -> bool {
   if (x < 0 || x >= W || y < 0 || y >= H) { return false; }
@@ -236,7 +248,11 @@ ${ENTRY} {
       if (elHoldsHeat(t)) { heat++; }
     }
   }
-  mask[airIndex(a, b)] = vec4f(openRows(spanX0, spanX1, j * S), openColumns(i * S, spanY0, spanY1), f32(matter) / f32(S * S), f32(heat));
+  var openX = openRows(spanX0, spanX1, j * S);
+  var openY = openColumns(i * S, spanY0, spanY1);
+  if ((a == 0 && (edges.open & EDGE_LEFT) == 0u) || (a == NX && (edges.open & EDGE_RIGHT) == 0u)) { openX = 0.0; }
+  if ((b == 0 && (edges.open & EDGE_BOTTOM) == 0u) || (b == NY && (edges.open & EDGE_TOP) == 0u)) { openY = 0.0; }
+  mask[airIndex(a, b)] = vec4f(openX, openY, f32(matter) / f32(S * S), f32(heat));
 }
 `;
 

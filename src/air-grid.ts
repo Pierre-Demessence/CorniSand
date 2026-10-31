@@ -67,6 +67,7 @@ export class AirGrid {
   private readonly kindBindGroup?: GPUBindGroup;
   private readonly elementBindGroup?: GPUBindGroup;
   private readonly maskPass?: AirPass;
+  private readonly edgesBindGroup?: GPUBindGroup;
   private readonly windPass?: AirPass;
   private readonly windBindGroup?: GPUBindGroup;
   private readonly windUniform?: GPUBuffer;
@@ -80,7 +81,7 @@ export class AirGrid {
   private readonly mask?: GPUBuffer;
   private readonly rest?: Float32Array<ArrayBuffer>;
 
-  constructor(device: GPUDevice, width: number, height: number, options: AirOptions, fields: CellFields, elements: ElementTable) {
+  constructor(device: GPUDevice, width: number, height: number, options: AirOptions, fields: CellFields, elements: ElementTable, edgesUniform: GPUBuffer) {
     this.device = device;
     this.enabled = options.enabled;
     this.cellSize = options.cellSize;
@@ -120,9 +121,14 @@ export class AirGrid {
       compute: { module: device.createShaderModule({ code }), entryPoint: 'main' },
     });
     const shape = [width, height, this.cellSize, this.substeps, this.columns, this.rows] as const;
+    // The mask pass reads which sides of the world are closed from the Simulation's edges uniform.
+    const edgesLayout = device.createBindGroupLayout({
+      entries: [{ binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } }],
+    });
+    this.edgesBindGroup = device.createBindGroup({ layout: edgesLayout, entries: [{ binding: 0, resource: { buffer: edgesUniform } }] });
     this.maskPass = {
       label: 'air mask',
-      pipeline: pipeline(airMaskWGSL(elements.elements, ...shape), [layout, kind.layout, elements.layout]),
+      pipeline: pipeline(airMaskWGSL(elements.elements, ...shape), [layout, kind.layout, elements.layout, edgesLayout]),
     };
     // The Wind tool's uniform: written once per frame that has a stroke, before the pass that reads it is recorded.
     const windLayout = device.createBindGroupLayout({
@@ -163,6 +169,7 @@ export class AirGrid {
     pass.setBindGroup(0, this.bindGroup);
     pass.setBindGroup(1, this.kindBindGroup);
     pass.setBindGroup(2, this.elementBindGroup);
+    pass.setBindGroup(3, this.edgesBindGroup);
     this.dispatch(pass);
   }
 

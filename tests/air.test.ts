@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { AIR, AIR_CELL_SIZES, type AirCellSize } from '../src/air';
 import type { AirData } from '../src/air-grid';
 import { CELL_FIELDS } from '../src/cell-fields';
+import { ALL_CLOSED, ALL_OPEN, SIDES, type Side } from '../src/edges';
 import { ELEMENT as T } from '../src/elements';
 import { ROOM_TEMP } from '../src/heat';
 import { SCENES } from '../src/scenes';
@@ -165,6 +166,7 @@ describe.skipIf(!device)('M6 air', () => {
   });
 
   describe('AC4: a pulse leaves through an open edge', () => {
+    // The world is open on all four sides here (the default closes the floor), except where a test says otherwise.
     // The same pulse in a small grid and in one so large that its wave does not reach the edge in time: the difference
     // between the two is the echo of the small grid's edge.
     const SMALL = 128;
@@ -186,17 +188,33 @@ describe.skipIf(!device)('M6 air', () => {
       return frames;
     }
 
-    // The small grid's pressures over time (with a wall along its edge when `sealed`), the echo: the largest
+    // The small grid's pressures over time (with a wall drawn along its edge when `edge` is 'wall', or with its four
+    // sides closed ('closed') or one side closed (a side's name), no wall drawn), the echo: the largest
     // difference to the large grid's away from the edge band, and the incident peak: the largest |pressure| of the
     // large grid within the small grid's outermost ring of air cells.
-    async function echo(size: AirCellSize, sealed: boolean): Promise<{ small: Float32Array[]; echo: number; incident: number; start: number }> {
-      const large = createSim(LARGE, LARGE, 1, { airCellSize: size });
-      const small = createSim(SMALL, SMALL, 1, { airCellSize: size });
+    // The large grid's pressures per air cell size, run once: the same free wave is the reference of every case.
+    // The grid stays referenced: Dawn crashes the process when a simulation is collected while its device is in use.
+    const references = new Map<AirCellSize, Promise<Float32Array[]>>();
+    const referenceSims: Simulation[] = [];
+    function reference(size: AirCellSize): Promise<Float32Array[]> {
+      let frames = references.get(size);
+      if (!frames) {
+        const large = createSim(LARGE, LARGE, 1, { airCellSize: size, edges: ALL_OPEN });
+        large.air.load({ pressure: gaussian(large, large.air.columns / 2, large.air.rows / 2, SIGMA) });
+        referenceSims.push(large);
+        frames = pressures(large);
+        references.set(size, frames);
+      }
+      return frames;
+    }
+
+    async function echo(size: AirCellSize, edge: 'open' | 'wall' | 'closed' | Side): Promise<{ small: Float32Array[]; echo: number; incident: number; start: number }> {
+      const small = createSim(SMALL, SMALL, 1, { airCellSize: size, edges: edge === 'closed' ? ALL_CLOSED : edge === 'open' || edge === 'wall' ? ALL_OPEN : { ...ALL_OPEN, [edge]: 'closed' } });
       const pad = (LARGE - SMALL) / 2 / size;
-      large.air.load({ pressure: gaussian(large, large.air.columns / 2, large.air.rows / 2, SIGMA) });
+      const largeColumns = LARGE / size;
       const start = gaussian(small, small.air.columns / 2, small.air.rows / 2, SIGMA);
       small.air.load({ pressure: start });
-      if (sealed) {
+      if (edge === 'wall') {
         // A wall along the whole edge.
         const kind = new Uint32Array(SMALL * SMALL);
         for (let k = 0; k < SMALL; k++) {
@@ -205,7 +223,7 @@ describe.skipIf(!device)('M6 air', () => {
         loadScene(small, kind);
         small.air.load({ pressure: start });
       }
-      const [inSmall, inLarge] = [await pressures(small), await pressures(large)];
+      const [inSmall, inLarge] = [await pressures(small), await reference(size)];
 
       let worst = 0;
       let incident = 0;
@@ -213,7 +231,7 @@ describe.skipIf(!device)('M6 air', () => {
       for (let t = 0; t < STEPS; t++) {
         for (let j = 0; j < rows; j++) {
           for (let i = 0; i < columns; i++) {
-            const ideal = inLarge[t][(j + pad) * large.air.columns + i + pad];
+            const ideal = inLarge[t][(j + pad) * largeColumns + i + pad];
             const toEdge = Math.min(i, j, columns - 1 - i, rows - 1 - j) * size + size / 2;
             if (toEdge >= EDGE_BAND) worst = Math.max(worst, Math.abs(inSmall[t][j * columns + i] - ideal));
             if (toEdge < size) incident = Math.max(incident, Math.abs(ideal));
@@ -224,7 +242,7 @@ describe.skipIf(!device)('M6 air', () => {
     }
 
     it.each(SIZES)('M6 AC4: at size %i the echo of an open edge is under 30% of what arrived, and the pressure drains', async (size) => {
-      const { small, echo: worst, incident, start } = await echo(size, false);
+      const { small, echo: worst, incident, start } = await echo(size, 'open');
       const totals = small.map((frame) => frame.reduce((sum, p) => sum + Math.abs(p), 0) / start);
       expect(incident, 'the wave arrived').toBeGreaterThan(0.05);
       expect(worst / incident, 'echo over incident peak').toBeLessThan(0.3);
@@ -233,7 +251,19 @@ describe.skipIf(!device)('M6 air', () => {
     });
 
     it.each(SIZES)('M6 AC4 control: at size %i a wall along the edge reflects the pulse', async (size) => {
-      const { echo: worst, incident } = await echo(size, true);
+      const { echo: worst, incident } = await echo(size, 'wall');
+      expect(worst / incident, 'echo over incident peak').toBeGreaterThan(0.5);
+    });
+
+    // I41.2 AC5: a closed side seals the air with no wall drawn, as the drawn wall ring does.
+    it.each(SIZES)('I41.2 AC5: at size %i the four sides closed with no wall drawn reflect the pulse', async (size) => {
+      const { echo: worst, incident } = await echo(size, 'closed');
+      expect(worst / incident, 'echo over incident peak').toBeGreaterThan(0.5);
+    });
+
+    // Each side alone: the same, with only that side closed.
+    it.each(SIDES.map((side) => [4, side] as const))('I41.2 AC5: at size %i the %s side closed alone reflects the pulse', async (size, side) => {
+      const { echo: worst, incident } = await echo(size, side);
       expect(worst / incident, 'echo over incident peak').toBeGreaterThan(0.5);
     });
   });

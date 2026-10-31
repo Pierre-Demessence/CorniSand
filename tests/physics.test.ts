@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { ALL_CLOSED } from '../src/edges';
 import { tempView } from '../src/cell-fields';
 import { ELEMENT as T, ELEMENTS, elementByKey, elementConductivity, elementHeatCapacity, type ElementDef } from '../src/elements';
 import { ABSOLUTE_ZERO, CONDUCTION, HEAT_TOOL_RATE, effectiveTemp, heatShare } from '../src/heat';
@@ -10,7 +11,8 @@ import { TOOLS } from '../src/toolbar';
 import { cell, createSim, device, idleInput, readCells, run, runMany } from './gpu';
 import { control, scenario } from './scenario';
 
-const NO_AIR = { air: false };
+// The grids hold matter at their edges: every side closed (I41.2: the default opens the left, right and top sides, which delete the matter that crosses them).
+const NO_AIR = { air: false, edges: ALL_CLOSED };
 
 describe('M8.8 AC1: the physical scale', () => {
   it('M8.8 AC1: derives the cell size and the dispatch time from the gravity and 480 dispatches per second', () => {

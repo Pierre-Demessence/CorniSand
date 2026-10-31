@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { CELL_FIELDS } from '../src/cell-fields';
+import { ALL_CLOSED } from '../src/edges';
 import { ELEMENT as T, ELEMENTS, elementByKey, elementGravity } from '../src/elements';
 import { Display } from '../src/display';
 import { packHalf2, unpackHalf2 } from '../src/half';
@@ -17,6 +18,8 @@ function emptyGrid(width: number, height: number): Uint32Array<ArrayBuffer> {
   return new Uint32Array(width * height);
 }
 
+// The tests that count cells or follow a grain run with every side closed where their scene has matter or smoke at a side
+// or under the top: the default opens the left, right and top sides, which delete what crosses them (tests/edges.test.ts).
 describe.skipIf(!device)('GPU simulation', () => {
   it('oil beside fire and water ignites, burns for a step and goes out the step after', async () => {
     // A sealed 2x2 chamber (walls all around) so nothing moves: oil bottom-left, water bottom-right, fire above the
@@ -48,7 +51,7 @@ describe.skipIf(!device)('GPU simulation', () => {
     // A 20x5 oil block resting in a walled tank, a row of fire on top of it.
     const width = 30;
     const height = 24;
-    const sim = createSim(width, height);
+    const sim = createSim(width, height, 1, { edges: ALL_CLOSED });
     const cells = emptyGrid(width, height);
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
@@ -111,7 +114,7 @@ describe.skipIf(!device)('GPU simulation', () => {
     const width = 12;
     const height = 30;
     const depth = 10;
-    const sim = createSim(width, height);
+    const sim = createSim(width, height, 1, { edges: ALL_CLOSED });
     const cells = emptyGrid(width, height);
     for (let y = 0; y < depth; y++) {
       for (let x = 0; x < width; x++) cells[y * width + x] = cell(liquid);
@@ -228,7 +231,7 @@ describe.skipIf(!device)('GPU simulation', () => {
   it('D5: a random scene on an odd-sized grid conserves every particle type', async () => {
     const width = 101;
     const height = 67;
-    const sim = createSim(width, height, 3);
+    const sim = createSim(width, height, 3, { edges: ALL_CLOSED });
     const rand = mulberry32(99);
     const kinds = [T.EMPTY, T.EMPTY, T.SAND, T.WATER, T.OIL, T.SMOKE, T.WALL];
     const cells = emptyGrid(width, height);
@@ -518,7 +521,7 @@ describe.skipIf(!device)('GPU simulation', () => {
   it('AC9: cells carry every field with them: falling sand grains keep their life word', async () => {
     const width = 40;
     const height = 60;
-    const sim = createSim(width, height, 5);
+    const sim = createSim(width, height, 5, { edges: ALL_CLOSED });
     const kind = emptyGrid(width, height);
     const life = emptyGrid(width, height);
     // Every other cell of two rows, each grain with its own life word.

@@ -1,6 +1,6 @@
 # I41 World edges
 
-Status: approved; the GPU bench steps are left out at the user's request (no bench before or after, no `Bench pending`); next I41.2.
+Status: approved; the GPU bench steps are left out at the user's request (no bench before or after, no `Bench pending`); next I41.3.
 
 ## Goal
 
@@ -63,10 +63,14 @@ Needs you: nothing.
 
 ### I41.2 Closed sides seal the air; the floor-only default
 
-- [ ] Mask pass: bind the edges uniform, close a closed side's edge faces; tests for AC5.
-- [ ] `Simulation` default to `DEFAULT_EDGES`; the AC6 test; migrate the suite by the rule above and log every re-measured bar here.
-- [ ] `docs/simulation.md` "Walls and edges", the `AGENTS.md` air invariant ("The world's edge is open air…"), `README.md` (the air line).
+- [x] Mask pass: bind the edges uniform, close a closed side's edge faces; tests for AC5.
+- [x] `Simulation` default to `DEFAULT_EDGES`; the AC6 test; migrate the suite by the rule above and log every re-measured bar here.
+- [x] `docs/simulation.md` "Walls and edges", the `AGENTS.md` air invariant ("The world's edge is open air…"), `README.md` (the air line).
 
+Decided during the run: the mask pass binds the edges uniform that `Simulation` already writes each frame (the `AirGrid` constructor takes the buffer, group 3 of the mask pipeline), instead of `AirGrid` owning a second copy of the word. Why: one writer, and the air sees the same edges as the CA and the flight pass in the same frame. The alternative is a separate uniform written by `setEdges`; to change it, give `AirGrid` its own buffer and a `setEdges`.
+Decided during the run: tests whose experiment needs matter or air kept at a side run with `ALL_CLOSED`, stated in the test or in its `NO_AIR` constant (`heat`, `materials`, `molten`, `physics`: the existing `NO_AIR` options gain `edges: ALL_CLOSED`; `simulation` fire-burns-oil, AC7 smoke, D5 and AC9; `air-matter` AC7/AC8; `air-heat` AC17); `air.test.ts` AC4 runs `ALL_OPEN`. Every such run is bit for bit what it was under I41.1's default, so no bar of those moved. The alternative is a per-test wall box; to change it, draw walls and drop the option.
+Re-measured bar (AC9): `air-heat` AC17 (steam in a box, M8.8 AC8). Before: the box's air had an open edge and the matter did not, mean steam temperature 96.3 °C after 3,600 supersteps, bar under 100. After, in a world closed on all sides (the steam must stay in; with an open top it leaves): 105.4 °C, bar under 108, because the sealed box's air cannot carry the heat away. Steam count stays 64 and the no-air control stays at 110.
+Tests added for AC5: `tests/air.test.ts` (all four sides closed with no wall drawn reflect the pulse over 0.5, each side closed alone at size 4; the open-edge tests run `ALL_OPEN`) and `tests/air-heat.test.ts` (a world closed on all sides with no wall drawn keeps its total heat within 1e-4 over 1,000 supersteps, with an all-open control that loses over 1%); AC6 in `tests/edges.test.ts`. The bench (`tests/bench.gpu.ts`) is set to `ALL_CLOSED`, not run.
 Visible after: in every scene and on an empty field, smoke, steam and other gases leave through the top, and sand or water that reaches a side leaves through it; things still pile on the floor; heat and pressure still leave through the top and sides, but no longer through the floor.
 Needs you: nothing: covered by tests (`?scene=plume` shows smoke leaving through the top).
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { tempView } from '../src/cell-fields';
 import { ELEMENT as T, ELEMENTS, elementByKey, elementConductivity, elementHeatCapacity, elementTemperature, type ElementDef } from '../src/elements';
+import { ALL_CLOSED } from '../src/edges';
 import { packHalf2 } from '../src/half';
 import { ABSOLUTE_ZERO, HEAT_TOOL_RATE, MAX_TEMP, ROOM_TEMP, effectiveTemp, heatShare } from '../src/heat';
 import { HEAT_BARS, ICE_LAVA, MOLTEN_METAL, STEAM_CEILING, SCENES } from '../src/scenes';
@@ -17,7 +18,9 @@ const FIRE_TEMP = 1000;
 // With the air on, a cell in open space also trades heat with it and a sealed box loses the air's share, which the
 // ambient heat tests of tests/air-heat.test.ts cover, so the tests that measure a cell's own temperature or the box's
 // total without the air run in the mode they were written for.
-const NO_AIR = { air: false };
+// They also run with every side closed: the grids here are boxes of walls or bare rows whose cells must stay put
+// (I41.2: the default opens the left, right and top sides, which delete the matter that crosses them).
+const NO_AIR = { air: false, edges: ALL_CLOSED };
 
 // The `temp` words of a grid where every cell holds `temp` °C.
 function uniformTemps(cellCount: number, temp: number): Uint32Array<ArrayBuffer> {

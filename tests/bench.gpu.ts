@@ -1,6 +1,7 @@
 import { writeFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { type CellData, tempView } from '../src/cell-fields';
+import { ALL_CLOSED } from '../src/edges';
 import { ELEMENT as T } from '../src/elements';
 import { packHalf2 } from '../src/half';
 import { AIR_CELL_SIZES, type AirCellSize } from '../src/air';
@@ -11,6 +12,7 @@ import { Simulation } from '../src/simulation';
 import { cell, createDevice, idleInput } from './gpu';
 import { mulberry32 } from '../src/random';
 
+// Every simulation runs with all sides closed, so a full grid keeps its matter (the game's default opens the sides and the top).
 // GPU time per frame at 2560x1340, the screen-sized grid, from timestamp queries. Run with `npm run bench`; only
 // numbers from the RTX 4080 count, the machine also has an Intel iGPU. The element engine stays under 4 ms per 1x
 // frame (docs/powder-toy.md, "Frame budget").
@@ -268,7 +270,7 @@ describe.skipIf(!device)('bench', () => {
       if (look === undefined) throw new Error(`BENCH_LOOKS: "${entry}" is not one of ${LOOKS.join(', ')}`);
       return look;
     });
-    const burner = new Simulation(dev, WIDTH, HEIGHT, { seedSource: mulberry32(2) });
+    const burner = new Simulation(dev, WIDTH, HEIGHT, { seedSource: mulberry32(2), edges: ALL_CLOSED });
     burner.load(full100Scene());
     const burnerRenderer: Renderer = {
       display: new Display(dev, 'bgra8unorm', WIDTH, HEIGHT, burner.fields, burner.elements, burner.flyers.overlay, { air: burner.air }),
@@ -284,7 +286,7 @@ describe.skipIf(!device)('bench', () => {
     for (const { label: air, options: airOptions } of airRuns) for (const { name, build, warmup } of scenes) {
       if (only && !only.includes(name)) continue;
       const fields = build();
-      const sim = new Simulation(dev, WIDTH, HEIGHT, { seedSource: mulberry32(1), ...airOptions });
+      const sim = new Simulation(dev, WIDTH, HEIGHT, { seedSource: mulberry32(1), edges: ALL_CLOSED, ...airOptions });
       // Dawn compiles a pipeline on its first use: not inside a measured frame.
       sim.load(fields);
       const renderer: Renderer = {
@@ -345,7 +347,7 @@ describe.skipIf(!device)('bench', () => {
     const dev = device!;
     const timeOnce = async (width: number, height: number): Promise<{ grid: string; createMs: number; firstFrameMs: number }> => {
       const created = performance.now();
-      const sim = new Simulation(dev, width, height, { seedSource: mulberry32(1) });
+      const sim = new Simulation(dev, width, height, { seedSource: mulberry32(1), edges: ALL_CLOSED });
       const createMs = performance.now() - created;
       const encoder = dev.createCommandEncoder();
       sim.simulate(encoder, 2, idleInput);

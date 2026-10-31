@@ -10,7 +10,7 @@ import { ROOM_TEMP } from './heat';
 import { paintTarget } from './toolbar';
 import { CellFields } from './cell-field-buffers';
 import { FIELD_BYTES, tempView, type CellData } from './cell-fields';
-import { ALL_CLOSED, edgesWord, type Edges } from './edges';
+import { DEFAULT_EDGES, edgesWord, type Edges } from './edges';
 import { Flyers } from './flyers';
 import type { Vec2 } from './input';
 import { MOVEMENT } from './movement';
@@ -61,7 +61,7 @@ export interface SimulationOptions {
   // Grid cells per air cell along each axis (default 4).
   airCellSize?: AirCellSize;
   // Which sides of the world are open (matter that crosses one is gone) or closed (an endless wall); `setEdges` changes it.
-  // Default: all closed.
+  // Default: `DEFAULT_EDGES` (the floor closed, the other sides open).
   edges?: Edges;
 }
 
@@ -119,7 +119,7 @@ export class Simulation {
     this.width = width;
     this.height = height;
     this.seedSource = options.seedSource ?? defaultSeedSource;
-    this.edges = options.edges ?? ALL_CLOSED;
+    this.edges = options.edges ?? DEFAULT_EDGES;
     this.edgesBuffer = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     device.queue.writeBuffer(this.edgesBuffer, 0, new Uint32Array([edgesWord(this.edges), 0, 0, 0]));
 
@@ -151,6 +151,7 @@ export class Simulation {
       { enabled: options.air ?? defaultAirOptions.enabled, cellSize: options.airCellSize ?? defaultAirOptions.cellSize },
       this.fields,
       this.elements,
+      this.edgesBuffer,
     );
 
     this.flyers = new Flyers(device, width, height, this.fields, this.elements, this.brushUniformBuffer, this.edgesBuffer, options.maxFlyers ?? MOVEMENT.maxFlyers, this.air.state && this.air.burst && this.air.shape ? { state: this.air.state, burst: this.air.burst, shape: this.air.shape } : undefined);

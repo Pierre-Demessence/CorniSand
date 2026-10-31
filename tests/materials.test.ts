@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { ALL_CLOSED } from '../src/edges';
 import { tempView } from '../src/cell-fields';
 import { ELEMENT as T, ELEMENTS, cellName, elementByKey, elementConductivity, elementHeatCapacity, elementTemperature, validateElements, type ElementDef } from '../src/elements';
 import { effectiveTemp } from '../src/heat';
@@ -18,7 +19,8 @@ import { control, scenario, waitsFor } from './scenario';
 
 // The materials of M8.1 and what they do: the rows (this file), then each one's main behavior as a scene test.
 
-const NO_AIR = { air: false };
+// The grids hold matter at their edges: every side closed (I41.2: the default opens the left, right and top sides, which delete the matter that crosses them).
+const NO_AIR = { air: false, edges: ALL_CLOSED };
 const typeOf = (kind: number): number => kind & 0xff;
 
 // A row of single cells at the given stored temperatures, each beside a wall (which holds no heat), run for `supersteps`.
@@ -177,7 +179,7 @@ describe.skipIf(!device)('M8.1 AC9 and AC10: each M8.1f metal melts into a molte
   it('keeps the total heat of a sealed box of the new rows, solid and molten, over 2,000 supersteps', async () => {
     const width = 48;
     const height = 40;
-    const sim = createSim(width, height, 10, { elements: ELEMENTS, air: false });
+    const sim = createSim(width, height, 10, { elements: ELEMENTS, ...NO_AIR });
     const next = mulberry32(10);
     const rand = (): number => next() / 2 ** 32;
     // [element, lowest and highest start temperature], across the thresholds of each row.
@@ -211,7 +213,7 @@ describe.skipIf(!device)('M8.1 AC9 and AC10: each M8.1f metal melts into a molte
   }, 120_000);
 });
 
-const NO_AIR_OPTIONS = { air: false };
+const NO_AIR_OPTIONS = { air: false, edges: ALL_CLOSED };
 
 describe.skipIf(!device)('metalBars', () => {
   // Experiment: heat crossing sealed bars of steel, copper, gold, aluminium, titanium and diamond of one size (40 cells), the
@@ -497,7 +499,7 @@ describe.skipIf(!device)('M8.1 AC17 and AC10: the M8.1g transitions', () => {
   it('keeps the total heat of a sealed box of the M8.1g rows over 2,000 supersteps', async () => {
     const width = 48;
     const height = 40;
-    const sim = createSim(width, height, 11, { elements: ELEMENTS, air: false });
+    const sim = createSim(width, height, 11, { elements: ELEMENTS, ...NO_AIR });
     const next = mulberry32(11);
     const rand = (): number => next() / 2 ** 32;
     const range: [number, number, number][] = [

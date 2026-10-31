@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { ALL_CLOSED } from '../src/edges';
 import { tempView } from '../src/cell-fields';
 import { PROP_FIELDS, ROW_BYTES, packElements } from '../src/element-table';
 import { ELEMENT as T, ELEMENTS, elementByKey, elementConductivity, elementHeatCapacity, validateElements, type ElementDef } from '../src/elements';
@@ -10,7 +11,8 @@ import { MELTS, MOLTEN_LIQUIDS, MOLTEN_TABLE, OTHER_MELTS } from './molten-table
 // The melts (M12.14a): each material that melts has a liquid row of its own, which sets back into the material's solid, and
 // a cell keeps nothing of what it melted from: its `kind` bits 16-31 stay 0. The table is the default one.
 
-const NO_AIR = { air: false };
+// The grids hold matter at their edges: every side closed (I41.2: the default opens the left, right and top sides, which delete the matter that crosses them).
+const NO_AIR = { air: false, edges: ALL_CLOSED };
 const typeOf = (kind: number): number => kind & 0xff;
 
 // A row of cells at the given stored temperatures, run for `supersteps`; the walls in it conduct nothing and never move.

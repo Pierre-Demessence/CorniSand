@@ -164,3 +164,36 @@ describe.skipIf(!device)('AC3: a flyer that crosses an open side is removed', ()
     expect(await open.readParticleCount(), 'particle count with the side open').toBe(0);
   });
 });
+
+describe.skipIf(!device)('AC6: with no edges given, the floor is closed and the other sides open', () => {
+  const size = 16;
+  // A grain that rolls off the pile can slide a few cells along the floor, so the sand pile has room beside it.
+  const wide = 48;
+
+  it.each([[{ air: false }], [{}]])('sand dropped on an empty grid piles on the floor, and smoke leaves through the top (options %j)', async (options) => {
+    const sand = new Uint32Array(wide * size);
+    for (let y = 6; y < 8; y++) for (let x = 23; x < 26; x++) sand[y * wide + x] = cell(T.SAND);
+    const pile = createSim(wide, size, 1, options);
+    loadScene(pile, sand);
+    await runMany(pile, 1500);
+    expect(await matter(pile), 'sand kept').toBe(6);
+    const after = await readCells(pile);
+    expect(after.slice(0, wide).filter((word) => word === cell(T.SAND)).length, 'sand cells on the floor row').toBeGreaterThan(0);
+
+    const smoke = new Uint32Array(size * size);
+    for (let y = 8; y < 12; y++) for (let x = 6; x < 10; x++) smoke[y * size + x] = cell(T.SMOKE);
+    const plume = createSim(size, size, 1, options);
+    loadScene(plume, smoke);
+    await runMany(plume, 1500);
+    expect(await matter(plume), 'smoke left through the open top').toBe(0);
+  });
+
+  it('water against a side leaves through it with no edges given', async () => {
+    const water = new Uint32Array(size * size);
+    for (let y = 1; y < 4; y++) for (let x = 0; x < 3; x++) water[y * size + x] = cell(T.WATER);
+    const sim = createSim(size, size, 1, { air: false });
+    loadScene(sim, water);
+    await runMany(sim, 1500);
+    expect(await matter(sim), 'water left through the open left side').toBeLessThan(9);
+  });
+});

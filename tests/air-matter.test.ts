@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { AIR } from '../src/air';
+import { ALL_CLOSED } from '../src/edges';
 import { ELEMENT as T, ELEMENTS, elementByKey, elementDrag, elementGravity } from '../src/elements';
 import { fromHalf, packHalf2, toHalf, unpackHalf2 } from '../src/half';
 import { caWGSL } from '../src/shaders/ca.wgsl';
@@ -272,6 +273,8 @@ describe.skipIf(!device)('M6 air moves matter', () => {
     const MEASURED_GROWTH = 2.6;
     const RADII = [16, 24, 32, 40, 48];
 
+    // The tagged grains are tracked in the grid or in flight, so the world is closed on all sides: a grain thrown out of the
+    // top would be gone (I41.2).
     // A sand layer in a tank with a floor and side walls, open at the top, with a wall across it at `wallX`; tagged grains
     // (a variant 1 to 255) on a lattice where the layer is sand, from x0 to x1.
     function layer(x0: number, x1: number, xStep: number, wallX?: number): Kinds {
@@ -295,7 +298,7 @@ describe.skipIf(!device)('M6 air moves matter', () => {
     const center = (sim: Simulation, i0: number): Grain => ({ x: i0 * sim.air.cellSize + sim.air.cellSize / 2, y: CENTER_ROW * sim.air.cellSize + sim.air.cellSize / 2 });
 
     it('M6 AC7: the pressure peak arrives at increasing radii in proportion to the radius, at about AIR.waveSpeed', async () => {
-      const sim = createSim(WIDTH, HEIGHT, 3);
+      const sim = createSim(WIDTH, HEIGHT, 3, { edges: ALL_CLOSED });
       sim.load({ kind: layer(100, 156, 4).kind });
       const { columns, cellSize } = sim.air;
       const i0 = columns / 2;
@@ -339,7 +342,7 @@ describe.skipIf(!device)('M6 air moves matter', () => {
     }
 
     it('M6 AC7: a pulse inside a layer of sand throws the sand outward, and without it no grain moves', async () => {
-      const sim = createSim(WIDTH, HEIGHT, 3);
+      const sim = createSim(WIDTH, HEIGHT, 3, { edges: ALL_CLOSED });
       sim.load({ kind: layer(100, 156, 4).kind });
       const at = center(sim, sim.air.columns / 2);
       const start = await tagged(sim);
@@ -362,7 +365,7 @@ describe.skipIf(!device)('M6 air moves matter', () => {
     it('M6 AC8: a wall between the pulse and a pile keeps every grain of the pile within a cell of where it was', async () => {
       const WALL_X = 128;
       const kinds = layer(8, 248, 16, WALL_X);
-      const sim = createSim(WIDTH, HEIGHT, 3);
+      const sim = createSim(WIDTH, HEIGHT, 3, { edges: ALL_CLOSED });
       sim.load({ kind: kinds.kind });
       const i0 = 16;
       sim.air.load({ pressure: gaussian(sim, i0, CENTER_ROW, SIGMA, undefined, PEAK) });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { AIR, airShare, type AirCellSize } from '../src/air';
 import { emptyCellData, tempView } from '../src/cell-fields';
+import { ALL_CLOSED, ALL_OPEN, type Edges } from '../src/edges';
 import { ELEMENT as T, ELEMENTS, elementByKey, elementHeatCapacity, type ElementDef } from '../src/elements';
 import { packHalf2 } from '../src/half';
 import { ROOM_TEMP } from '../src/heat';
@@ -280,6 +281,46 @@ describe.skipIf(!device)('M6 ambient heat', () => {
     }, 120_000);
   });
 
+  describe('I41.2 AC5: closed sides keep the heat in', () => {
+    // A random mix of every state with no wall drawn anywhere, over `steps` supersteps at `edges`: the relative change of
+    // the total heat of cells, flyers and air.
+    async function change(edges: Edges, steps: number): Promise<number> {
+      const [width, height] = [40, 32];
+      const sim = createSim(width, height, 15, { edges });
+      const next = mulberry32(8);
+      const rand = (): number => next() / 2 ** 32;
+      const range: [number, number, number][] = [
+        [T.ICE, -100, 300], [T.WATER, -100, 1500], [T.STEAM, -150, 300], [T.STONE, 800, 1500],
+        [T.LAVA, 900, 1500], [T.METAL, 1300, 1900], [T.SAND, 0, 200], [T.EMPTY, 0, 0],
+      ];
+      const world = new World(width, height);
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const [type, low, high] = range[Math.floor(rand() * range.length)];
+          world.fill(type, x, x + 1, y, y + 1, type === T.EMPTY ? ROOM_TEMP : low + rand() * (high - low));
+        }
+      }
+      sim.load(world.data);
+      const measure = async (): Promise<number> => heatContent(
+        ELEMENTS,
+        { kind: await readCells(sim), temp: await sim.fields.read('temp') },
+        await sim.flyers.read(),
+        { data: await sim.air.read(), cellSize: sim.air.cellSize },
+      );
+      const before = await measure();
+      await runMany(sim, steps);
+      return Math.abs((await measure()) - before) / Math.abs(before);
+    }
+
+    it('I41.2 AC5: a world closed on all four sides with no wall drawn keeps the total heat of its cells, flyers and air over 1,000 supersteps', async () => {
+      expect(await change(ALL_CLOSED, 1000), 'relative change of the total heat').toBeLessThan(1e-4);
+    }, 120_000);
+
+    it('I41.2 AC5 control: the same world open on all four sides loses heat with the matter and the air that leave', async () => {
+      expect(await change(ALL_OPEN, 1000), 'relative change of the total heat').toBeGreaterThan(1e-2);
+    }, 120_000);
+  });
+
   describe('AC16: the plume', () => {
     // The plume scene with its plate at `plateTemp`, run for `steps` supersteps; the air over the plate.
     async function overPlate(plateTemp: number, steps: number): Promise<{ speed: number; warmth: number; sim: Simulation }> {
@@ -322,7 +363,8 @@ describe.skipIf(!device)('M6 ambient heat', () => {
     // supersteps, and the mean stored temperature of the steam.
     async function release(options: { air: boolean }, steps: number): Promise<{ counts: Map<number, number>; steam: number }> {
       const world = new World(128, 192).box().fill(T.STEAM, 60, 68, 20, 28, 110);
-      const sim = createSim(128, 192, 1, options);
+      // Closed on all sides: the steam must stay in the box to give its heat to the air (an open top lets it out).
+      const sim = createSim(128, 192, 1, { ...options, edges: ALL_CLOSED });
       sim.load(world.data);
       await runMany(sim, steps, FRAME_SUPERSTEPS);
       return { counts: countTypes(await readCells(sim)), steam: await meanTemp(sim, T.STEAM) };
@@ -330,11 +372,13 @@ describe.skipIf(!device)('M6 ambient heat', () => {
 
     // M8.8d: a steam cell holds the latent heat of a cell of water, 2,257 MJ/m³, and air holds 0.0012 MJ/m³·K: warming a
     // cell's worth of air from 20 to 100 °C takes it 23,500 cells of air, so 64 cells of steam in a box of 24,576 cells
-    // (the world's open edge aside) condense only as the air is replaced, which is far slower than the test runs.
+    // condense only as the air is replaced, which is far slower than the test runs (the box here is closed, so it is never).
     it('M8.8 AC8: steam released into open air at room temperature gives its heat to the air down to its condensing point within the measured number of supersteps', async () => {
       const { counts, steam } = await release({ air: true }, STEAM_STEPS);
       expect(counts.get(T.STEAM), 'steam left').toBe(64);
-      expect(steam, 'mean stored temperature of the steam, measured 96.3').toBeLessThan(100);
+      // I41.2: in a world closed on all sides (the steam must stay in) the air of the box cannot carry the heat away through
+      // an open edge, so the steam cools less: 105.4 here, 96.3 when the box's air had an open edge and the matter did not.
+      expect(steam, 'mean stored temperature of the steam, measured 105.4').toBeLessThan(108);
     }, 60_000);
 
     it('M6 AC17: without the air the same steam stays steam, at its temperature', async () => {
