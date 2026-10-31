@@ -36,7 +36,7 @@ describe('M8.1 AC2 picker tabs', () => {
   it('lists the current elements by category in toolbar order', () => {
     const byTab = Object.fromEntries(tabs.map((t) => [t.name, labels(t.entries)]));
     expect(byTab).toEqual({
-      Powders: ['Sand', 'Gravel', 'Snow', 'Broken glass', 'Sawdust'],
+      Powders: ['Sand', 'Gravel', 'Snow', 'Broken glass', 'Sawdust', 'Brick rubble', 'Ceramic shards'],
       Liquids: ['Water', 'Oil', 'Mercury'],
       Gases: ['Smoke', 'Nitrogen'],
       Solids: ['Wall', 'Basalt', 'Glass', 'Brick', 'Ceramic', 'Diamond', 'Aerogel', 'Wax'],
@@ -49,8 +49,8 @@ describe('M8.1 AC2 picker tabs', () => {
   it('follows a table: an extra row appears at its position, a row without a position or a category does not', () => {
     const before = ELEMENTS.map((e: ElementDef) => (e.key === 'SAND' ? { ...e, toolbar: 70 } : e));
     const powders = (table: readonly ElementDef[]) => labels(pickerTabs(table).find((t) => t.name === 'Powders')!.entries);
-    expect(powders([...before, { ...MUD, toolbar: 1 }])).toEqual(['Mud', 'Gravel', 'Snow', 'Broken glass', 'Sawdust', 'Sand']);
-    expect(powders([...ELEMENTS, { ...MUD, toolbar: undefined }])).toEqual(['Sand', 'Gravel', 'Snow', 'Broken glass', 'Sawdust']);
+    expect(powders([...before, { ...MUD, toolbar: 1 }])).toEqual(['Mud', 'Gravel', 'Snow', 'Broken glass', 'Sawdust', 'Brick rubble', 'Ceramic shards', 'Sand']);
+    expect(powders([...ELEMENTS, { ...MUD, toolbar: undefined }])).toEqual(['Sand', 'Gravel', 'Snow', 'Broken glass', 'Sawdust', 'Brick rubble', 'Ceramic shards']);
     expect(pickerTabs([...ELEMENTS, { ...MUD, category: 'Life' }]).map((t) => t.name)).toContain('Life');
   });
 
@@ -86,7 +86,7 @@ describe('M8.1 AC4 search', () => {
   it('matches the label ignoring case, in tab order', () => {
     expect(labels(searchEntries(tabs, 'ea'))).toEqual(['Heat']);
     expect(labels(searchEntries(tabs, 'SAND'))).toEqual(['Sand']);
-    expect(labels(searchEntries(tabs, 'l'))).toEqual(['Gravel', 'Broken glass', 'Oil', 'Wall', 'Basalt', 'Glass', 'Aerogel', 'Steel', 'Aluminium', 'Gold', 'Cool']);
+    expect(labels(searchEntries(tabs, 'l'))).toEqual(['Gravel', 'Broken glass', 'Brick rubble', 'Oil', 'Wall', 'Basalt', 'Glass', 'Aerogel', 'Steel', 'Aluminium', 'Gold', 'Cool']);
   });
 
   it('finds tools as well as elements', () => {
@@ -144,6 +144,8 @@ describe('M8.1 AC31 paintTarget', () => {
 
   it('gives a row with nothing to pass back as itself', () => {
     expect(target('BRICK', 9000)).toEqual({ id: ELEMENT.BRICK, ignites: false });
+    expect(target('BRICK_RUBBLE', 3000), 'brick rubble never melts').toEqual({ id: ELEMENT.BRICK_RUBBLE, ignites: false });
+    expect(target('CERAMIC_SHARDS', 3000), 'ceramic shards melt with ceramic').toEqual({ id: ELEMENT.MOLTEN_CERAMIC, ignites: false });
     expect(target('SAND', 2000), 'sand past its melting point is molten glass').toEqual({ id: ELEMENT.MOLTEN_GLASS, ignites: false });
     expect(target('FIRE', 1000)).toEqual({ id: ELEMENT.FIRE, ignites: false });
   });

@@ -45,7 +45,7 @@ describe('M8.1e rows', () => {
     expect(row$('STONE').label).toBe('Basalt');
     expect(cellName(ELEMENTS, T.LAVA), 'melted basalt').toBe('Lava');
     expect(row$('STONE').pressureAbove?.becomes).toBe('GRAVEL');
-    expect(row$('BRICK').pressureAbove?.becomes).toBe('GRAVEL');
+    expect(row$('BRICK').pressureAbove?.becomes).toBe('BRICK_RUBBLE');
     expect(row$('GLASS').pressureAbove?.becomes).toBe('BROKEN_GLASS');
     expect(row$('ICE').pressureAbove?.becomes).toBe('SNOW');
   });
@@ -61,6 +61,8 @@ describe('M8.1e rows', () => {
     expect(elementHeatCapacity(row$('GRAVEL'))).toBe(elementHeatCapacity(row$('STONE')));
     expect(elementHeatCapacity(row$('SNOW'))).toBe(elementHeatCapacity(row$('ICE')));
     expect(elementHeatCapacity(row$('BROKEN_GLASS'))).toBe(elementHeatCapacity(row$('GLASS')));
+    expect(elementHeatCapacity(row$('BRICK_RUBBLE'))).toBe(elementHeatCapacity(row$('BRICK')));
+    expect(elementHeatCapacity(row$('CERAMIC_SHARDS'))).toBe(elementHeatCapacity(row$('CERAMIC')));
   });
 });
 
@@ -438,6 +440,7 @@ describe('M8.1 AC17 and AC31: the M8.1g rows', () => {
   it('lists sawdust, mercury, nitrogen and wax in their tabs, and the rest only through a paint temperature', () => {
     const tab = (name: string): string[] => pickerTabs(ELEMENTS).find((t) => t.name === name)!.entries.map((e) => e.label);
     expect(tab('Powders')).toContain('Sawdust');
+    expect(tab('Powders')).toEqual(expect.arrayContaining(['Brick rubble', 'Ceramic shards']));
     expect(tab('Liquids')).toContain('Mercury');
     expect(tab('Gases')).toContain('Nitrogen');
     expect(tab('Solids')).toContain('Wax');

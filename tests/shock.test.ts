@@ -47,12 +47,12 @@ describe('M8.1 AC27: the shock limits', () => {
     }
   });
 
-  it('cracks into the broken form of the crush, and ceramic (with none) into gravel', () => {
+  it('cracks into the broken form of the crush, and ceramic (with none) into ceramic shards', () => {
     expect(crackTarget(row$('GLASS'))).toBe('BROKEN_GLASS');
     expect(crackTarget(row$('ICE'))).toBe('SNOW');
     expect(crackTarget(row$('STONE'))).toBe('GRAVEL');
-    expect(crackTarget(row$('BRICK'))).toBe('GRAVEL');
-    expect(crackTarget(row$('CERAMIC'))).toBe('GRAVEL');
+    expect(crackTarget(row$('BRICK'))).toBe('BRICK_RUBBLE');
+    expect(crackTarget(row$('CERAMIC'))).toBe('CERAMIC_SHARDS');
     expect(row$('CERAMIC').pressureAbove, 'a blast still does not break ceramic').toBeUndefined();
   });
 
@@ -79,7 +79,7 @@ describe('M8.1 AC27: the shock limits', () => {
     expect(floats[at(row$('GLASS'), 'shockLimit')]).toBeCloseTo(GLASS_QUENCH, 3);
     expect(floats[at(row$('METAL'), 'shockLimit')]).toBe(0);
     expect(floats[at(row$('SAND'), 'shockLimit')]).toBe(0);
-    expect((words[at(row$('CERAMIC'), 'transitions')] >>> 16) & 0xff).toBe(row$('GRAVEL').id);
+    expect((words[at(row$('CERAMIC'), 'transitions')] >>> 16) & 0xff).toBe(row$('CERAMIC_SHARDS').id);
     expect((words[at(row$('GLASS'), 'transitions')] >>> 16) & 0xff).toBe(row$('BROKEN_GLASS').id);
   });
 
@@ -206,6 +206,7 @@ describe.skipIf(!device)('M8.1 AC27: a cell against a neighbor in its block', ()
     await runMany(sim, 2000);
     const cells = await readCells(sim);
     expect(countType(cells, T.BROKEN_GLASS) + countType(cells, T.SNOW) + countType(cells, T.GRAVEL), 'cells that cracked').toBeGreaterThan(0);
+    expect(countType(cells, T.CERAMIC_SHARDS), 'ceramic cracked into shards, not gravel').toBeGreaterThan(0);
     expect(Math.abs((await heat()) - before) / Math.abs(before), 'relative change of the total heat').toBeLessThan(2e-3);
   }, 60_000);
 });

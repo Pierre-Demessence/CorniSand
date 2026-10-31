@@ -609,7 +609,7 @@ export const ELEMENTS = [
     category: 'Explosives',
     description: 'Black powder: it catches fire when hot and goes off with a blast.',
   },
-  // Gravel: crushed basalt (what a blast leaves of basalt and brick). Loose dry gravel weighs 1,500 to 1,900 kg/m³ (1,800 here).
+  // Gravel: crushed basalt (what a blast leaves of basalt). Loose dry gravel weighs 1,500 to 1,900 kg/m³ (1,800 here).
   // A cell is one unit of matter whatever its form, so a crushed cell keeps its parent's heat capacity, basalt's 2.4 MJ/m³·K
   // (a crush then keeps the temperature and the latent heats match); a loose dry bed of coarse stones conducts only about 0.4 W/m·K
   // (estimated, not read from a source). Angle of repose 38°: estimated, angular crushed stone stands at 35 to 45°. It melts into the same lava as basalt,
@@ -627,7 +627,7 @@ export const ELEMENTS = [
     above: { temp: 1200, becomes: 'LAVA', latent: LAVA_LATENT },
     toolbar: 2,
     category: 'Powders',
-    description: 'Loose broken rock: a blast leaves it where basalt and brick were; it melts into lava.',
+    description: 'Loose broken rock: a blast leaves it where basalt was; it melts into lava.',
   },
   // Snow: what a blast leaves of ice. Settled snow weighs 200 to 500 kg/m³ (300 here); a cell is one unit of matter, so it keeps
   // ice's heat capacity, 1.9 MJ/m³·K; the bed conducts only about 0.15 W/m·K (0.1 to 0.5 for settled snow, Sturm et al. 1997). It melts at 0 °C into water, with water's
@@ -705,7 +705,7 @@ export const ELEMENTS = [
     conductivity: 0.7,
     heatCapacity: 1.6,
     toughness: 1,
-    pressureAbove: { becomes: 'GRAVEL' },
+    pressureAbove: { becomes: 'BRICK_RUBBLE' },
     // Thermal shock: Young's modulus 10 GPa (9.3 measured on brick clay fired at 1,100 °C, 10 to 35 for masonry bricks; porosity
     // lowers it) and linear expansion 5.5e-6 per °C (4.5 to 6.5 for fired clay bricks), which with the shared flaw size give a
     // limit of about 2,400 K: no temperature the game reaches. The model overstates a brick's strength (a real brick carries far
@@ -714,7 +714,7 @@ export const ELEMENTS = [
     stiffness: 10,
     toolbar: 4,
     category: 'Solids',
-    description: 'Fired clay: it shrugs off lava and breaks into gravel in a blast.',
+    description: 'Fired clay: it shrugs off lava and breaks into brick rubble in a blast.',
   },
   // Aluminium: 2,700 kg/m³, 237 W/m·K and 2.42 MJ/m³·K (0.897 kJ/kg·K), melting at 660.3 °C (CRC Handbook; Wikipedia, List of
   // thermal conductivities). Melts into molten aluminium that sets back, far below steel's 1,538 °C.
@@ -803,7 +803,7 @@ export const ELEMENTS = [
   // melt. It has no crush: a blast does not break it. It cracks by thermal shock: fracture toughness 4 MPa·√m (99.5% alumina,
   // CeramTec materials table), Young's modulus 372 GPa and linear expansion 8.1e-6 per °C (NIST ceramics data portal summary), a
   // limit of about 174 K, a little over glass's: a cold crucible cracks when molten steel is poured in, a preheated one does not.
-  // It breaks into gravel, the nearest loose rubble the table has.
+  // It cracks into ceramic shards, which melt with it.
   {
     key: 'CERAMIC',
     id: 24,
@@ -817,7 +817,7 @@ export const ELEMENTS = [
     toughness: 4,
     expansion: 8.1e-6,
     stiffness: 372,
-    cracksInto: 'GRAVEL',
+    cracksInto: 'CERAMIC_SHARDS',
     toolbar: 5,
     category: 'Solids',
     description: 'Fired alumina, as in a crucible: it holds molten steel and no blast breaks it.',
@@ -1163,6 +1163,43 @@ export const ELEMENTS = [
     viscosity: 1.6666666667,
     look: { opacity: 1 },
     below: { temp: 1713, becomes: 'INSULATION', latent: AEROGEL_FUSION },
+  },
+  // Brick rubble: what a blast leaves of brick. Loose crushed brick weighs about 1,200 kg/m³ (1,100 to 1,400, an estimate: the
+  // solid is 1,900). A cell is one unit of matter whatever its form, so it keeps brick's heat capacity, 1.6 MJ/m³·K; a loose bed
+  // conducts about 0.3 W/m·K and stands at about 38° (both estimated, not read from a source; M12.14d sources them). It has no
+  // melting point, as brick has none: fired clay holds past what lava reaches.
+  {
+    key: 'BRICK_RUBBLE',
+    id: 44,
+    label: 'Brick rubble',
+    color: [0.55, 0.28, 0.2],
+    state: 'powder',
+    density: 1200,
+    conductivity: 0.3,
+    heatCapacity: 1.6,
+    repose: 38,
+    toolbar: 6,
+    category: 'Powders',
+    description: 'Crushed brick: a blast leaves it where brick was; it never melts.',
+  },
+  // Ceramic shards: what a thermal shock leaves of ceramic. Loose crushed alumina weighs about 2,000 kg/m³ (an estimate: the
+  // solid is 3,950). It keeps ceramic's heat capacity, 3.48 MJ/m³·K, and melts into the same molten ceramic at ceramic's melting
+  // point and latent heat, which sets back into ceramic. A loose bed conducts about 0.5 W/m·K and stands at about 38° (both
+  // estimated, not read from a source; M12.14d sources them).
+  {
+    key: 'CERAMIC_SHARDS',
+    id: 45,
+    label: 'Ceramic shards',
+    color: [0.84, 0.8, 0.72],
+    state: 'powder',
+    density: 2000,
+    conductivity: 0.5,
+    heatCapacity: 3.48,
+    repose: 38,
+    above: { temp: 2072, becomes: 'MOLTEN_CERAMIC', latent: ALUMINA_FUSION },
+    toolbar: 7,
+    category: 'Powders',
+    description: 'Jagged pieces of cracked ceramic: they melt at 2,072 °C, like the ceramic.',
   },
 ] as const satisfies readonly ElementDef[];
 

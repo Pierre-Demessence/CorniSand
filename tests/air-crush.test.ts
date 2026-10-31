@@ -277,7 +277,7 @@ describe.skipIf(!device)('M6 pressure transitions', () => {
     });
 
     it('M8.1 AC15: each breaks into its broken form, keeping its heat', async () => {
-      const forms: [string, string][] = [['STONE', 'GRAVEL'], ['BRICK', 'GRAVEL'], ['GLASS', 'BROKEN_GLASS'], ['ICE', 'SNOW']];
+      const forms: [string, string][] = [['STONE', 'GRAVEL'], ['BRICK', 'BRICK_RUBBLE'], ['GLASS', 'BROKEN_GLASS'], ['ICE', 'SNOW']];
       const width = 64;
       const sim = createSim(width, 64, 3);
       const kind = new Uint32Array(width * 64);

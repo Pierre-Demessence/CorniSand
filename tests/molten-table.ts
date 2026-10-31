@@ -25,6 +25,7 @@ export const MELTS: readonly Melt[] = [
   { solid: 'TITANIUM', liquid: 'MOLTEN_TITANIUM', sets: 'TITANIUM' },
   { solid: 'TUNGSTEN', liquid: 'MOLTEN_TUNGSTEN', sets: 'TUNGSTEN' },
   { solid: 'CERAMIC', liquid: 'MOLTEN_CERAMIC', sets: 'CERAMIC' },
+  { solid: 'CERAMIC_SHARDS', liquid: 'MOLTEN_CERAMIC', sets: 'CERAMIC' },
   { solid: 'INSULATION', liquid: 'MOLTEN_AEROGEL', sets: 'INSULATION' },
 ];
 

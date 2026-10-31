@@ -68,6 +68,16 @@ describe('M12.14a the melts (table)', () => {
     for (const key of MOLTEN_LIQUIDS) expect(by(key).toolbar, key).toBeUndefined();
   });
 
+  it('M12.14b AC4: puts brick rubble and ceramic shards at IDs 44 and 45, with the shards on the melt of ceramic and the rubble on none', () => {
+    expect(['BRICK_RUBBLE', 'CERAMIC_SHARDS'].map(id)).toEqual([44, 45]);
+    expect(by('CERAMIC_SHARDS').above, 'the shards melt where ceramic does').toEqual(by('CERAMIC').above);
+    expect(by('BRICK_RUBBLE').above, 'brick rubble never melts').toBeUndefined();
+    expect(by('BRICK_RUBBLE').below).toBeUndefined();
+    expect(by('BRICK').above).toBeUndefined();
+    expect(by('BRICK').pressureAbove?.becomes).toBe('BRICK_RUBBLE');
+    expect(by('CERAMIC').cracksInto).toBe('CERAMIC_SHARDS');
+  });
+
   it('packs no memory: bits 24-31 of transitions and the padding word are 0 for every row, and the row is still 144 bytes', () => {
     const words = new Uint32Array(packElements(MOLTEN_TABLE));
     const at = (e: ElementDef, field: string): number => words[e.id * PROP_FIELDS.length + PROP_FIELDS.findIndex((f) => f.name === field)];
@@ -99,6 +109,16 @@ describe.skipIf(!device)('M12.14a AC1: each melt is its own material\'s liquid',
     expect(set.kinds[0], `${m.liquid} just under it: ${m.sets}`).toBe(cell(id(m.sets)));
     // It starts at the threshold less the overshoot scaled by the two capacities, so it holds the heat it had.
     expect(set.temps[0], `${m.liquid} stored temperature`).toBeCloseTo(liquid.below!.temp - (elementHeatCapacity(liquid) / elementHeatCapacity(by(m.sets))), 2);
+  });
+
+  it('M12.14b AC4: brick rubble stays brick rubble at 3,000 °C over 100 supersteps, and the shards of a cracked ceramic melt into molten ceramic that sets into ceramic', async () => {
+    const hot = await row([{ kind: cell(T.BRICK_RUBBLE), temp: 3000 }, wall], 100);
+    expect(hot.kinds[0], 'brick rubble').toBe(cell(T.BRICK_RUBBLE));
+    const shards = by('CERAMIC_SHARDS');
+    const molten = await row([{ kind: cell(shards.id), temp: meltsAbove(shards) + 10 }, wall]);
+    expect(molten.kinds[0]).toBe(cell(T.MOLTEN_CERAMIC));
+    const set = await row([{ kind: molten.kinds[0], temp: setsBelow(by('MOLTEN_CERAMIC')) - 5 }, wall]);
+    expect(set.kinds[0], 'the liquid sets into ceramic, not shards').toBe(cell(T.CERAMIC));
   });
 
   it('sand melts into molten glass that sets into glass, not sand: the full round trip through the table', async () => {

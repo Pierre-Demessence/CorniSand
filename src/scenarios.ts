@@ -831,7 +831,7 @@ export const SCENARIO_INFO: Record<string, SceneInfo> = {
     group: 'scenarios',
     family: 'crucible',
     version: 'cold',
-    description: 'The same steel in a cold ceramic cup: the shock of the heat cracks it, and its cells turn to gravel.',
+    description: 'The same steel in a cold ceramic cup: the shock of the heat cracks it into ceramic shards.',
   },
   quench: {
     label: 'Quenched glass',
