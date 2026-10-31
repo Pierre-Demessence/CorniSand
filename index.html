@@ -357,6 +357,98 @@
             white-space: nowrap;
         }
 
+        /* The Edges panel: opens above the toolbar at the Edges button. Each side is a toggle around a square; its bar is solid
+           when the side is closed and dashed when open, so the state does not rest on color. */
+        .edges-panel {
+            position: fixed;
+            left: 8px;
+            bottom: calc(var(--toolbar-height) + 8px);
+            padding: 12px;
+            background: rgba(16, 16, 20, 0.98);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 8px;
+            z-index: 15;
+        }
+
+        .edges-panel[hidden] {
+            display: none;
+        }
+
+        .edges-grid {
+            display: grid;
+            grid-template-columns: auto 96px auto;
+            grid-template-rows: auto 64px auto;
+            gap: 4px;
+            align-items: center;
+            justify-items: center;
+        }
+
+        .edge-toggle {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 8px;
+            border: 1px solid transparent;
+            border-radius: 6px;
+            background: none;
+            color: #d1d5db;
+            font: inherit;
+            font-size: 12px;
+            white-space: nowrap;
+            cursor: pointer;
+        }
+
+        .edge-toggle:hover {
+            background: rgba(255, 255, 255, 0.08);
+        }
+
+        .edge-toggle:focus-visible {
+            outline: 2px solid rgba(255, 255, 255, 0.7);
+            outline-offset: 1px;
+        }
+
+        .edge-top {
+            grid-area: 1 / 2;
+            flex-direction: column;
+        }
+
+        .edge-bottom {
+            grid-area: 3 / 2;
+            flex-direction: column-reverse;
+        }
+
+        .edge-left {
+            grid-area: 2 / 1;
+        }
+
+        .edge-right {
+            grid-area: 2 / 3;
+            flex-direction: row-reverse;
+        }
+
+        .edge-top .edge-bar,
+        .edge-bottom .edge-bar {
+            width: 96px;
+            border-top: 4px solid #e5e7eb;
+        }
+
+        .edge-left .edge-bar,
+        .edge-right .edge-bar {
+            height: 64px;
+            border-left: 4px solid #e5e7eb;
+        }
+
+        .edge-toggle[data-state="open"] .edge-bar {
+            border-style: dashed;
+        }
+
+        .edges-world {
+            grid-area: 2 / 2;
+            width: 100%;
+            height: 100%;
+            background: rgba(255, 255, 255, 0.04);
+        }
+
         /* The Scenes menu: a dialog centered over a dimmed backdrop that leaves the toolbar (and its Scenes button) uncovered. */
         .scene-menu {
             position: fixed;
@@ -699,6 +791,7 @@
     </div>
 
     <div class="scene-menu" id="scene-menu" hidden></div>
+    <div class="edges-panel" id="edges-panel" hidden></div>
 
     <div id="toolbar">
         <div class="picker-row">
@@ -710,6 +803,7 @@
         <div class="picker-row" id="picker-entries"></div>
         <div class="picker-row" id="status-bar">
             <button class="tool-btn" type="button" id="scenes-btn" aria-controls="scene-menu" aria-expanded="false" aria-pressed="false">Scenes</button>
+            <button class="tool-btn" type="button" id="edges-btn" aria-controls="edges-panel" aria-expanded="false" aria-pressed="false">Edges</button>
             <span class="info-text probe-text" id="probe-info"></span>
             <div class="separator"></div>
             <span class="info-text" id="brush-size">Brush: 10</span>

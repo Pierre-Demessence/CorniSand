@@ -1,6 +1,6 @@
 # I41 World edges
 
-Status: approved; the GPU bench steps are left out at the user's request (no bench before or after, no `Bench pending`); next I41.3.
+Status: approved; the GPU bench steps are left out at the user's request (no bench before or after, no `Bench pending`); next I41.4.
 
 ## Goal
 
@@ -76,10 +76,12 @@ Needs you: nothing: covered by tests (`?scene=plume` shows smoke leaving through
 
 ### I41.3 The Edges panel and `?edges=`
 
-- [ ] `parseEdges`/`formatEdges` with unit tests; `main.ts` reads `?edges=` (a warning and the default on a bad value), passes it to `Simulation`, keeps it on device re-creation.
-- [ ] The panel and its button as in Design, wired in `main.ts`; unit tests for its labels and the URL it writes; a headless browser check that a toggle changes the side, keeps the world and survives a scene pick.
-- [ ] `AGENTS.md` Layout (`main.ts`, the panel's file), `README.md` feature list.
+- [x] `parseEdges`/`formatEdges` with unit tests; `main.ts` reads `?edges=` (a warning and the default on a bad value), passes it to `Simulation`, keeps it on device re-creation.
+- [x] The panel and its button as in Design, wired in `main.ts`; unit tests for its labels and the URL it writes; a headless browser check that a toggle changes the side, keeps the world and survives a scene pick.
+- [x] `AGENTS.md` Layout (`main.ts`, the panel's file), `README.md` feature list.
 
+Decided during the run: an empty `?edges=` value is unknown (warning and the default), as is `none` among other names; only `none` alone means all open. Why: `formatEdges` never writes an empty value, and the plan names only `none` for all open. The alternative is reading an empty value as all open; to change it, return `ALL_OPEN` for an empty value in `parseEdges`.
+Decided during the run: the panel's pure parts (`edgeLabel`, `edgesSearch`) are tested without a DOM (the suite has no DOM environment); the toggle, URL write, Escape and outside-click closing were checked in headless Chrome (a toggle of the floor emptied 5.6K sand to 0, `?edges=none` written, kept on reload with a scene, `?edges=sky` warned and gave the default).
 Visible after: an Edges button in the status bar; each side can be opened or closed while playing, and the choice survives a reload and a change of scene.
 Needs you: a look at the panel: open the game, paint sand on the floor, click Edges and open the floor; expected: the sand falls out of the screen and Floor reads "open" with a dashed bar (at the end).
 

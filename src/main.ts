@@ -7,6 +7,8 @@ import { parseWall, type Look } from './look';
 import { InputHandler, type Vec2 } from './input';
 import { ELEMENTS, type ElementDef } from './elements';
 import { findScene, SCENE_INFO, type Scene } from './scenes';
+import { DEFAULT_EDGES, parseEdges, type Edges } from './edges';
+import { edgesSearch, renderEdgesPanel } from './edges-panel';
 import { renderSceneMenu, sceneSearch } from './scene-menu';
 import { HEAT_LEGEND_TEMPS, heatRampCSS } from './heat';
 import { formatProbe } from './readout';
@@ -59,6 +61,12 @@ async function main(): Promise<void> {
   const wall = parseWall(wallParam);
   if (wallParam !== null && wall === undefined) console.warn(`Unknown wall "${wallParam}", use a number from 0 to 1.`);
 
+  // `?edges=` lists the closed sides (`none`: all open); without it the floor is closed and the other sides open.
+  const edgesParam = new URLSearchParams(window.location.search).get('edges');
+  const parsedEdges = parseEdges(edgesParam);
+  if (parsedEdges === undefined) console.warn(`Unknown edges "${edgesParam}", use none or a list of closed sides: left, right, bottom, top.`);
+  let edges: Edges = parsedEdges ?? DEFAULT_EDGES;
+
   // Sized once from the first device's limits (or the scene's size); a re-created device keeps the same grid.
   let grid: Grid | undefined;
   let state: GpuState | null = null;
@@ -71,7 +79,7 @@ async function main(): Promise<void> {
     grid ??= pendingScene
       ? { width: pendingScene.width, height: pendingScene.height, scale: 1 }
       : computeGrid(cssWidth, cssHeight, maxCellsForDevice(gpu.device));
-    const simulation = new Simulation(gpu.device, grid.width, grid.height, { airCellSize: airSize });
+    const simulation = new Simulation(gpu.device, grid.width, grid.height, { airCellSize: airSize, edges });
     // Only the first device gets the scene; after a device loss the world is cleared, as the banner says.
     if (pendingScene) {
       simulation.load(pendingScene.fields);
@@ -155,6 +163,18 @@ async function main(): Promise<void> {
     SCENE_INFO,
     currentScene,
     (key) => { window.location.search = sceneSearch(window.location.search, key); },
+  );
+  // The Edges panel: a toggle changes a side from the next frame, keeps the world and is written to the URL, so a reload or
+  // a scene pick keeps it.
+  renderEdgesPanel(
+    document.getElementById('edges-btn') as HTMLButtonElement,
+    document.getElementById('edges-panel')!,
+    edges,
+    (next: Edges) => {
+      edges = next;
+      state?.simulation.setEdges(next);
+      window.history.replaceState(null, '', `${window.location.pathname}${edgesSearch(window.location.search, next)}${window.location.hash}`);
+    },
   );
   // The picker: a tab per category, the selected entry's name and the search; the entries of the shown tab below them.
   // Degrees per frame the held Heat or Cool tool applies; 0 while an element is selected.
